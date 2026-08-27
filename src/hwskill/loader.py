@@ -43,10 +43,6 @@ def load_skill(
             "skill_dir": str(skill_dir),
             "skill_file": str(skill_file),
             "registry_root": str(root),
-            "resources": {
-                name: f"{name}/" if (skill_dir / name).is_dir() else None
-                for name in ("scripts", "references", "assets")
-            },
         }
         content = "---\n" + yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False) + "---\n" + body
     return LoadedSkill(skill.skill_id, skill.revision, actual, str(skill_file), content)

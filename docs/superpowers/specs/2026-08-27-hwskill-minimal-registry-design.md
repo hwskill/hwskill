@@ -232,10 +232,6 @@ x-hwskill-runtime:
   skill_dir: /opt/hwskills/skills-src/l1/superpowers/systematic-debugging
   skill_file: /opt/hwskills/skills-src/l1/superpowers/systematic-debugging/SKILL.md
   registry_root: /opt/hwskills
-  resources:
-    scripts: scripts/
-    references: references/
-    assets: null
 ```
 
 规则：
@@ -244,9 +240,11 @@ x-hwskill-runtime:
 - 所有路径规范化并验证位于 Registry 根内。
 - 原始 Skill 若已包含 `x-hwskill-runtime`，校验失败，不静默覆盖。
 - 不加入时间戳等不稳定字段。
+- Loader 不猜测 `scripts/`、`references/`、`assets/` 等目录结构；具体资源路径由 Skill
+  正文相对于 `skill_dir`/`skill_file` 描述。未来只有显式声明的资源映射才可作为可选字段返回。
 - `skill load <id> --raw` 返回原始文件。
 - `--json` 同时返回结构化元数据和增强后的 `content`。
-- MCP `content[]` 提供增强 Markdown，`structuredContent` 提供 ID、revision、digest、路径和资源清单。
+- MCP `content[]` 提供增强 Markdown，`structuredContent` 提供 ID、revision、digest 和路径。
 - 未来远程 Registry 使用 `skill_uri`；物化到本地缓存后才提供 `skill_dir`。
 
 ## 9. Codex Adapter 与可观察性

@@ -305,7 +305,9 @@ def test_unbound_load_is_rejected(self):
 
 - [x] **步骤 5：实现确定性 Search 和增强 Load**
 
-统一大小写与标点，ID/name 精确命中优先于 description 词汇重叠，最终按 ID 打破平局。将 x-hwskill-runtime 合入 frontmatter，包含受 Registry 根约束的 skill_dir、skill_file、registry_root、resources、revision 和原始 digest。raw 模式返回原文。
+统一大小写与标点，ID/name 精确命中优先于 description 词汇重叠，最终按 ID 打破平局。将 x-hwskill-runtime 合入 frontmatter，包含受 Registry 根约束的 skill_dir、skill_file、registry_root、revision 和原始 digest。raw 模式返回原文。
+
+后续设计决策：不再推测或注入 `resources`。Skill 目录结构并非强制标准，具体资源位置由 Skill 正文相对于运行时路径说明；只有未来显式声明的映射才可能作为可选字段返回。
 
 - [x] **步骤 6：验证并添加真实 Profile**
 

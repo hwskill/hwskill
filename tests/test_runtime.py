@@ -45,8 +45,13 @@ class RuntimeTest(unittest.TestCase):
         loaded = load_skill(catalog, "superpowers/systematic-debugging")
         metadata, _ = parse_skill_markdown(loaded.content)
         runtime = metadata["x-hwskill-runtime"]
+        self.assertEqual(set(runtime), {
+            "id", "revision", "content_digest", "skill_dir", "skill_file", "registry_root",
+        })
         self.assertEqual(runtime["content_digest"], loaded.content_digest)
         self.assertEqual(content_digest(Path(runtime["skill_dir"])), loaded.content_digest)
+        self.assertEqual(Path(runtime["skill_file"]), Path(runtime["skill_dir"]) / "SKILL.md")
+        self.assertEqual(Path(runtime["registry_root"]), REGISTRY)
         raw = load_skill(catalog, "superpowers/systematic-debugging", raw=True)
         self.assertEqual(raw.content, Path(raw.skill_file).read_text(encoding="utf-8"))
         with self.assertRaisesRegex(LoadError, "not in the Effective Skill Catalog"):
