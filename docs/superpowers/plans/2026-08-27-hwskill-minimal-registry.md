@@ -42,7 +42,7 @@
 - 输入：/mnt/c/Users/linkeo/Documents/Codex/2026-08-17/d/outputs/SKILL能力库调查与落地建议.md。
 - 输出：main(argv: Sequence[str] | None = None) -> int，以及 hwskill 控制台入口。
 
-- [ ] **步骤 1：先写失败的 CLI 冒烟测试**
+- [x] **步骤 1：先写失败的 CLI 冒烟测试**
 
 ~~~python
 class CliSmokeTest(unittest.TestCase):
@@ -54,17 +54,17 @@ class CliSmokeTest(unittest.TestCase):
         self.assertRegex(output.getvalue(), r"^hwskill 0\.1\.0\n$")
 ~~~
 
-- [ ] **步骤 2：运行并确认预期失败**
+- [x] **步骤 2：运行并确认预期失败**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_cli_smoke -v
 
 预期：失败，原因是 hwskill.cli 尚不存在。
 
-- [ ] **步骤 3：实现最小包和 CLI**
+- [x] **步骤 3：实现最小包和 CLI**
 
 声明 Python >=3.10、PyYAML >=6,<7、mcp >=1,<2、版本 0.1.0 和控制台入口；用 argparse 实现 --version。
 
-- [ ] **步骤 4：原样归档调查文档**
+- [x] **步骤 4：原样归档调查文档**
 
 用 apply_patch 创建目标文件，然后运行：
 
@@ -75,7 +75,7 @@ cmp '/mnt/c/Users/linkeo/Documents/Codex/2026-08-17/d/outputs/SKILL能力库调�
 
 预期：退出码 0，无输出。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_cli_smoke -v
 
@@ -106,7 +106,7 @@ git commit -m "chore: scaffold hwskill and archive research"
 - content_digest(skill_dir: Path) -> str
 - import_source(spec, repo_root, update=False, imported_at=None) -> list[SkillRecord]
 
-- [ ] **步骤 1：先写失败的导入测试**
+- [x] **步骤 1：先写失败的导入测试**
 
 ~~~python
 def test_digest_excludes_governance(self):
@@ -129,23 +129,23 @@ def test_existing_difference_requires_update(self):
         import_source(self.spec, self.repo)
 ~~~
 
-- [ ] **步骤 2：运行并确认预期失败**
+- [x] **步骤 2：运行并确认预期失败**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_importer -v
 
 预期：失败，原因是导入接口尚不存在。
 
-- [ ] **步骤 3：实现 frontmatter、digest 和原子导入**
+- [x] **步骤 3：实现 frontmatter、digest 和原子导入**
 
 按照排序后的 POSIX 相对路径和文件字节计算 digest，只排除根 skill.yaml。拒绝绝对/越界链接、socket、设备和 FIFO。先复制到同级临时目录，校验并写 provenance，最后原子替换。源 frontmatter 含 x-hwskill-runtime 时拒绝导入。
 
-- [ ] **步骤 4：验证导入测试**
+- [x] **步骤 4：验证导入测试**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_importer -v
 
 预期：通过。
 
-- [ ] **步骤 5：添加 Source manifest 并导入真实技能**
+- [x] **步骤 5：添加 Source manifest 并导入真实技能**
 
 local-agents-skills 只选择 chinese-thinking、gitcode-discussion-fetch、gitcode-pr-review-fetch。superpowers 选择 6.3.0 skills 根目录下所有直接包含 SKILL.md 的子目录，并记录 https://github.com/obra/superpowers 与 MIT。
 
@@ -156,7 +156,7 @@ PYTHONPATH=src python3 -m hwskill registry import --source sources/superpowers.y
 
 预期：共导入 17 个 Skill。
 
-- [ ] **步骤 6：验证源与快照逐字节一致并提交**
+- [x] **步骤 6：验证源与快照逐字节一致并提交**
 
 递归比较所有选定源 Skill 与目标目录，只忽略新增 skill.yaml；17 个技能全部通过。
 
@@ -179,7 +179,7 @@ git commit -m "feat: import governed skill snapshots"
 - build_catalog(repo_root: Path) -> dict
 - write_catalog(repo_root: Path, check=False) -> bool
 
-- [ ] **步骤 1：先写失败的校验和构建测试**
+- [x] **步骤 1：先写失败的校验和构建测试**
 
 ~~~python
 def test_digest_drift_is_rejected(self):
@@ -200,17 +200,17 @@ def test_check_detects_stale_catalog(self):
     self.assertFalse(write_catalog(self.repo, check=True))
 ~~~
 
-- [ ] **步骤 2：运行并确认预期失败**
+- [x] **步骤 2：运行并确认预期失败**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_registry -v
 
 预期：失败，原因是 Registry 接口尚不存在。
 
-- [ ] **步骤 3：实现校验器和 Catalog builder**
+- [x] **步骤 3：实现校验器和 Catalog builder**
 
 校验 ID 唯一、目录/name 一致、provenance、digest、资源引用、Profile 引用、路径包含关系和保留字段。输出 UTF-8 JSON，键和 Skill 排序、两空格缩进、末尾换行，不写构建时间。
 
-- [ ] **步骤 4：验证真实 Registry**
+- [x] **步骤 4：验证真实 Registry**
 
 ~~~bash
 PYTHONPATH=src python3 -m unittest tests.test_registry -v
@@ -221,7 +221,7 @@ PYTHONPATH=src python3 -m hwskill registry build --check
 
 预期：测试通过，17 个 Skill 通过校验，--check 不修改文件。
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ~~~bash
 git add src/hwskill/registry.py tests/test_registry.py registry/catalog.json
@@ -249,7 +249,7 @@ git commit -m "feat: validate and build the skill catalog"
 - search_skills(catalog, query, limit=10) -> list[SearchResult]
 - load_skill(catalog, skill_id, expected_digest=None, raw=False) -> LoadedSkill
 
-- [ ] **步骤 1：先写失败的 Profile 测试**
+- [x] **步骤 1：先写失败的 Profile 测试**
 
 ~~~python
 def test_find_project_prefers_git_root(self):
@@ -268,7 +268,7 @@ def test_resolution_is_profile_scoped(self):
     self.assertNotIn("superpowers/brainstorming", catalog.skill_ids)
 ~~~
 
-- [ ] **步骤 2：先写失败的 Search/Load 测试**
+- [x] **步骤 2：先写失败的 Search/Load 测试**
 
 ~~~python
 def test_search_stays_inside_effective_catalog(self):
@@ -293,21 +293,21 @@ def test_unbound_load_is_rejected(self):
         load_skill(self.catalog, "superpowers/brainstorming")
 ~~~
 
-- [ ] **步骤 3：运行并确认预期失败**
+- [x] **步骤 3：运行并确认预期失败**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_profiles tests.test_search_loader -v
 
 预期：失败，原因是运行时模块尚不存在。
 
-- [ ] **步骤 4：实现项目、Profile 与 lock 解析**
+- [x] **步骤 4：实现项目、Profile 与 lock 解析**
 
 项目解析顺序为显式路径、Git root、cwd。绑定写期望 Profile ID；lock 写精确 Skill ID、revision 和 digest。只读操作遇到缺失绑定/lock 时返回空 Effective Catalog。
 
-- [ ] **步骤 5：实现确定性 Search 和增强 Load**
+- [x] **步骤 5：实现确定性 Search 和增强 Load**
 
 统一大小写与标点，ID/name 精确命中优先于 description 词汇重叠，最终按 ID 打破平局。将 x-hwskill-runtime 合入 frontmatter，包含受 Registry 根约束的 skill_dir、skill_file、registry_root、resources、revision 和原始 digest。raw 模式返回原文。
 
-- [ ] **步骤 6：验证并添加真实 Profile**
+- [x] **步骤 6：验证并添加真实 Profile**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_profiles tests.test_search_loader -v
 
@@ -315,7 +315,7 @@ def test_unbound_load_is_rejected(self):
 
 personal-baseline 包含 3 个本地 Skill；superpowers 包含 14 个 Skill；codex-demo 包含 systematic-debugging、test-driven-development 和无关候选 local/gitcode-pr-review-fetch。
 
-- [ ] **步骤 7：提交**
+- [x] **步骤 7：提交**
 
 ~~~bash
 git add src/hwskill tests/test_profiles.py tests/test_search_loader.py profiles
@@ -341,7 +341,7 @@ git commit -m "feat: resolve profiles and load skills on demand"
 - unsetup_codex(project) -> SetupResult
 - run_doctor(project, registry_root) -> list[CheckResult]
 
-- [ ] **步骤 1：先写失败的 CLI 格式测试**
+- [x] **步骤 1：先写失败的 CLI 格式测试**
 
 ~~~python
 def test_search_defaults_to_table_and_json_is_opt_in(self):
@@ -363,7 +363,7 @@ def test_profile_list_is_unambiguous(self):
     self.assertIn("PROFILE", result.stdout)
 ~~~
 
-- [ ] **步骤 2：先写失败的配置所有权测试**
+- [x] **步骤 2：先写失败的配置所有权测试**
 
 ~~~python
 def test_setup_preserves_unmanaged_skills_and_config(self):
@@ -379,25 +379,25 @@ def test_setup_preserves_unmanaged_skills_and_config(self):
     self.assertFalse((self.project / ".agents/skills/hwskill").exists())
 ~~~
 
-- [ ] **步骤 3：运行并确认预期失败**
+- [x] **步骤 3：运行并确认预期失败**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_cli tests.test_configuration tests.test_doctor -v
 
 预期：失败，原因是分组 CLI、配置和 Doctor 尚不存在。
 
-- [ ] **步骤 4：实现命令分组与输出策略**
+- [x] **步骤 4：实现命令分组与输出策略**
 
 实现 setup、unsetup、doctor、profile bind/unbind/list/resolve、skill search/load、registry import/validate/build、adapter codex 和 serve-mcp。表格为默认输出，--json 输出一个 JSON 文档；Load 默认增强 Markdown，支持 --raw/--json。交互写操作确认目标，非交互写操作要求 --project 与 --yes。
 
-- [ ] **步骤 5：实现 Codex 配置所有权**
+- [x] **步骤 5：实现 Codex 配置所有权**
 
 向项目 .codex/config.toml 合并 required STDIO MCP 和 SessionStart Hook，同时保留无关内容。在 .hwskills/state/setup-codex.json 记录拥有的键和 digest。unsetup 只删除匹配的受管条目，条目被外部修改后拒绝删除。
 
-- [ ] **步骤 6：实现 Doctor**
+- [x] **步骤 6：实现 Doctor**
 
 检查 Registry、Profile/lock、Skill digest、MCP 命令、Hook JSON、审计目录、Codex 版本、受管原生投影和非受管同名冲突。非受管 Skill 只产生 PASS/WARN，绝不改动。
 
-- [ ] **步骤 7：验证并提交**
+- [x] **步骤 7：验证并提交**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_cli tests.test_configuration tests.test_doctor -v
 
@@ -426,7 +426,7 @@ git commit -m "feat: add profile CLI and Codex setup diagnostics"
 - MCP 工具 hwskill_search(query, limit=10)
 - MCP 工具 hwskill_load(skill_id, expected_digest=None)
 
-- [ ] **步骤 1：先写失败的审计和 Hook 测试**
+- [x] **步骤 1：先写失败的审计和 Hook 测试**
 
 ~~~python
 def test_audit_has_digest_but_no_prompt_or_body(self):
@@ -447,7 +447,7 @@ def test_hook_injects_metadata_not_skill_body(self):
     self.assertNotIn("# Systematic Debugging", context)
 ~~~
 
-- [ ] **步骤 2：先写失败的 MCP 测试**
+- [x] **步骤 2：先写失败的 MCP 测试**
 
 ~~~python
 async def test_load_returns_text_and_structured_metadata(self):
@@ -457,21 +457,21 @@ async def test_load_returns_text_and_structured_metadata(self):
     self.assertTrue(result.structured["skill_dir"].endswith("systematic-debugging"))
 ~~~
 
-- [ ] **步骤 3：运行并确认预期失败**
+- [x] **步骤 3：运行并确认预期失败**
 
 命令：PYTHONPATH=src python3 -m unittest tests.test_audit tests.test_codex_adapter tests.test_mcp_server -v
 
 预期：失败，原因是运行时集成模块尚不存在。
 
-- [ ] **步骤 4：实现 JSONL 审计和 Hook**
+- [x] **步骤 4：实现 JSONL 审计和 Hook**
 
 审计只接受显式 dataclass 字段：UTC 时间、session、cwd、Profile ID、Catalog digest、事件、Skill ID、revision、digest、结果、错误码、耗时。Hook 从 stdin 读取一个 JSON 对象，只向 stdout 输出一个 Codex Hook JSON；诊断写 stderr。
 
-- [ ] **步骤 5：使用官方 SDK 实现 MCP 工具**
+- [x] **步骤 5：使用官方 SDK 实现 MCP 工具**
 
 使用 FastMCP，从服务配置取得项目 cwd，复用 Core Search/Load，返回增强 Markdown 和结构化运行时元数据，并审计成功/失败。协议 stdout 不输出日志。
 
-- [ ] **步骤 6：安装依赖并验证**
+- [x] **步骤 6：安装依赖并验证**
 
 ~~~bash
 python3 -m venv .venv
@@ -481,7 +481,7 @@ python3 -m venv .venv
 
 预期：安装成功，hwskill --version 为 0.1.0，测试通过。若下载被沙箱阻止，仅对 pip 安装申请网络权限。
 
-- [ ] **步骤 7：提交**
+- [x] **步骤 7：提交**
 
 ~~~bash
 git add src/hwskill tests/test_audit.py tests/test_codex_adapter.py tests/test_mcp_server.py
@@ -510,7 +510,7 @@ git commit -m "feat: expose observable Codex catalog loading"
 - 输入：已安装的 hwskill、Registry、Codex CLI，以及可选的进程级 CODEX_API_KEY。
 - 输出：离线 smoke 证据，以及可选 artifacts/codex.jsonl、hwskill-audit.jsonl、demo.diff、test-output.txt。
 
-- [ ] **步骤 1：先写失败的 Demo 测试**
+- [x] **步骤 1：先写失败的 Demo 测试**
 
 ~~~python
 def test_demo_starts_with_one_boundary_failure(self):
@@ -524,25 +524,25 @@ def test_demo_has_no_managed_native_skills(self):
     self.assertFalse((DEMO / ".agents/skills").exists())
 ~~~
 
-- [ ] **步骤 2：运行并确认预期失败**
+- [x] **步骤 2：运行并确认预期失败**
 
 命令：.venv/bin/python -m unittest tests.test_demo_integration -v
 
 预期：失败，原因是 Demo 尚不存在。
 
-- [ ] **步骤 3：创建故意失败的边界 Demo 和绑定**
+- [x] **步骤 3：创建故意失败的边界 Demo 和绑定**
 
 实现 calculate_total(subtotal: Decimal, discount_threshold: Decimal, discount_rate: Decimal) -> Decimal，故意使用 subtotal > discount_threshold，而测试要求阈值包含等号。提供低于、等于、高于阈值测试，初始只有等于用例失败。通过 CLI 绑定 codex-demo 并生成 lock。
 
-- [ ] **步骤 4：实现 Docker 离线 smoke**
+- [x] **步骤 4：实现 Docker 离线 smoke**
 
-使用固定 Python 3.10 slim 镜像，安装本包与 Codex CLI 0.147.x，复制 Registry 到 /opt/hwskills、Demo 到 /workspace/demo，创建非 root HOME。断言没有 .agents/skills；无需凭据完成 Registry 校验、resolve、Hook JSON、MCP Search/Load、审计断言和已知 Demo 初始失败。
+使用固定 Node 22 bookworm slim 镜像及其 Python 3.11，安装本包与 Codex CLI 0.147.x，复制 Registry 到 /opt/hwskills、Demo 到 /workspace-demo，创建非 root HOME。断言没有 .agents/skills；无需凭据完成 Registry 校验、resolve、Hook JSON、真实 MCP stdio 握手/Search/Load、审计断言、无绑定负边界和已知 Demo 初始失败。
 
-- [ ] **步骤 5：实现可选 Live Eval**
+- [x] **步骤 5：实现可选 Live Eval**
 
-只在 codex exec 进程中传入 CODEX_API_KEY，使用 --json --ephemeral --sandbox workspace-write。断言 JSONL 出现 hwskill_search 与 hwskill_load，审计包含 lock digest，最终测试通过。另建无绑定项目，断言 Search 为空且 Load 被拒绝。
+使用现有 `codex login` 登录态或只在 codex exec 进程中传入 CODEX_API_KEY，使用 --json、--ephemeral 和 --approve-for-me。断言 JSONL 出现 hwskill_search 与 hwskill_load，审计包含 lock digest，最终测试通过。另建无绑定项目，断言 Search 为空且 Load 被拒绝。
 
-- [ ] **步骤 6：运行宿主验证**
+- [x] **步骤 6：运行宿主验证**
 
 ~~~bash
 .venv/bin/python -m unittest discover -s tests -v
@@ -557,15 +557,15 @@ git diff --check
 
 预期：测试和校验通过，Demo Effective Catalog 恰含 3 个候选，Load frontmatter 含 x-hwskill-runtime。
 
-- [ ] **步骤 7：运行可选环境验证**
+- [x] **步骤 7：运行可选环境验证**
 
-Docker 可用时运行 bash scripts/run_docker_smoke.sh。只有用户显式提供 CODEX_API_KEY 时才运行 bash scripts/run_codex_live_eval.sh。未运行项以 NOT RUN 和不含秘密的确切原因记录。
+Docker 可用时运行 bash scripts/run_docker_smoke.sh。用户已授权验证且存在 `codex login` 登录态或显式 CODEX_API_KEY 时运行 bash scripts/run_codex_live_eval.sh。未运行项以 NOT RUN 和不含秘密的确切原因记录。
 
-- [ ] **步骤 8：记录用法和证据**
+- [x] **步骤 8：记录用法和证据**
 
 README 覆盖维护者流程（import、validate、build）、项目流程（setup、profile bind、doctor）、Agent 流程（Hook、Search、Load）、输出规则、动态 frontmatter、Docker、凭据边界以及实际执行命令。
 
-- [ ] **步骤 9：规格覆盖复核并提交**
+- [x] **步骤 9：规格覆盖复核并提交**
 
 确认归档、17 个快照、2 个 Source、3 个 Profile、全量 Catalog、CLI、动态 Load、Hook/MCP、审计、Demo、Docker、负例边界、安全和环境限制均有对应文件与测试。
 

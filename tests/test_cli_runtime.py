@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
-from hwskill.cli import main
+from hwskill.cli import default_audit_path, main
+from hwskill.configuration import END, START
 from hwskill.profiles import resolve_profile_ids
 
 
@@ -67,6 +69,40 @@ class CliRuntimeTest(unittest.TestCase):
         self.assertIn('model = "existing-model"', config.read_text(encoding="utf-8"))
         self.assertFalse((self.project / ".agents/skills/hwskill").exists())
 
+        code, _, _ = self.run_cli(
+            "unsetup", "codex", "--project", str(self.project), "--yes",
+        )
+        self.assertEqual(code, 0)
+        updated = config.read_text(encoding="utf-8")
+        self.assertIn('model = "existing-model"', updated)
+        self.assertNotIn(START, updated)
+        self.assertNotIn(END, updated)
+        self.assertTrue(unmanaged.exists())
+
+    def test_setup_can_pin_audit_path_in_managed_commands(self):
+        audit = self.project / "logs/audit.jsonl"
+        code, _, _ = self.run_cli(
+            "setup", "codex", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--audit-path", str(audit), "--yes",
+        )
+        self.assertEqual(code, 0)
+        config = (self.project / ".codex/config.toml").read_text(encoding="utf-8")
+        self.assertEqual(config.count(str(audit)), 2)
+
+    def test_unsetup_refuses_externally_modified_managed_block(self):
+        self.run_cli(
+            "setup", "codex", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        config = self.project / ".codex/config.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace("required = true", "required = false"),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "modified outside hwskill"):
+            self.run_cli("unsetup", "codex", "--project", str(self.project), "--yes")
+        self.assertIn(START, config.read_text(encoding="utf-8"))
+
     def test_profile_list_unbind_and_doctor_json(self):
         self.run_cli(
             "profile", "bind", "codex-demo", "--project", str(self.project),
@@ -86,11 +122,34 @@ class CliRuntimeTest(unittest.TestCase):
         )
         checks = json.loads(output)["checks"]
         self.assertTrue(all(item["status"] in {"PASS", "WARN"} for item in checks))
+        self.assertTrue({"mcp-config", "hook-config", "codex-cli", "audit-directory"}.issubset(
+            {item["name"] for item in checks}
+        ))
         code, _, _ = self.run_cli(
             "profile", "unbind", "codex-demo", "--project", str(self.project),
             "--repo-root", str(ROOT), "--yes",
         )
         self.assertEqual(resolve_profile_ids(self.project), [])
+
+    def test_read_only_command_discovers_git_root_without_project(self):
+        (self.project / ".git").mkdir()
+        nested = self.project / "nested"
+        nested.mkdir()
+        with patch("hwskill.cli.Path.cwd", return_value=nested):
+            code, output, error = self.run_cli("profile", "list", "--json")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["profiles"], [])
+        self.assertIn(str(self.project), error)
+
+    def test_noninteractive_write_requires_explicit_project_and_yes(self):
+        with patch("hwskill.cli.sys.stdin.isatty", return_value=False):
+            with self.assertRaisesRegex(SystemExit, "explicit --project and --yes"):
+                self.run_cli("profile", "bind", "codex-demo", "--yes")
+
+    def test_audit_path_can_be_provided_by_environment(self):
+        custom = self.project / "audit.jsonl"
+        with patch.dict("hwskill.cli.os.environ", {"HWSKILL_AUDIT_PATH": str(custom)}):
+            self.assertEqual(default_audit_path(), custom)
 
 
 if __name__ == "__main__":

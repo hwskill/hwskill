@@ -1,5 +1,8 @@
-.venv/
-.worktrees/
 __pycache__/
 *.py[cod]
+.venv/
+.runtime-deps/
+.worktrees/
 artifacts/
+build/
+*.egg-info/

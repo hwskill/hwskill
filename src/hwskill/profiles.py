@@ -46,7 +46,7 @@ def bind_profile(project: Path, registry_root: Path, profile_id: str) -> Effecti
     binding_path.write_text(yaml.safe_dump({
         "schema_version": 1, "profiles": sorted(profile_ids)
     }, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    catalog = resolve_profiles(project, registry_root)
+    catalog = resolve_profiles(project, registry_root, verify_lock=False)
     _write_lock(project, catalog)
     return catalog
 
@@ -60,12 +60,12 @@ def unbind_profile(project: Path, registry_root: Path, profile_id: str) -> Effec
     path.write_text(yaml.safe_dump({
         "schema_version": 1, "profiles": profile_ids
     }, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    catalog = resolve_profiles(project, registry_root)
+    catalog = resolve_profiles(project, registry_root, verify_lock=False)
     _write_lock(project, catalog)
     return catalog
 
 
-def resolve_profiles(project: Path, registry_root: Path) -> EffectiveCatalog:
+def resolve_profiles(project: Path, registry_root: Path, verify_lock: bool = True) -> EffectiveCatalog:
     binding_path = project / ".hwskills/profile.yaml"
     if not binding_path.is_file():
         return EffectiveCatalog(project, registry_root, (), (), "sha256:" + hashlib.sha256(b"").hexdigest())
@@ -94,7 +94,22 @@ def resolve_profiles(project: Path, registry_root: Path) -> EffectiveCatalog:
     digest_input = json.dumps(
         [(item.skill_id, item.content_digest) for item in records], separators=(",", ":")
     ).encode()
-    return EffectiveCatalog(
+    catalog = EffectiveCatalog(
         project, registry_root, profile_ids, tuple(records),
         "sha256:" + hashlib.sha256(digest_input).hexdigest(),
     )
+    lock_path = project / ".hwskills/lock.yaml"
+    if verify_lock and lock_path.is_file():
+        lock = yaml.safe_load(lock_path.read_text(encoding="utf-8")) or {}
+        expected = {
+            "catalog_digest": catalog.catalog_digest,
+            "skills": [
+                {"id": item.skill_id, "revision": item.revision,
+                 "content_digest": item.content_digest}
+                for item in catalog.skills
+            ],
+        }
+        actual = {"catalog_digest": lock.get("catalog_digest"), "skills": lock.get("skills")}
+        if actual != expected:
+            raise ProfileError("lock does not match the resolved profile; rebind the profile")
+    return catalog

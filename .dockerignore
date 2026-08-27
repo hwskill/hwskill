@@ -1,0 +1,8 @@
+.git
+.venv
+.runtime-deps
+artifacts
+build
+*.egg-info
+__pycache__
+*.py[cod]

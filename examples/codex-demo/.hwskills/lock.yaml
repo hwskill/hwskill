@@ -1,0 +1,12 @@
+schema_version: 1
+catalog_digest: sha256:dd852c87b876c41176b7cd5ec08a6015cf0ad03ffe52c255c3cde1c1216d6da6
+skills:
+- id: local/gitcode-pr-review-fetch
+  revision: working-tree-2026-08-27
+  content_digest: sha256:5ca4faf4ac9de91f89b8801db33cb3a27e799c05b620296d9b7f7c49fc9f034c
+- id: superpowers/systematic-debugging
+  revision: 6.3.0
+  content_digest: sha256:aecf011d0119cc0e28aede8e1d340c575560ffa8e2e5edbf2c18f5aee33f8752
+- id: superpowers/test-driven-development
+  revision: 6.3.0
+  content_digest: sha256:2851ea6181731cbae61d343dc3956bfb326b3d397a12f2ca36b0f8b9f8ea7b7f

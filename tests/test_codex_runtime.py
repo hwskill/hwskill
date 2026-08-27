@@ -5,6 +5,7 @@ import unittest
 
 from hwskill.audit import AuditEvent, AuditWriter
 from hwskill.codex_adapter import session_start
+from hwskill.loader import LoadError
 from hwskill.mcp_server import HwskillMcpRuntime
 from hwskill.profiles import bind_profile
 
@@ -50,6 +51,17 @@ class CodexRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.structured["skill_dir"].endswith("systematic-debugging"))
         search = await runtime.search("debug failing test")
         self.assertEqual(search["results"][0]["skill_id"], "superpowers/systematic-debugging")
+
+    async def test_mcp_rejected_load_is_audited_without_content(self):
+        runtime = HwskillMcpRuntime(self.project, ROOT, AuditWriter(self.audit_path))
+        with self.assertRaises(LoadError):
+            await runtime.load("superpowers/brainstorming")
+        record = json.loads(self.audit_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(record["event"], "load")
+        self.assertEqual(record["result"], "error")
+        self.assertEqual(record["error_code"], "LoadError")
+        self.assertIsInstance(record["duration_ms"], int)
+        self.assertNotIn("content", record)
 
 
 if __name__ == "__main__":

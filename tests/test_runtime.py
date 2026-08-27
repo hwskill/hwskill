@@ -7,7 +7,7 @@ import yaml
 from hwskill.digest import content_digest
 from hwskill.frontmatter import parse_skill_markdown
 from hwskill.loader import LoadError, load_skill
-from hwskill.profiles import resolve_profiles
+from hwskill.profiles import ProfileError, bind_profile, resolve_profiles
 from hwskill.projects import find_project
 from hwskill.search import search_skills
 
@@ -51,6 +51,15 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(raw.content, Path(raw.skill_file).read_text(encoding="utf-8"))
         with self.assertRaisesRegex(LoadError, "not in the Effective Skill Catalog"):
             load_skill(catalog, "superpowers/brainstorming")
+
+    def test_resolution_rejects_lock_drift(self):
+        bind_profile(self.project, REGISTRY, "codex-demo")
+        lock = self.project / ".hwskills/lock.yaml"
+        data = yaml.safe_load(lock.read_text(encoding="utf-8"))
+        data["catalog_digest"] = "sha256:stale"
+        lock.write_text(yaml.safe_dump(data), encoding="utf-8")
+        with self.assertRaisesRegex(ProfileError, "lock does not match"):
+            resolve_profiles(self.project, REGISTRY)
 
 
 if __name__ == "__main__":

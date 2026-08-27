@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+runtime_deps=
+if [ -d "$repo_root/.runtime-deps" ]; then
+  runtime_deps=":$repo_root/.runtime-deps"
+fi
+PYTHONPATH="$repo_root/src$runtime_deps${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m hwskill "$@"

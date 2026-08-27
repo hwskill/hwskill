@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import shlex
 
 
 START = "# >>> hwskill managed codex >>>"
@@ -16,29 +17,34 @@ class SetupResult:
     changed: bool
 
 
-def _managed_block(registry_root: Path) -> str:
-    root = str(registry_root.resolve()).replace("\\", "\\\\").replace('"', '\\"')
+def _managed_block(registry_root: Path, audit_path: Path | None = None) -> str:
+    root = str(registry_root.resolve())
+    mcp_args = ["serve-mcp", "--repo-root", root]
+    hook_command = f"hwskill adapter codex session-start --repo-root {shlex.quote(str(registry_root.resolve()))}"
+    if audit_path is not None:
+        mcp_args.extend(("--audit-path", str(audit_path.resolve())))
+        hook_command += f" --audit-path {shlex.quote(str(audit_path.resolve()))}"
     return (
         f"{START}\n"
         "[mcp_servers.hwskill]\n"
         'command = "hwskill"\n'
-        f'args = ["serve-mcp", "--repo-root", "{root}"]\n'
+        f"args = {json.dumps(mcp_args, ensure_ascii=False)}\n"
         "required = true\n\n"
         "[[hooks.SessionStart]]\n"
         'matcher = "startup|resume|clear|compact"\n'
         "[[hooks.SessionStart.hooks]]\n"
         'type = "command"\n'
-        f'command = "hwskill adapter codex session-start --repo-root {root}"\n'
+        f"command = {json.dumps(hook_command, ensure_ascii=False)}\n"
         "additionalContextLimit = 5000\n"
         f"{END}\n"
     )
 
 
-def setup_codex(project: Path, registry_root: Path) -> SetupResult:
+def setup_codex(project: Path, registry_root: Path, audit_path: Path | None = None) -> SetupResult:
     config = project / ".codex/config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
     existing = config.read_text(encoding="utf-8") if config.exists() else ""
-    block = _managed_block(registry_root)
+    block = _managed_block(registry_root, audit_path)
     if START in existing:
         before, rest = existing.split(START, 1)
         _, after = rest.split(END, 1)
@@ -56,3 +62,35 @@ def setup_codex(project: Path, registry_root: Path) -> SetupResult:
         "managed_digest": "sha256:" + hashlib.sha256(block.encode()).hexdigest(),
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return SetupResult(config, changed)
+
+
+def _extract_managed_block(content: str) -> tuple[str, int, int]:
+    if START not in content or END not in content:
+        raise ValueError("hwskill managed Codex block is incomplete; refusing to edit")
+    start = content.index(START)
+    end = content.index(END, start) + len(END)
+    if content[end:end + 1] == "\n":
+        end += 1
+    return content[start:end], start, end
+
+
+def unsetup_codex(project: Path) -> SetupResult:
+    config = project / ".codex/config.toml"
+    if not config.exists():
+        return SetupResult(config, False)
+    existing = config.read_text(encoding="utf-8")
+    if START not in existing:
+        return SetupResult(config, False)
+    block, start, end = _extract_managed_block(existing)
+    state = project / ".hwskills/state/setup-codex.json"
+    if not state.is_file():
+        raise ValueError("hwskill setup state is missing; refusing to edit")
+    ownership = json.loads(state.read_text(encoding="utf-8"))
+    actual_digest = "sha256:" + hashlib.sha256(block.encode()).hexdigest()
+    if ownership.get("managed_digest") != actual_digest:
+        raise ValueError("managed Codex block was modified outside hwskill; refusing to edit")
+    before, after = existing[:start], existing[end:]
+    updated = before.rstrip() + ("\n\n" if before.strip() and after.strip() else "") + after.lstrip("\n")
+    config.write_text(updated, encoding="utf-8")
+    state.unlink()
+    return SetupResult(config, True)

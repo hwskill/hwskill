@@ -56,6 +56,18 @@ def validate_registry(repo_root: Path) -> list[SkillRecord]:
         ))
     if not records:
         raise RegistryValidationError("no skills found")
+    for profile_path in sorted((repo_root / "profiles").glob("*.yaml")):
+        profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+        if not isinstance(profile, dict) or profile.get("id") != profile_path.stem:
+            raise RegistryValidationError(f"invalid profile id: {profile_path}")
+        skill_ids = profile.get("skills")
+        if not isinstance(skill_ids, list) or len(skill_ids) != len(set(skill_ids)):
+            raise RegistryValidationError(f"invalid or duplicate profile skills: {profile_path.stem}")
+        for skill_id in skill_ids:
+            if skill_id not in seen:
+                raise RegistryValidationError(
+                    f"unknown skill in profile {profile_path.stem}: {skill_id}"
+                )
     return sorted(records, key=lambda item: item.skill_id)
 
 

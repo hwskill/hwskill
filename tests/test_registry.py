@@ -4,6 +4,8 @@ import shutil
 from tempfile import TemporaryDirectory
 import unittest
 
+import yaml
+
 from hwskill.registry import (
     RegistryValidationError,
     build_catalog,
@@ -43,6 +45,18 @@ class RegistryTest(unittest.TestCase):
         (self.repo / "registry").mkdir()
         (self.repo / "registry/catalog.json").write_text("{}\n", encoding="utf-8")
         self.assertFalse(write_catalog(self.repo, check=True))
+
+    def test_validation_rejects_unknown_profile_skill(self):
+        profiles = self.repo / "profiles"
+        profiles.mkdir()
+        (profiles / "broken.yaml").write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "id": "broken",
+            "description": "invalid reference",
+            "skills": ["missing/skill"],
+        }), encoding="utf-8")
+        with self.assertRaisesRegex(RegistryValidationError, "unknown skill in profile"):
+            validate_registry(self.repo)
 
 
 if __name__ == "__main__":

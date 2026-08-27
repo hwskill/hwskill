@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from .audit import AuditEvent, AuditWriter
@@ -23,18 +24,42 @@ class HwskillMcpRuntime:
         self.audit = audit
 
     async def search(self, query: str, limit: int = 10) -> dict[str, Any]:
-        catalog = resolve_profiles(self.project, self.registry_root)
-        results = search_skills(catalog, query, limit)
+        started = monotonic()
+        catalog = None
+        try:
+            catalog = resolve_profiles(self.project, self.registry_root)
+            results = search_skills(catalog, query, limit)
+        except Exception as exc:
+            self.audit.write(AuditEvent(
+                event="search", result="error", cwd=str(self.project),
+                profile_ids=catalog.profile_ids if catalog else (),
+                catalog_digest=catalog.catalog_digest if catalog else None,
+                error_code=type(exc).__name__, duration_ms=int((monotonic() - started) * 1000),
+            ))
+            raise
         self.audit.write(AuditEvent(
             event="search", result="ok", cwd=str(self.project),
             profile_ids=catalog.profile_ids, catalog_digest=catalog.catalog_digest,
+            duration_ms=int((monotonic() - started) * 1000),
         ))
         return {"catalog_digest": catalog.catalog_digest,
                 "results": [asdict(item) for item in results]}
 
     async def load(self, skill_id: str, expected_digest: str | None = None) -> RuntimeToolResult:
-        catalog = resolve_profiles(self.project, self.registry_root)
-        loaded = load_skill(catalog, skill_id, expected_digest)
+        started = monotonic()
+        catalog = None
+        try:
+            catalog = resolve_profiles(self.project, self.registry_root)
+            loaded = load_skill(catalog, skill_id, expected_digest)
+        except Exception as exc:
+            self.audit.write(AuditEvent(
+                event="load", result="error", cwd=str(self.project),
+                profile_ids=catalog.profile_ids if catalog else (),
+                catalog_digest=catalog.catalog_digest if catalog else None,
+                skill_id=skill_id, error_code=type(exc).__name__,
+                duration_ms=int((monotonic() - started) * 1000),
+            ))
+            raise
         skill_dir = str(Path(loaded.skill_file).parent)
         structured = {
             "id": loaded.skill_id,
@@ -48,6 +73,7 @@ class HwskillMcpRuntime:
             profile_ids=catalog.profile_ids, catalog_digest=catalog.catalog_digest,
             skill_id=loaded.skill_id, revision=loaded.revision,
             content_digest=loaded.content_digest,
+            duration_ms=int((monotonic() - started) * 1000),
         ))
         return RuntimeToolResult(loaded.content, structured)
 

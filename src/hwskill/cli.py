@@ -4,22 +4,48 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import asdict
 import json
+import os
 import sys
 from pathlib import Path
 
 import yaml
 
 from . import __version__
-from .configuration import setup_codex
+from .configuration import setup_codex, unsetup_codex
 from .codex_adapter import run_session_start
 from .doctor import run_doctor
 from .importer import import_source
 from .loader import load_skill
 from .models import SourceSpec
 from .profiles import bind_profile, resolve_profile_ids, resolve_profiles, unbind_profile
+from .projects import find_project
 from .registry import validate_registry, write_catalog
 from .search import search_skills
 from .mcp_server import run_server
+
+
+def default_audit_path() -> Path:
+    configured = os.environ.get("HWSKILL_AUDIT_PATH")
+    return Path(configured) if configured else Path.home() / ".hwskills/logs/audit.jsonl"
+
+
+def _project_path(value: str | None, *, write: bool, yes: bool = False) -> Path:
+    explicit = value is not None
+    project = Path(value).resolve() if explicit else find_project(Path.cwd())
+    if not explicit:
+        print(f"PROJECT\t{project}", file=sys.stderr)
+    if not write:
+        return project
+    if not sys.stdin.isatty():
+        if not explicit or not yes:
+            raise SystemExit("non-interactive writes require explicit --project and --yes")
+        return project
+    if yes:
+        return project
+    response = input(f"Apply hwskill changes to {project}? [y/N] ")
+    if response.strip().lower() not in {"y", "yes"}:
+        raise SystemExit("cancelled")
+    return project
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -41,44 +67,49 @@ def main(argv: Sequence[str] | None = None) -> int:
     profile_commands = profile.add_subparsers(dest="profile_command")
     bind_parser = profile_commands.add_parser("bind")
     bind_parser.add_argument("profile_id")
-    bind_parser.add_argument("--project", required=True)
+    bind_parser.add_argument("--project")
     bind_parser.add_argument("--repo-root", default=".")
     bind_parser.add_argument("--yes", action="store_true")
     unbind_parser = profile_commands.add_parser("unbind")
     unbind_parser.add_argument("profile_id")
-    unbind_parser.add_argument("--project", required=True)
+    unbind_parser.add_argument("--project")
     unbind_parser.add_argument("--repo-root", default=".")
     unbind_parser.add_argument("--yes", action="store_true")
     list_parser = profile_commands.add_parser("list")
-    list_parser.add_argument("--project", required=True)
+    list_parser.add_argument("--project")
     list_parser.add_argument("--json", action="store_true")
     resolve_parser = profile_commands.add_parser("resolve")
-    resolve_parser.add_argument("--project", required=True)
+    resolve_parser.add_argument("--project")
     resolve_parser.add_argument("--repo-root", default=".")
     resolve_parser.add_argument("--json", action="store_true")
     skill = commands.add_parser("skill")
     skill_commands = skill.add_subparsers(dest="skill_command")
     search_parser = skill_commands.add_parser("search")
     search_parser.add_argument("query")
-    search_parser.add_argument("--project", required=True)
+    search_parser.add_argument("--project")
     search_parser.add_argument("--repo-root", default=".")
     search_parser.add_argument("--limit", type=int, default=10)
     search_parser.add_argument("--json", action="store_true")
     load_parser = skill_commands.add_parser("load")
     load_parser.add_argument("skill_id")
-    load_parser.add_argument("--project", required=True)
+    load_parser.add_argument("--project")
     load_parser.add_argument("--repo-root", default=".")
     load_parser.add_argument("--expected-digest")
     load_parser.add_argument("--raw", action="store_true")
     load_parser.add_argument("--json", action="store_true")
     setup_parser = commands.add_parser("setup")
     setup_parser.add_argument("host", choices=("codex",))
-    setup_parser.add_argument("--project", required=True)
+    setup_parser.add_argument("--project")
     setup_parser.add_argument("--repo-root", default=".")
+    setup_parser.add_argument("--audit-path")
     setup_parser.add_argument("--yes", action="store_true")
+    unsetup_parser = commands.add_parser("unsetup")
+    unsetup_parser.add_argument("host", choices=("codex",))
+    unsetup_parser.add_argument("--project")
+    unsetup_parser.add_argument("--yes", action="store_true")
     doctor_parser = commands.add_parser("doctor")
     doctor_parser.add_argument("host", choices=("codex",))
-    doctor_parser.add_argument("--project", required=True)
+    doctor_parser.add_argument("--project")
     doctor_parser.add_argument("--repo-root", default=".")
     doctor_parser.add_argument("--json", action="store_true")
     adapter_parser = commands.add_parser("adapter")
@@ -115,12 +146,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.check and not valid:
             return 1
     elif args.command == "profile" and args.profile_command == "bind":
-        if not args.yes:
-            raise SystemExit("profile bind requires --yes")
-        catalog = bind_profile(Path(args.project).resolve(), Path(args.repo_root).resolve(), args.profile_id)
+        project_path = _project_path(args.project, write=True, yes=args.yes)
+        catalog = bind_profile(project_path, Path(args.repo_root).resolve(), args.profile_id)
         print(f"BOUND\t{args.profile_id}\t{catalog.catalog_digest}")
     elif args.command == "profile" and args.profile_command == "resolve":
-        catalog = resolve_profiles(Path(args.project).resolve(), Path(args.repo_root).resolve())
+        catalog = resolve_profiles(_project_path(args.project, write=False), Path(args.repo_root).resolve())
         data = {"project": str(catalog.project), "profile_ids": list(catalog.profile_ids),
                 "catalog_digest": catalog.catalog_digest,
                 "skills": [asdict(item) | {"path": str(item.path)} for item in catalog.skills]}
@@ -129,7 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for item in catalog.skills:
                 print(f"{item.skill_id}\t{item.revision}\t{item.content_digest}")
     elif args.command == "profile" and args.profile_command == "list":
-        profile_ids = resolve_profile_ids(Path(args.project).resolve())
+        profile_ids = resolve_profile_ids(_project_path(args.project, write=False))
         if args.json:
             print(json.dumps({"profiles": profile_ids}, ensure_ascii=False, indent=2))
         else:
@@ -137,12 +167,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             for profile_id in profile_ids:
                 print(profile_id)
     elif args.command == "profile" and args.profile_command == "unbind":
-        if not args.yes:
-            raise SystemExit("profile unbind requires --yes")
-        unbind_profile(Path(args.project).resolve(), Path(args.repo_root).resolve(), args.profile_id)
+        project_path = _project_path(args.project, write=True, yes=args.yes)
+        unbind_profile(project_path, Path(args.repo_root).resolve(), args.profile_id)
         print(f"UNBOUND\t{args.profile_id}")
     elif args.command == "skill" and args.skill_command == "search":
-        catalog = resolve_profiles(Path(args.project).resolve(), Path(args.repo_root).resolve())
+        catalog = resolve_profiles(_project_path(args.project, write=False), Path(args.repo_root).resolve())
         results = search_skills(catalog, args.query, args.limit)
         if args.json:
             print(json.dumps({"catalog_digest": catalog.catalog_digest,
@@ -152,16 +181,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             for item in results:
                 print(f"{item.skill_id}\t{item.score}\t{item.description}")
     elif args.command == "skill" and args.skill_command == "load":
-        catalog = resolve_profiles(Path(args.project).resolve(), Path(args.repo_root).resolve())
+        catalog = resolve_profiles(_project_path(args.project, write=False), Path(args.repo_root).resolve())
         loaded = load_skill(catalog, args.skill_id, args.expected_digest, args.raw)
         print(json.dumps(asdict(loaded), ensure_ascii=False, indent=2) if args.json else loaded.content, end="\n")
     elif args.command == "setup":
-        if not args.yes:
-            raise SystemExit("setup requires --yes")
-        result = setup_codex(Path(args.project).resolve(), Path(args.repo_root).resolve())
+        project_path = _project_path(args.project, write=True, yes=args.yes)
+        audit_path = Path(args.audit_path) if args.audit_path else None
+        result = setup_codex(project_path, Path(args.repo_root).resolve(), audit_path)
+        print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
+    elif args.command == "unsetup":
+        project_path = _project_path(args.project, write=True, yes=args.yes)
+        result = unsetup_codex(project_path)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "doctor":
-        checks = run_doctor(Path(args.project).resolve(), Path(args.repo_root).resolve())
+        checks = run_doctor(_project_path(args.project, write=False), Path(args.repo_root).resolve())
         if args.json:
             print(json.dumps({"checks": [asdict(item) for item in checks]}, ensure_ascii=False, indent=2))
         else:
@@ -169,9 +202,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             for item in checks:
                 print(f"{item.name}\t{item.status}\t{item.detail}")
     elif args.command == "adapter" and args.adapter_command == "session-start":
-        audit_path = Path(args.audit_path) if args.audit_path else Path.home() / ".hwskills/logs/audit.jsonl"
+        audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
         print(run_session_start(Path(args.repo_root).resolve(), audit_path, sys.stdin.read()))
     elif args.command == "serve-mcp":
-        audit_path = Path(args.audit_path) if args.audit_path else Path.home() / ".hwskills/logs/audit.jsonl"
+        audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
         run_server(Path(args.project).resolve(), Path(args.repo_root).resolve(), audit_path)
     return 0
