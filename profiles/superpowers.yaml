@@ -1,0 +1,18 @@
+schema_version: 1
+id: superpowers
+description: Superpowers 6.3.0 的完整工程工作流集合
+skills:
+  - superpowers/brainstorming
+  - superpowers/dispatching-parallel-agents
+  - superpowers/executing-plans
+  - superpowers/finishing-a-development-branch
+  - superpowers/receiving-code-review
+  - superpowers/requesting-code-review
+  - superpowers/subagent-driven-development
+  - superpowers/systematic-debugging
+  - superpowers/test-driven-development
+  - superpowers/using-git-worktrees
+  - superpowers/using-superpowers
+  - superpowers/verification-before-completion
+  - superpowers/writing-plans
+  - superpowers/writing-skills

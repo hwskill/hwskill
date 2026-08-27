@@ -50,3 +50,34 @@ class SkillRecord:
     license: str
     content_digest: str
     path: Path
+
+
+@dataclass(frozen=True)
+class EffectiveCatalog:
+    project: Path
+    registry_root: Path
+    profile_ids: tuple[str, ...]
+    skills: tuple[SkillRecord, ...]
+    catalog_digest: str
+
+    @property
+    def skill_ids(self) -> tuple[str, ...]:
+        return tuple(item.skill_id for item in self.skills)
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    skill_id: str
+    name: str
+    description: str
+    score: int
+    content_digest: str
+
+
+@dataclass(frozen=True)
+class LoadedSkill:
+    skill_id: str
+    revision: str
+    content_digest: str
+    skill_file: str
+    content: str
