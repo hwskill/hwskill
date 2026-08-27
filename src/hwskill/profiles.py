@@ -13,6 +13,58 @@ class ProfileError(ValueError):
     pass
 
 
+def resolve_profile_ids(project: Path) -> list[str]:
+    path = project / ".hwskills/profile.yaml"
+    if not path.is_file():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return sorted(str(item) for item in data.get("profiles", ()))
+
+
+def _write_lock(project: Path, catalog: EffectiveCatalog) -> None:
+    lock_path = project / ".hwskills/lock.yaml"
+    lock_path.write_text(yaml.safe_dump({
+        "schema_version": 1,
+        "catalog_digest": catalog.catalog_digest,
+        "skills": [
+            {"id": item.skill_id, "revision": item.revision, "content_digest": item.content_digest}
+            for item in catalog.skills
+        ],
+    }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def bind_profile(project: Path, registry_root: Path, profile_id: str) -> EffectiveCatalog:
+    profile_path = registry_root / "profiles" / f"{profile_id}.yaml"
+    if not profile_path.is_file():
+        raise ProfileError(f"unknown profile: {profile_id}")
+    binding_path = project / ".hwskills/profile.yaml"
+    binding_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = yaml.safe_load(binding_path.read_text(encoding="utf-8")) if binding_path.exists() else {}
+    profile_ids = list(existing.get("profiles", ()))
+    if profile_id not in profile_ids:
+        profile_ids.append(profile_id)
+    binding_path.write_text(yaml.safe_dump({
+        "schema_version": 1, "profiles": sorted(profile_ids)
+    }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    catalog = resolve_profiles(project, registry_root)
+    _write_lock(project, catalog)
+    return catalog
+
+
+def unbind_profile(project: Path, registry_root: Path, profile_id: str) -> EffectiveCatalog:
+    profile_ids = resolve_profile_ids(project)
+    if profile_id in profile_ids:
+        profile_ids.remove(profile_id)
+    path = project / ".hwskills/profile.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({
+        "schema_version": 1, "profiles": profile_ids
+    }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    catalog = resolve_profiles(project, registry_root)
+    _write_lock(project, catalog)
+    return catalog
+
+
 def resolve_profiles(project: Path, registry_root: Path) -> EffectiveCatalog:
     binding_path = project / ".hwskills/profile.yaml"
     if not binding_path.is_file():
