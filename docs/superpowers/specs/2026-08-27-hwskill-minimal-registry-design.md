@@ -8,7 +8,7 @@
 在空仓库中建立一个可重复验证的最小能力库：
 
 - 原样归档《SKILL 能力库调查与落地建议》。
-- 将当前 `~/.agents/skills` 下的 3 个技能和 Superpowers 6.3.0 的 15 个技能完整复制为仓库内快照。
+- 将当前 `~/.agents/skills` 下的 3 个技能和 Superpowers 6.3.0 的 14 个技能完整复制为仓库内快照。
 - 保存来源、版本、许可证、导入路径和内容校验和，为后续基于 Git 的定期更新预留接口。
 - 提供可运行的 `hwskill` CLI、静态 Registry、Profile 绑定、解析、搜索和按需加载。
 - 以虚拟 Catalog 为主链路，不向业务仓库或用户目录投影受管 `.agents/skills`。
@@ -344,4 +344,3 @@ codex exec --json --ephemeral --sandbox workspace-write <demo-task>
 ## 13. 当前环境限制
 
 当前 WSL 中 Docker CLI 提示 Docker Desktop WSL integration 未启用。实现完成后必须先运行宿主测试并交付完整 Docker 资产；若届时 Docker 可用，再运行容器离线测试和带凭据的可选 Live Eval。未实际运行的验证不得声明为通过。
-

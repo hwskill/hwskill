@@ -1,0 +1,13 @@
+schema_version: 1
+id: local/chinese-thinking
+name: chinese-thinking
+description: 启用后，所有思考过程、推理分析、内部独白均使用简体中文进行。适用于需要中文思维链的场景，确保AI的推理过程对中文用户完全可读。
+layer: l1
+status: experimental
+source:
+  source_id: local-agents-skills
+  revision: working-tree-2026-08-27
+  upstream_path: chinese-thinking
+  imported_at: '2026-08-27T06:10:28.828969Z'
+license: mixed-or-unspecified
+content_digest: sha256:56a71441b20fa1157866261c0da27ee50d8449584b6cfc4aea740a6abb2d9c31

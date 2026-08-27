@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitCode PR 差异与检视证据获取"
+  short_description: "获取 GitCode PR 完整代码差异、检视意见与回复"
+  default_prompt: "使用 $gitcode-pr-review-fetch 获取指定 GitCode PR 的完整代码差异或全部检视意见与回复。"

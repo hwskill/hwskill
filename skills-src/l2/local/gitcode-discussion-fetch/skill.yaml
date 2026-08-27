@@ -1,0 +1,14 @@
+schema_version: 1
+id: local/gitcode-discussion-fetch
+name: gitcode-discussion-fetch
+description: Use when 需要获取或归档 GitCode 仓库 Discussion 的完整正文、顶层评论和嵌套回复，输入为 Discussion
+  URL 或 owner/repo 加 Discussion 编号，且需要可阅读的 Markdown 内容。
+layer: l2
+status: experimental
+source:
+  source_id: local-agents-skills
+  revision: working-tree-2026-08-27
+  upstream_path: gitcode-discussion-fetch
+  imported_at: '2026-08-27T06:10:28.828969Z'
+license: mixed-or-unspecified
+content_digest: sha256:52639c22faa11f52e2dff9f9735b4f8f6b7ce2c3e1c841dd6f8992dd81304a17

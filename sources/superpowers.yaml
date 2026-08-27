@@ -1,0 +1,36 @@
+source_id: superpowers
+kind: local
+root: /home/linkeo/.codex/plugins/cache/openai-curated-remote/superpowers/6.3.0/skills
+namespace: superpowers
+revision: 6.3.0
+license: MIT
+upstream_url: https://github.com/obra/superpowers
+skills:
+  - name: brainstorming
+    layer: l1
+  - name: dispatching-parallel-agents
+    layer: l1
+  - name: executing-plans
+    layer: l1
+  - name: finishing-a-development-branch
+    layer: l1
+  - name: receiving-code-review
+    layer: l1
+  - name: requesting-code-review
+    layer: l1
+  - name: subagent-driven-development
+    layer: l1
+  - name: systematic-debugging
+    layer: l1
+  - name: test-driven-development
+    layer: l1
+  - name: using-git-worktrees
+    layer: l1
+  - name: using-superpowers
+    layer: l1
+  - name: verification-before-completion
+    layer: l1
+  - name: writing-plans
+    layer: l1
+  - name: writing-skills
+    layer: l1

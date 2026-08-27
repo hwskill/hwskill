@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitCode Discussion 内容获取"
+  short_description: "归档 GitCode Discussion 正文、评论与嵌套回复"
+  default_prompt: "使用 $gitcode-discussion-fetch 获取指定 GitCode Discussion 的完整 Markdown 内容。"

@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/writing-skills
+name: writing-skills
+description: Use when creating new skills, editing existing skills, or verifying skills
+  work before deployment
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: writing-skills
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:92add4fd3d2d05d5ba55e123b1d6826962718fb5e314bff8fae00bb3e10a26d4

@@ -1,0 +1,16 @@
+schema_version: 1
+id: superpowers/verification-before-completion
+name: verification-before-completion
+description: Use when about to claim work is complete, fixed, or passing, before committing
+  or creating PRs - requires running verification commands and confirming output before
+  making any success claims; evidence before assertions always
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: verification-before-completion
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:de153b1e8fd69bd5f1f842d7b1df4c50cf055b77f799ab327cc6a5d218edb530

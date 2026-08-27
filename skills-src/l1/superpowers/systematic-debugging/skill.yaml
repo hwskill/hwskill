@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/systematic-debugging
+name: systematic-debugging
+description: Use when encountering any bug, test failure, or unexpected behavior,
+  before proposing fixes
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: systematic-debugging
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:aecf011d0119cc0e28aede8e1d340c575560ffa8e2e5edbf2c18f5aee33f8752

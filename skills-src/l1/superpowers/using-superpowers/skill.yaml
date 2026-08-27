@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/using-superpowers
+name: using-superpowers
+description: Use when starting any conversation - establishes how to find and use
+  skills, requiring skill invocation before ANY response including clarifying questions
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: using-superpowers
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:ed7e1354ba7d32832cba67329d705516ae99a8541675c37c7de1403a8394fc73

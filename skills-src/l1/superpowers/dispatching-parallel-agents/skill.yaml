@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/dispatching-parallel-agents
+name: dispatching-parallel-agents
+description: Use when facing 2+ independent tasks that can be worked on without shared
+  state or sequential dependencies
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: dispatching-parallel-agents
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:12691ba9c624d5dc2460032016a770de1c7dd067c644278abca5f41bf892fd96

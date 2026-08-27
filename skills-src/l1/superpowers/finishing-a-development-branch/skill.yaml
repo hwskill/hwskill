@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/finishing-a-development-branch
+name: finishing-a-development-branch
+description: Use when implementation is complete, all tests pass, and you need to
+  decide how to integrate the work
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: finishing-a-development-branch
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:5f6685abbab99bdab9a8a1a0eee2079d8f39e4ef9baababb16524004da3947cd

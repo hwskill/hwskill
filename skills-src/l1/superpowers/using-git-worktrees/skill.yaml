@@ -1,0 +1,16 @@
+schema_version: 1
+id: superpowers/using-git-worktrees
+name: using-git-worktrees
+description: Use when starting feature work that needs isolation from current workspace
+  or before executing implementation plans - ensures an isolated workspace exists
+  via native tools or git worktree fallback
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: using-git-worktrees
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:7f075ddc8b801393588275e37771aa2372bf0bed872cc2fe940ce39a87c413aa

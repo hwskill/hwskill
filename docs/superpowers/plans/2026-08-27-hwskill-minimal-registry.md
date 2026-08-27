@@ -154,11 +154,11 @@ PYTHONPATH=src python3 -m hwskill registry import --source sources/local-agents-
 PYTHONPATH=src python3 -m hwskill registry import --source sources/superpowers.yaml
 ~~~
 
-预期：共导入 18 个 Skill。
+预期：共导入 17 个 Skill。
 
 - [ ] **步骤 6：验证源与快照逐字节一致并提交**
 
-递归比较所有选定源 Skill 与目标目录，只忽略新增 skill.yaml；18 个技能全部通过。
+递归比较所有选定源 Skill 与目标目录，只忽略新增 skill.yaml；17 个技能全部通过。
 
 ~~~bash
 git add src/hwskill tests/test_importer.py sources skills-src
@@ -219,7 +219,7 @@ PYTHONPATH=src python3 -m hwskill registry build
 PYTHONPATH=src python3 -m hwskill registry build --check
 ~~~
 
-预期：测试通过，18 个 Skill 通过校验，--check 不修改文件。
+预期：测试通过，17 个 Skill 通过校验，--check 不修改文件。
 
 - [ ] **步骤 5：提交**
 
@@ -313,7 +313,7 @@ def test_unbound_load_is_rejected(self):
 
 预期：通过。
 
-personal-baseline 包含 3 个本地 Skill；superpowers 包含 15 个 Skill；codex-demo 包含 systematic-debugging、test-driven-development 和无关候选 local/gitcode-pr-review-fetch。
+personal-baseline 包含 3 个本地 Skill；superpowers 包含 14 个 Skill；codex-demo 包含 systematic-debugging、test-driven-development 和无关候选 local/gitcode-pr-review-fetch。
 
 - [ ] **步骤 7：提交**
 
@@ -567,11 +567,10 @@ README 覆盖维护者流程（import、validate、build）、项目流程（set
 
 - [ ] **步骤 9：规格覆盖复核并提交**
 
-确认归档、18 个快照、2 个 Source、3 个 Profile、全量 Catalog、CLI、动态 Load、Hook/MCP、审计、Demo、Docker、负例边界、安全和环境限制均有对应文件与测试。
+确认归档、17 个快照、2 个 Source、3 个 Profile、全量 Catalog、CLI、动态 Load、Hook/MCP、审计、Demo、Docker、负例边界、安全和环境限制均有对应文件与测试。
 
 ~~~bash
 git add examples docker scripts tests/test_demo_integration.py README.md \
   docs/superpowers/plans/2026-08-27-hwskill-minimal-registry.md
 git commit -m "test: add isolated Codex skill-loading demo"
 ~~~
-

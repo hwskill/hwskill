@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/subagent-driven-development
+name: subagent-driven-development
+description: Use when executing implementation plans with independent tasks in the
+  current session
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: subagent-driven-development
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:d829c250659ae9fe264abca5b827b844e61fe52545c359c9f4ff9fe4676255f0

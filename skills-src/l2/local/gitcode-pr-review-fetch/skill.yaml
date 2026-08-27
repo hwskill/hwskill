@@ -1,0 +1,14 @@
+schema_version: 1
+id: local/gitcode-pr-review-fetch
+name: gitcode-pr-review-fetch
+description: Use when 调查 GitCode Pull Request /diffs、完整代码差异、diff/patch、变更文件、base/head
+  SHA，或需要完整评论、diff_comment 行级检视意见、discussion 回复与 resolved 状态时。
+layer: l2
+status: experimental
+source:
+  source_id: local-agents-skills
+  revision: working-tree-2026-08-27
+  upstream_path: gitcode-pr-review-fetch
+  imported_at: '2026-08-27T06:10:28.828969Z'
+license: mixed-or-unspecified
+content_digest: sha256:5ca4faf4ac9de91f89b8801db33cb3a27e799c05b620296d9b7f7c49fc9f034c

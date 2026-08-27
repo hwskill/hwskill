@@ -1,0 +1,16 @@
+schema_version: 1
+id: superpowers/receiving-code-review
+name: receiving-code-review
+description: Use when receiving code review feedback, before implementing suggestions,
+  especially if feedback seems unclear or technically questionable - requires technical
+  rigor and verification, not performative agreement or blind implementation
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: receiving-code-review
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:160f29507d8798afccf4ff7197384da309fc2b826850cb7736c0cc4be5c0b38c

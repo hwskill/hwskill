@@ -1,0 +1,13 @@
+source_id: local-agents-skills
+kind: local
+root: /home/linkeo/.agents/skills
+namespace: local
+revision: working-tree-2026-08-27
+license: mixed-or-unspecified
+skills:
+  - name: chinese-thinking
+    layer: l1
+  - name: gitcode-discussion-fetch
+    layer: l2
+  - name: gitcode-pr-review-fetch
+    layer: l2

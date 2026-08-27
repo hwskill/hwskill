@@ -1,0 +1,15 @@
+schema_version: 1
+id: superpowers/executing-plans
+name: executing-plans
+description: Use when you have a written implementation plan to execute in a separate
+  session with review checkpoints
+layer: l1
+status: experimental
+source:
+  source_id: superpowers
+  revision: 6.3.0
+  upstream_path: executing-plans
+  imported_at: '2026-08-27T06:10:28.883036Z'
+  upstream_url: https://github.com/obra/superpowers
+license: MIT
+content_digest: sha256:7d36694b202a9ee41053a07327a9a8577fa217859400da8b46bed5431e699368
