@@ -69,6 +69,20 @@ CODEX_API_KEY=... bash scripts/run_codex_live_eval.sh
 
 也可直接复用 `codex login` 的现有登录态。凭据不写入镜像、仓库或审计日志。
 
+GitCode PR 脚本定位与执行的真实 Agent 验证：
+
+~~~bash
+bash scripts/run_gitcode_pr_agent_eval.sh
+~~~
+
+该验证在联网 Docker 容器内运行 Codex，让 Agent 自主搜索并加载
+`local/gitcode-pr-review-fetch`，获取 `openeuler/OmniStream#587` 的完整 patch。
+验证器事后分析 Codex JSONL，确认脚本命令直接锚定到 Load 返回的运行时 Skill 路径，
+并分别报告直接定位与执行成功状态、脚本尝试次数，以及执行前是否出现技能目录搜索；
+不会向 Agent 禁用 `find`、`rg` 或 `ls`。验证任务使用 Codex 0.147.0、
+`gpt-5.6-sol` 和 medium reasoning。每次运行的证据写入独立的
+`artifacts/gitcode-pr-agent-eval/<run-id>/` 目录，失败运行不会覆盖或冒充先前结果。
+
 ## 本次环境验证状态
 
 | 检查 | 状态 | 说明 |
@@ -79,3 +93,4 @@ CODEX_API_KEY=... bash scripts/run_codex_live_eval.sh
 | pip 可编辑安装 | 已运行 | Docker 全新 Python 3.11 环境成功构建 wheel 并安装 |
 | Docker smoke | 已运行 | 容器执行阶段 `--network none`，离线烟测通过 |
 | Codex Live Eval | 已运行 | Codex 0.147.0 经 Hook/MCP 完成 Search、Load、修复和 3/3 测试，审计事件齐全 |
+| GitCode PR Agent Eval | 已运行 | Agent 直接使用 Load 返回路径执行脚本，无目录搜索；PR #587 patch 获取成功 |
