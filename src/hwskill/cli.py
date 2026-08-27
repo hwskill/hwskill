@@ -4,12 +4,14 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import asdict
 import json
+import sys
 from pathlib import Path
 
 import yaml
 
 from . import __version__
 from .configuration import setup_codex
+from .codex_adapter import run_session_start
 from .doctor import run_doctor
 from .importer import import_source
 from .loader import load_skill
@@ -17,6 +19,7 @@ from .models import SourceSpec
 from .profiles import bind_profile, resolve_profile_ids, resolve_profiles, unbind_profile
 from .registry import validate_registry, write_catalog
 from .search import search_skills
+from .mcp_server import run_server
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -78,6 +81,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     doctor_parser.add_argument("--project", required=True)
     doctor_parser.add_argument("--repo-root", default=".")
     doctor_parser.add_argument("--json", action="store_true")
+    adapter_parser = commands.add_parser("adapter")
+    adapter_commands = adapter_parser.add_subparsers(dest="adapter_host")
+    codex_parser = adapter_commands.add_parser("codex")
+    codex_commands = codex_parser.add_subparsers(dest="adapter_command")
+    session_parser = codex_commands.add_parser("session-start")
+    session_parser.add_argument("--repo-root", default=".")
+    session_parser.add_argument("--audit-path")
+    mcp_parser = commands.add_parser("serve-mcp")
+    mcp_parser.add_argument("--repo-root", default=".")
+    mcp_parser.add_argument("--project", default=".")
+    mcp_parser.add_argument("--audit-path")
     args = parser.parse_args(argv)
     if args.version:
         print(f"hwskill {__version__}")
@@ -154,4 +168,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("CHECK\tSTATUS\tDETAIL")
             for item in checks:
                 print(f"{item.name}\t{item.status}\t{item.detail}")
+    elif args.command == "adapter" and args.adapter_command == "session-start":
+        audit_path = Path(args.audit_path) if args.audit_path else Path.home() / ".hwskills/logs/audit.jsonl"
+        print(run_session_start(Path(args.repo_root).resolve(), audit_path, sys.stdin.read()))
+    elif args.command == "serve-mcp":
+        audit_path = Path(args.audit_path) if args.audit_path else Path.home() / ".hwskills/logs/audit.jsonl"
+        run_server(Path(args.project).resolve(), Path(args.repo_root).resolve(), audit_path)
     return 0
