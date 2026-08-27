@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "content_digest": "sha256:56a71441b20fa1157866261c0da27ee50d8449584b6cfc4aea740a6abb2d9c31",
+      "description": "启用后，所有思考过程、推理分析、内部独白均使用简体中文进行。适用于需要中文思维链的场景，确保AI的推理过程对中文用户完全可读。",
+      "id": "local/chinese-thinking",
+      "layer": "l1",
+      "license": "mixed-or-unspecified",
+      "name": "chinese-thinking",
+      "path": "skills-src/l1/local/chinese-thinking",
+      "revision": "working-tree-2026-08-27",
+      "source_id": "local-agents-skills"
+    },
+    {
+      "content_digest": "sha256:52639c22faa11f52e2dff9f9735b4f8f6b7ce2c3e1c841dd6f8992dd81304a17",
+      "description": "Use when 需要获取或归档 GitCode 仓库 Discussion 的完整正文、顶层评论和嵌套回复，输入为 Discussion URL 或 owner/repo 加 Discussion 编号，且需要可阅读的 Markdown 内容。",
+      "id": "local/gitcode-discussion-fetch",
+      "layer": "l2",
+      "license": "mixed-or-unspecified",
+      "name": "gitcode-discussion-fetch",
+      "path": "skills-src/l2/local/gitcode-discussion-fetch",
+      "revision": "working-tree-2026-08-27",
+      "source_id": "local-agents-skills"
+    },
+    {
+      "content_digest": "sha256:5ca4faf4ac9de91f89b8801db33cb3a27e799c05b620296d9b7f7c49fc9f034c",
+      "description": "Use when 调查 GitCode Pull Request /diffs、完整代码差异、diff/patch、变更文件、base/head SHA，或需要完整评论、diff_comment 行级检视意见、discussion 回复与 resolved 状态时。",
+      "id": "local/gitcode-pr-review-fetch",
+      "layer": "l2",
+      "license": "mixed-or-unspecified",
+      "name": "gitcode-pr-review-fetch",
+      "path": "skills-src/l2/local/gitcode-pr-review-fetch",
+      "revision": "working-tree-2026-08-27",
+      "source_id": "local-agents-skills"
+    },
+    {
+      "content_digest": "sha256:8b2304dfb9006c173d921c50e859315dbcc76cde38d1edca0b175670ddc6b079",
+      "description": "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.",
+      "id": "superpowers/brainstorming",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "brainstorming",
+      "path": "skills-src/l1/superpowers/brainstorming",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:12691ba9c624d5dc2460032016a770de1c7dd067c644278abca5f41bf892fd96",
+      "description": "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies",
+      "id": "superpowers/dispatching-parallel-agents",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "dispatching-parallel-agents",
+      "path": "skills-src/l1/superpowers/dispatching-parallel-agents",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:7d36694b202a9ee41053a07327a9a8577fa217859400da8b46bed5431e699368",
+      "description": "Use when you have a written implementation plan to execute in a separate session with review checkpoints",
+      "id": "superpowers/executing-plans",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "executing-plans",
+      "path": "skills-src/l1/superpowers/executing-plans",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:5f6685abbab99bdab9a8a1a0eee2079d8f39e4ef9baababb16524004da3947cd",
+      "description": "Use when implementation is complete, all tests pass, and you need to decide how to integrate the work",
+      "id": "superpowers/finishing-a-development-branch",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "finishing-a-development-branch",
+      "path": "skills-src/l1/superpowers/finishing-a-development-branch",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:160f29507d8798afccf4ff7197384da309fc2b826850cb7736c0cc4be5c0b38c",
+      "description": "Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation",
+      "id": "superpowers/receiving-code-review",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "receiving-code-review",
+      "path": "skills-src/l1/superpowers/receiving-code-review",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:68b6bcf48e28cd571e0127cde5d49f656a51ea7d6392132b51b31e27d66e0995",
+      "description": "Use when completing tasks, implementing major features, or before merging to verify work meets requirements",
+      "id": "superpowers/requesting-code-review",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "requesting-code-review",
+      "path": "skills-src/l1/superpowers/requesting-code-review",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:d829c250659ae9fe264abca5b827b844e61fe52545c359c9f4ff9fe4676255f0",
+      "description": "Use when executing implementation plans with independent tasks in the current session",
+      "id": "superpowers/subagent-driven-development",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "subagent-driven-development",
+      "path": "skills-src/l1/superpowers/subagent-driven-development",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:aecf011d0119cc0e28aede8e1d340c575560ffa8e2e5edbf2c18f5aee33f8752",
+      "description": "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes",
+      "id": "superpowers/systematic-debugging",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "systematic-debugging",
+      "path": "skills-src/l1/superpowers/systematic-debugging",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:2851ea6181731cbae61d343dc3956bfb326b3d397a12f2ca36b0f8b9f8ea7b7f",
+      "description": "Use when implementing any feature or bugfix, before writing implementation code",
+      "id": "superpowers/test-driven-development",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "test-driven-development",
+      "path": "skills-src/l1/superpowers/test-driven-development",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:7f075ddc8b801393588275e37771aa2372bf0bed872cc2fe940ce39a87c413aa",
+      "description": "Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback",
+      "id": "superpowers/using-git-worktrees",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "using-git-worktrees",
+      "path": "skills-src/l1/superpowers/using-git-worktrees",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:ed7e1354ba7d32832cba67329d705516ae99a8541675c37c7de1403a8394fc73",
+      "description": "Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions",
+      "id": "superpowers/using-superpowers",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "using-superpowers",
+      "path": "skills-src/l1/superpowers/using-superpowers",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:de153b1e8fd69bd5f1f842d7b1df4c50cf055b77f799ab327cc6a5d218edb530",
+      "description": "Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always",
+      "id": "superpowers/verification-before-completion",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "verification-before-completion",
+      "path": "skills-src/l1/superpowers/verification-before-completion",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:0c55737121abd4452a0618816271762e9d6790edde4e28bb5404c1b32059143b",
+      "description": "Use when you have a spec or requirements for a multi-step task, before touching code",
+      "id": "superpowers/writing-plans",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "writing-plans",
+      "path": "skills-src/l1/superpowers/writing-plans",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    },
+    {
+      "content_digest": "sha256:92add4fd3d2d05d5ba55e123b1d6826962718fb5e314bff8fae00bb3e10a26d4",
+      "description": "Use when creating new skills, editing existing skills, or verifying skills work before deployment",
+      "id": "superpowers/writing-skills",
+      "layer": "l1",
+      "license": "MIT",
+      "name": "writing-skills",
+      "path": "skills-src/l1/superpowers/writing-skills",
+      "revision": "6.3.0",
+      "source_id": "superpowers"
+    }
+  ]
+}
