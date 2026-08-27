@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hwskill"
+version = "0.1.0"
+description = "Git-backed virtual catalog for Agent Skills"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6,<7",
+  "mcp>=1,<2",
+]
+
+[project.scripts]
+hwskill = "hwskill.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
