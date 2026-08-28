@@ -70,7 +70,7 @@ def _completed(item: dict[str, Any]) -> dict[str, Any]:
 def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     pending: dict[str, dict[str, Any]] = {}
     normalized: list[tuple[int, dict[str, Any]]] = []
-    sequence = 0
+    position = 0
     for event in events:
         content = (event.get("message") or {}).get("content") or []
         if not isinstance(content, list):
@@ -78,13 +78,14 @@ def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for block in content:
             if not isinstance(block, dict):
                 continue
+            current_position = position
+            position += 1
             if block.get("type") == "tool_use":
                 pending[str(block.get("id"))] = {
                     "name": _tool_name(str(block.get("name", ""))),
                     "input": block.get("input") or {},
-                    "sequence": sequence,
+                    "call_position": current_position,
                 }
-                sequence += 1
                 continue
             if block.get("type") != "tool_result":
                 continue
@@ -92,21 +93,27 @@ def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if call is None:
                 continue
             output = _text(block.get("content"))
+            observation = {
+                "call_position": call["call_position"],
+                "result_position": current_position,
+            }
             if call["name"] == "command_execution":
-                normalized.append((call["sequence"], _completed({
+                normalized.append((call["call_position"], _completed({
                     "type": "command_execution",
                     "command": str(call["input"].get("command", "")),
                     "exit_code": 1 if block.get("is_error") else 0,
                     "status": "failed" if block.get("is_error") else "completed",
                     "aggregated_output": output,
+                    "_observation": observation,
                 })))
             elif call["name"] in {"hwskill_search", "hwskill_load"}:
-                normalized.append((call["sequence"], _completed({
+                normalized.append((call["call_position"], _completed({
                     "type": "mcp_tool_call",
                     "tool": call["name"],
                     "arguments": call["input"],
                     "status": "failed" if block.get("is_error") else "completed",
                     "result": {"structured_content": _structured(block.get("content"))},
+                    "_observation": observation,
                 })))
     return [item for _, item in sorted(normalized, key=lambda entry: entry[0])]
 

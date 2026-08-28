@@ -132,6 +132,21 @@ def _structured_result(item: dict[str, Any]) -> dict[str, Any]:
     return result.get("structured_content") or result.get("structuredContent") or {}
 
 
+def _completed_before_call(
+    first_item: dict[str, Any],
+    first_index: int,
+    second_item: dict[str, Any],
+    second_index: int,
+) -> bool:
+    first_observation = first_item.get("_observation") or {}
+    second_observation = second_item.get("_observation") or {}
+    result_position = first_observation.get("result_position")
+    call_position = second_observation.get("call_position")
+    if isinstance(result_position, int) and isinstance(call_position, int):
+        return result_position < call_position
+    return first_index < second_index
+
+
 def observe_script_resolution(
     event_path: Path,
     skill_id: str,
@@ -145,6 +160,7 @@ def observe_script_resolution(
     events = normalize_events(event_path, host)
     load_index = None
     skill_file = None
+    load_item = None
 
     for event_index, event in enumerate(events):
         if event.get("type") != "item.completed":
@@ -160,13 +176,14 @@ def observe_script_resolution(
             if candidate:
                 load_index = event_index
                 skill_file = candidate
+                load_item = item
                 break
 
     if load_index is None or not skill_file:
         raise ValueError(f"completed hwskill_load not found for {skill_id}")
 
     search_indexes = []
-    for event_index, event in enumerate(events[:load_index]):
+    for event_index, event in enumerate(events):
         if event.get("type") != "item.completed":
             continue
         item = event.get("item") or {}
@@ -176,6 +193,7 @@ def observe_script_resolution(
             and item.get("tool") == "hwskill_search"
             and item.get("status") == "completed"
             and any(result.get("skill_id") == skill_id for result in results)
+            and _completed_before_call(item, event_index, load_item, load_index)
         ):
             search_indexes.append(event_index)
     if not search_indexes:
@@ -194,10 +212,18 @@ def observe_script_resolution(
         if argv is not None:
             command_items.append((event_index, item, argv))
 
-    invocation_before_load = any(index < load_index for index, _, _ in command_items)
-    invocation_items = [entry for entry in command_items if entry[0] > load_index]
+    invocation_before_load = any(
+        not _completed_before_call(load_item, load_index, item, index)
+        for index, item, _ in command_items
+    )
+    invocation_items = [
+        entry for entry in command_items
+        if _completed_before_call(load_item, load_index, entry[1], entry[0])
+    ]
     if not invocation_items:
-        raise ValueError(f"script invocation not found: {expected_script}")
+        raise ValueError(
+            f"script invocation not found after completed hwskill_load: {expected_script}"
+        )
 
     first_index, first_invocation, first_argv = invocation_items[0]
     commands_before = []

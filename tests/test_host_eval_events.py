@@ -71,26 +71,27 @@ class HostEvalEventsTest(unittest.TestCase):
         self.assertTrue(result["execution_succeeded"])
         self.assertEqual(result["patch_diagnostic"]["files"], 2)
 
-    def test_claude_completion_order_does_not_reorder_tool_use_sequence(self):
+    def test_claude_concurrent_load_and_script_is_not_reordered_into_direct_execution(self):
         command = f"python3 {SCRIPT} {URL} --output {OUTPUT}"
         self.write([
             {"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": "search-1", "name": "mcp__hwskill__hwskill_search", "input": {"query": "PR review"}},
+            ]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "search-1", "content": json.dumps({"results": [{"skill_id": SKILL_ID}]})},
+            ]}},
+            {"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": "load-1", "name": "mcp__hwskill__hwskill_load", "input": {"skill_id": SKILL_ID}},
                 {"type": "tool_use", "id": "bash-1", "name": "Bash", "input": {"command": command}},
             ]}},
             {"type": "user", "message": {"content": [
                 {"type": "tool_result", "tool_use_id": "bash-1", "content": "done"},
                 {"type": "tool_result", "tool_use_id": "load-1", "content": json.dumps({"skill_file": SKILL_FILE})},
-                {"type": "tool_result", "tool_use_id": "search-1", "content": json.dumps({"results": [{"skill_id": SKILL_ID}]})},
             ]}},
         ])
 
-        result = self.observe("claude-code")
-
-        self.assertTrue(result["direct_resolution"])
-        self.assertLess(result["search_event_index"], result["load_event_index"])
-        self.assertLess(result["load_event_index"], result["first_script_event_index"])
+        with self.assertRaisesRegex(ValueError, "script invocation not found after completed"):
+            self.observe("claude-code")
 
     def opencode_tool(self, tool, call_id, input_data, output, metadata=None):
         return {
