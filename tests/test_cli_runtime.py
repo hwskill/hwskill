@@ -151,6 +151,72 @@ class CliRuntimeTest(unittest.TestCase):
         with patch.dict("hwskill.cli.os.environ", {"HWSKILL_AUDIT_PATH": str(custom)}):
             self.assertEqual(default_audit_path(), custom)
 
+    def test_claude_code_alias_setup_adapter_and_unsetup(self):
+        self.run_cli(
+            "profile", "bind", "codex-demo", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        code, output, _ = self.run_cli(
+            "setup", "claude_code", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        self.assertEqual(code, 0)
+        self.assertIn(".claude/settings.json", output)
+        stdin = StringIO(json.dumps({"cwd": str(self.project), "session_id": "c1"}))
+        stdout = StringIO()
+        with patch("hwskill.cli.sys.stdin", stdin), redirect_stdout(stdout):
+            code = main([
+                "adapter", "claude-code", "session-start",
+                "--repo-root", str(ROOT),
+                "--audit-path", str(self.project / "audit.jsonl"),
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn("catalog_digest:", json.loads(stdout.getvalue())["hookSpecificOutput"]["additionalContext"])
+        code, _, _ = self.run_cli(
+            "unsetup", "claude-code", "--project", str(self.project), "--yes",
+        )
+        self.assertEqual(code, 0)
+
+    def test_opencode_setup_catalog_adapter_and_unsetup(self):
+        self.run_cli(
+            "profile", "bind", "codex-demo", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        code, _, _ = self.run_cli(
+            "setup", "opencode", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        self.assertEqual(code, 0)
+        code, output, _ = self.run_cli(
+            "adapter", "opencode", "catalog", "--project", str(self.project),
+            "--repo-root", str(ROOT),
+            "--audit-path", str(self.project / "audit.jsonl"),
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(output.startswith("hwskill Effective Skill Catalog"))
+        code, _, _ = self.run_cli(
+            "unsetup", "opencode", "--project", str(self.project), "--yes",
+        )
+        self.assertEqual(code, 0)
+
+    def test_doctor_routes_selected_host(self):
+        self.run_cli(
+            "profile", "bind", "codex-demo", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        self.run_cli(
+            "setup", "claude-code", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--yes",
+        )
+        code, output, _ = self.run_cli(
+            "doctor", "claude-code", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--json",
+        )
+        self.assertEqual(code, 0)
+        names = {item["name"] for item in json.loads(output)["checks"]}
+        self.assertIn("claude-hook-config", names)
+        self.assertNotIn("codex-config", names)
+
 
 if __name__ == "__main__":
     unittest.main()

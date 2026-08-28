@@ -11,8 +11,17 @@ from pathlib import Path
 import yaml
 
 from . import __version__
-from .configuration import setup_codex, unsetup_codex
-from .codex_adapter import run_session_start
+from .audit import AuditWriter
+from .configuration import (
+    setup_claude_code,
+    setup_codex,
+    setup_opencode,
+    unsetup_claude_code,
+    unsetup_codex,
+    unsetup_opencode,
+)
+from .claude_code_adapter import run_session_start as run_claude_session_start
+from .codex_adapter import run_session_start as run_codex_session_start
 from .doctor import run_doctor
 from .importer import import_source
 from .loader import load_skill
@@ -22,6 +31,14 @@ from .projects import find_project
 from .registry import validate_registry, write_catalog
 from .search import search_skills
 from .mcp_server import run_server
+from .opencode_adapter import render_catalog as render_opencode_catalog
+
+
+HOST_CHOICES = ("codex", "claude-code", "claude_code", "opencode")
+
+
+def _host(value: str) -> str:
+    return value.replace("_", "-")
 
 
 def default_audit_path() -> Path:
@@ -98,17 +115,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_parser.add_argument("--raw", action="store_true")
     load_parser.add_argument("--json", action="store_true")
     setup_parser = commands.add_parser("setup")
-    setup_parser.add_argument("host", choices=("codex",))
+    setup_parser.add_argument("host", choices=HOST_CHOICES)
     setup_parser.add_argument("--project")
     setup_parser.add_argument("--repo-root", default=".")
     setup_parser.add_argument("--audit-path")
     setup_parser.add_argument("--yes", action="store_true")
     unsetup_parser = commands.add_parser("unsetup")
-    unsetup_parser.add_argument("host", choices=("codex",))
+    unsetup_parser.add_argument("host", choices=HOST_CHOICES)
     unsetup_parser.add_argument("--project")
     unsetup_parser.add_argument("--yes", action="store_true")
     doctor_parser = commands.add_parser("doctor")
-    doctor_parser.add_argument("host", choices=("codex",))
+    doctor_parser.add_argument("host", choices=HOST_CHOICES)
     doctor_parser.add_argument("--project")
     doctor_parser.add_argument("--repo-root", default=".")
     doctor_parser.add_argument("--json", action="store_true")
@@ -119,6 +136,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     session_parser = codex_commands.add_parser("session-start")
     session_parser.add_argument("--repo-root", default=".")
     session_parser.add_argument("--audit-path")
+    session_parser.add_argument("--project")
+    for claude_host in ("claude-code", "claude_code"):
+        claude_parser = adapter_commands.add_parser(claude_host)
+        claude_commands = claude_parser.add_subparsers(dest="adapter_command")
+        claude_session = claude_commands.add_parser("session-start")
+        claude_session.add_argument("--repo-root", default=".")
+        claude_session.add_argument("--audit-path")
+        claude_session.add_argument("--project")
+    opencode_parser = adapter_commands.add_parser("opencode")
+    opencode_commands = opencode_parser.add_subparsers(dest="adapter_command")
+    catalog_parser = opencode_commands.add_parser("catalog")
+    catalog_parser.add_argument("--project")
+    catalog_parser.add_argument("--repo-root", default=".")
+    catalog_parser.add_argument("--audit-path")
     mcp_parser = commands.add_parser("serve-mcp")
     mcp_parser.add_argument("--repo-root", default=".")
     mcp_parser.add_argument("--project", default=".")
@@ -187,23 +218,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "setup":
         project_path = _project_path(args.project, write=True, yes=args.yes)
         audit_path = Path(args.audit_path) if args.audit_path else None
-        result = setup_codex(project_path, Path(args.repo_root).resolve(), audit_path)
+        setup = {
+            "codex": setup_codex,
+            "claude-code": setup_claude_code,
+            "opencode": setup_opencode,
+        }[_host(args.host)]
+        result = setup(project_path, Path(args.repo_root).resolve(), audit_path)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "unsetup":
         project_path = _project_path(args.project, write=True, yes=args.yes)
-        result = unsetup_codex(project_path)
+        unsetup = {
+            "codex": unsetup_codex,
+            "claude-code": unsetup_claude_code,
+            "opencode": unsetup_opencode,
+        }[_host(args.host)]
+        result = unsetup(project_path)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "doctor":
-        checks = run_doctor(_project_path(args.project, write=False), Path(args.repo_root).resolve())
+        checks = run_doctor(
+            _host(args.host), _project_path(args.project, write=False),
+            Path(args.repo_root).resolve(),
+        )
         if args.json:
             print(json.dumps({"checks": [asdict(item) for item in checks]}, ensure_ascii=False, indent=2))
         else:
             print("CHECK\tSTATUS\tDETAIL")
             for item in checks:
                 print(f"{item.name}\t{item.status}\t{item.detail}")
-    elif args.command == "adapter" and args.adapter_command == "session-start":
+    elif args.command == "adapter" and _host(args.adapter_host) == "codex" and args.adapter_command == "session-start":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
-        print(run_session_start(Path(args.repo_root).resolve(), audit_path, sys.stdin.read()))
+        print(run_codex_session_start(Path(args.repo_root).resolve(), audit_path, sys.stdin.read()))
+    elif args.command == "adapter" and _host(args.adapter_host) == "claude-code" and args.adapter_command == "session-start":
+        audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
+        print(run_claude_session_start(Path(args.repo_root).resolve(), audit_path, sys.stdin.read()))
+    elif args.command == "adapter" and args.adapter_host == "opencode" and args.adapter_command == "catalog":
+        audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
+        print(render_opencode_catalog(
+            _project_path(args.project, write=False), Path(args.repo_root).resolve(),
+            AuditWriter(audit_path),
+        ))
     elif args.command == "serve-mcp":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
         run_server(Path(args.project).resolve(), Path(args.repo_root).resolve(), audit_path)
