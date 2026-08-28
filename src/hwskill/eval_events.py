@@ -69,7 +69,8 @@ def _completed(item: dict[str, Any]) -> dict[str, Any]:
 
 def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     pending: dict[str, dict[str, Any]] = {}
-    normalized: list[dict[str, Any]] = []
+    normalized: list[tuple[int, dict[str, Any]]] = []
+    sequence = 0
     for event in events:
         content = (event.get("message") or {}).get("content") or []
         if not isinstance(content, list):
@@ -81,7 +82,9 @@ def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 pending[str(block.get("id"))] = {
                     "name": _tool_name(str(block.get("name", ""))),
                     "input": block.get("input") or {},
+                    "sequence": sequence,
                 }
+                sequence += 1
                 continue
             if block.get("type") != "tool_result":
                 continue
@@ -90,22 +93,22 @@ def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             output = _text(block.get("content"))
             if call["name"] == "command_execution":
-                normalized.append(_completed({
+                normalized.append((call["sequence"], _completed({
                     "type": "command_execution",
                     "command": str(call["input"].get("command", "")),
                     "exit_code": 1 if block.get("is_error") else 0,
                     "status": "failed" if block.get("is_error") else "completed",
                     "aggregated_output": output,
-                }))
+                })))
             elif call["name"] in {"hwskill_search", "hwskill_load"}:
-                normalized.append(_completed({
+                normalized.append((call["sequence"], _completed({
                     "type": "mcp_tool_call",
                     "tool": call["name"],
                     "arguments": call["input"],
                     "status": "failed" if block.get("is_error") else "completed",
                     "result": {"structured_content": _structured(block.get("content"))},
-                }))
-    return normalized
+                })))
+    return [item for _, item in sorted(normalized, key=lambda entry: entry[0])]
 
 
 def _exit_code(state: dict[str, Any]) -> int:

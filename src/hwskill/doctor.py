@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -92,14 +93,24 @@ def _claude_checks(project: Path) -> list[CheckResult]:
     mcp_path = project / ".mcp.json"
     settings = _json(settings_path)
     mcp = _json(mcp_path)
+    state = _json(project / ".hwskills/state/setup-claude-code.json")
     hooks = settings.get("hooks", {}).get("SessionStart", [])
-    hook_ok = isinstance(hooks, list) and any(
-        all(token in json.dumps(item, ensure_ascii=False) for token in (
-            "hwskill", "adapter", "claude-code"
-        ))
-        for item in hooks
+    expected_hook = state.get("hook")
+    hook_ok = (
+        isinstance(hooks, list)
+        and isinstance(expected_hook, dict)
+        and expected_hook in hooks
     )
-    mcp_ok = isinstance(mcp.get("mcpServers"), dict) and "hwskill" in mcp["mcpServers"]
+    actual_mcp = mcp.get("mcpServers", {}).get("hwskill") if isinstance(mcp.get("mcpServers"), dict) else None
+    expected_mcp = state.get("mcp")
+    mcp_ok = (
+        isinstance(actual_mcp, dict)
+        and actual_mcp == expected_mcp
+        and actual_mcp.get("type") == "stdio"
+        and actual_mcp.get("command") == "hwskill"
+        and isinstance(actual_mcp.get("args"), list)
+        and actual_mcp["args"][:1] == ["serve-mcp"]
+    )
     executable = shutil.which("claude")
     return [
         CheckResult("claude-settings", "PASS" if settings_path.is_file() else "WARN", str(settings_path)),
@@ -113,8 +124,23 @@ def _opencode_checks(project: Path) -> list[CheckResult]:
     config_path = project / "opencode.json"
     plugin_path = project / ".opencode/plugins/hwskill.js"
     config = _json(config_path)
-    mcp_ok = isinstance(config.get("mcp"), dict) and "hwskill" in config["mcp"]
-    plugin_ok = plugin_path.is_file()
+    state = _json(project / ".hwskills/state/setup-opencode.json")
+    actual_mcp = config.get("mcp", {}).get("hwskill") if isinstance(config.get("mcp"), dict) else None
+    expected_mcp = state.get("mcp")
+    mcp_ok = (
+        isinstance(actual_mcp, dict)
+        and actual_mcp == expected_mcp
+        and actual_mcp.get("type") == "local"
+        and actual_mcp.get("enabled") is True
+        and isinstance(actual_mcp.get("command"), list)
+        and actual_mcp["command"][:2] == ["hwskill", "serve-mcp"]
+    )
+    actual_digest = None
+    if plugin_path.is_file():
+        actual_digest = "sha256:" + hashlib.sha256(
+            plugin_path.read_bytes()
+        ).hexdigest()
+    plugin_ok = actual_digest is not None and actual_digest == state.get("plugin_digest")
     executable = shutil.which("opencode")
     version = None
     if executable:

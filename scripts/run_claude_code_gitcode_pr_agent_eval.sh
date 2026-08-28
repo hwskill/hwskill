@@ -11,13 +11,17 @@ artifact_parent="$repo_root/artifacts/claude-code-gitcode-pr-agent-eval"
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 artifact_root="$artifact_parent/$run_id"
 workspace="$artifact_root/workspace"
+diagnostic="$artifact_root/credential-diagnostic.txt"
 trap 'rm -rf "$run_root"' EXIT INT TERM
 
-test -r "$auth_source"
-test "$(jq -r '."minimax-cn-coding-plan".key | type' "$auth_source")" = string
 mkdir -p "$agent_home" "$credentials" "$workspace" "$artifact_parent"
-cp "$auth_source" "$credentials/opencode-auth.json"
-chmod 600 "$credentials/opencode-auth.json"
+if ! "$repo_root/scripts/filter_minimax_auth.sh" \
+  "$auth_source" "$credentials/minimax-auth.json" 2>"$diagnostic"; then
+  cat "$diagnostic" >&2
+  echo "Artifacts: $artifact_root" >&2
+  exit 2
+fi
+rm -f "$diagnostic"
 
 docker build -f "$repo_root/docker/Dockerfile" -t "$image_name" "$repo_root"
 if docker run --rm \
@@ -26,7 +30,7 @@ if docker run --rm \
   --env XDG_CONFIG_HOME=/agent-home/.config \
   --volume "$workspace:/workspace" \
   --volume "$agent_home:/agent-home" \
-  --volume "$credentials/opencode-auth.json:/credentials/opencode-auth.json:ro" \
+  --volume "$credentials/minimax-auth.json:/credentials/minimax-auth.json:ro" \
   --entrypoint /opt/hwskills/docker/claude-code-gitcode-agent-eval.sh \
   "$image_name"; then
   status=0

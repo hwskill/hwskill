@@ -126,7 +126,7 @@ Doctor 的共享检查为 Registry、Profile、审计目录和“无受管原生
 4. Agent 在 Load 之后执行 `${dirname(skill_file)}/scripts/fetch_gitcode_pr_patch.py`。
 5. 命令包含目标 PR URL 和输出参数，退出码为 0，patch 诊断可解析。
 
-“直接定位”定义为：Load 之前没有执行目标脚本，Load 到首次脚本执行之间没有针对 Skill 目录、`SKILL.md` 或目标脚本名的目录发现命令，并且执行 argv 使用由 `skill_file` 派生的绝对路径。目录发现不被禁止；一旦发生，报告 `direct_resolution: false`。
+“直接定位”定义为：Load 之前没有执行目标脚本，Load 到首次脚本执行之间没有针对 Skill 目录、`SKILL.md` 或目标脚本名的目录发现命令，并且执行 argv 使用由 `skill_file` 派生的绝对路径。目录发现不被禁止；Load 前的发现会记录但不影响本指标，Load 后到首次执行之间一旦发生发现，报告 `direct_resolution: false`。
 
 ### 8.2 事件归一化
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
@@ -40,6 +41,18 @@ class HostDoctorTest(unittest.TestCase):
         self.assertEqual(checks["claude-cli"].status, "PASS")
         self.assertNotIn("codex-config", checks)
 
+    def test_claude_doctor_warns_when_owned_mcp_command_is_modified(self):
+        setup_claude_code(self.project, ROOT)
+        path = self.project / ".mcp.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["mcpServers"]["hwskill"]["command"] = "not-hwskill"
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        with patch("hwskill.doctor.shutil.which", return_value=None):
+            checks = self.statuses("claude-code")
+
+        self.assertEqual(checks["claude-mcp-config"].status, "WARN")
+
     def test_opencode_1_14_48_is_the_verified_version(self):
         setup_opencode(self.project, ROOT)
         completed = subprocess.CompletedProcess(
@@ -68,6 +81,27 @@ class HostDoctorTest(unittest.TestCase):
 
         self.assertEqual(checks["opencode-version"].status, "WARN")
         self.assertIn("verified: 1.14.48", checks["opencode-version"].detail)
+
+    def test_opencode_doctor_warns_for_disabled_mcp_and_modified_plugin(self):
+        setup_opencode(self.project, ROOT)
+        config_path = self.project / "opencode.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["mcp"]["hwskill"]["enabled"] = False
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        plugin = self.project / ".opencode/plugins/hwskill.js"
+        plugin.write_text("export default {}\n", encoding="utf-8")
+        completed = subprocess.CompletedProcess(
+            ["opencode", "--version"], 0, stdout="1.14.48\n", stderr=""
+        )
+        fake_subprocess = SimpleNamespace(run=lambda *args, **kwargs: completed)
+
+        with patch("hwskill.doctor.shutil.which", return_value="/usr/bin/opencode"), patch(
+            "hwskill.doctor.subprocess", fake_subprocess, create=True
+        ):
+            checks = self.statuses("opencode")
+
+        self.assertEqual(checks["opencode-mcp-config"].status, "WARN")
+        self.assertEqual(checks["opencode-plugin-config"].status, "WARN")
 
     def test_existing_unmanaged_skills_are_warned_but_not_errors(self):
         legacy = self.project / ".claude/skills/legacy/SKILL.md"

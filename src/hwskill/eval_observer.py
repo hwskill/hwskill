@@ -12,8 +12,8 @@ _DISCOVERY_TOOLS = {"fd", "find", "grep", "ls", "rg", "tree"}
 _SHELLS = {"bash", "dash", "sh", "zsh"}
 _SEPARATORS = {"&&", "||", ";", "|"}
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_SKILL_LOCATION_HINT = re.compile(
-    r"(?:skills-src|\.agents/skills|\.codex/skills|SKILL\.md|fetch_gitcode_pr_(?:patch|reviews)\.py)"
+_NATIVE_SKILL_ROOT = re.compile(
+    r"(?:^|/|\s)\.(?:agents|codex|claude|opencode)/skills(?:/|\s|$)"
 )
 _PATCH_DIAGNOSTIC = re.compile(
     r"patch: state=(?P<state>\S+) api_base=(?P<api_base>\S+) "
@@ -113,14 +113,16 @@ def _invocation_argv(
     return None
 
 
-def _is_discovery(command: str) -> bool:
+def _is_discovery(command: str, skill_file: str, expected_script: str) -> bool:
+    skill_directory = str(Path(skill_file).parent)
+    script_name = Path(expected_script).name
     for segment in _segments(_tokens(command)):
         argv = _command_argv(segment)
-        if (
-            argv
-            and Path(argv[0]).name in _DISCOVERY_TOOLS
-            and _SKILL_LOCATION_HINT.search(" ".join(argv))
-        ):
+        arguments = " ".join(argv)
+        location_hint = any(item in arguments for item in (
+            skill_directory, skill_file, expected_script, script_name, "SKILL.md"
+        )) or _NATIVE_SKILL_ROOT.search(arguments)
+        if argv and Path(argv[0]).name in _DISCOVERY_TOOLS and location_hint:
             return True
     return False
 
@@ -208,8 +210,19 @@ def observe_script_resolution(
             continue
         command = str(item.get("command", ""))
         commands_before.append(command)
-        if _is_discovery(command):
+        if _is_discovery(command, skill_file, expected_script):
             discovery.append(command)
+
+    discovery_after_load = []
+    for event in events[load_index + 1:first_index]:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item") or {}
+        if item.get("type") != "command_execution":
+            continue
+        command = str(item.get("command", ""))
+        if _is_discovery(command, skill_file, expected_script):
+            discovery_after_load.append(command)
 
     successful = next(
         (entry for entry in invocation_items if entry[1].get("exit_code") == 0), None
@@ -241,7 +254,8 @@ def observe_script_resolution(
         "patch_diagnostic": diagnostic,
         "commands_before_invocation": commands_before,
         "discovery_commands_before_invocation": discovery,
+        "discovery_commands_after_load": discovery_after_load,
         "invocation_before_load": invocation_before_load,
         "used_runtime_anchored_path": expected_script in first_argv,
-        "direct_resolution": not invocation_before_load and not discovery,
+        "direct_resolution": not invocation_before_load and not discovery_after_load,
     }

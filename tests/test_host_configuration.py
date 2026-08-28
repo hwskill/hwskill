@@ -77,6 +77,17 @@ class HostConfigurationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not owned"):
             setup_claude_code(self.project, ROOT)
 
+    def test_setup_preserves_existing_top_level_json_key_order(self):
+        setup_claude_code, = require_configuration("setup_claude_code")
+        settings = self.project / ".claude/settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('{"zeta": 1, "alpha": 2}\n', encoding="utf-8")
+
+        setup_claude_code(self.project, ROOT)
+
+        configured = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(list(configured)[:2], ["zeta", "alpha"])
+
     def test_claude_unsetup_refuses_externally_modified_hook(self):
         setup_claude_code, unsetup_claude_code = require_configuration(
             "setup_claude_code", "unsetup_claude_code"

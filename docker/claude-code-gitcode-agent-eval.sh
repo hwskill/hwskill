@@ -7,7 +7,7 @@ audit_path="$artifacts/hwskill-audit.jsonl"
 events_path="$artifacts/claude-code.jsonl"
 error_path="$artifacts/claude-code.stderr"
 patch_path="$workspace/pr-587.patch"
-auth_file=/credentials/opencode-auth.json
+auth_file=/credentials/minimax-auth.json
 eval_model=deepseek-v4-pro
 
 mkdir -p "$artifacts"

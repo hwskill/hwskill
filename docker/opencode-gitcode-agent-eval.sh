@@ -7,7 +7,7 @@ audit_path="$artifacts/hwskill-audit.jsonl"
 events_path="$artifacts/opencode.jsonl"
 error_path="$artifacts/opencode.stderr"
 patch_path="$workspace/pr-587.patch"
-auth_file=/credentials/opencode-auth.json
+auth_file=/credentials/minimax-auth.json
 eval_model=minimax-cn-coding-plan/MiniMax-M2.5
 data_home="$HOME/.local/share"
 

@@ -18,7 +18,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _json_text(data: dict[str, Any]) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
 def _write_text(path: Path, content: str) -> bool:

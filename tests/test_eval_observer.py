@@ -170,8 +170,41 @@ class EvalObserverTest(unittest.TestCase):
             completed({"type": "command_execution", "command": command, "exit_code": 0}),
         ])
         result = self.observe()
-        self.assertFalse(result["direct_resolution"])
+        self.assertTrue(result["direct_resolution"])
         self.assertEqual(result["discovery_commands_before_invocation"], [discovery])
+        self.assertEqual(result["discovery_commands_after_load"], [])
+
+    def test_detects_discovery_from_loaded_custom_registry_path(self):
+        custom_skill = "/custom/registry/team/pr-fetch/SKILL.md"
+        custom_script = "/custom/registry/team/pr-fetch/scripts/fetch_gitcode_pr_patch.py"
+        load = self.load_event()
+        load["item"]["result"]["structured_content"]["skill_file"] = custom_skill
+        discovery = f"find /custom/registry/team/pr-fetch -name {Path(custom_script).name}"
+        command = f"python3 {custom_script} https://gitcode.com/openeuler/OmniStream/pull/587 --output /workspace/pr-587.patch"
+        self.write_events([
+            self.search_event(), load,
+            completed({"type": "command_execution", "command": discovery, "exit_code": 0}),
+            completed({"type": "command_execution", "command": command, "exit_code": 0}),
+        ])
+
+        result = self.observe()
+
+        self.assertFalse(result["direct_resolution"])
+        self.assertEqual(result["discovery_commands_after_load"], [discovery])
+
+    def test_detects_native_claude_skill_discovery_after_load(self):
+        discovery = "rg --files .claude/skills"
+        command = f"python3 {SCRIPT} https://gitcode.com/openeuler/OmniStream/pull/587 --output /workspace/pr-587.patch"
+        self.write_events([
+            self.search_event(), self.load_event(),
+            completed({"type": "command_execution", "command": discovery, "exit_code": 0}),
+            completed({"type": "command_execution", "command": command, "exit_code": 0}),
+        ])
+
+        result = self.observe()
+
+        self.assertFalse(result["direct_resolution"])
+        self.assertEqual(result["discovery_commands_after_load"], [discovery])
 
     def test_reports_discovery_after_unspaced_shell_separator(self):
         discovery = "/bin/bash -lc 'pwd;find /opt/hwskills/skills-src -name fetch_gitcode_pr_patch.py'"
