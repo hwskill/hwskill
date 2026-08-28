@@ -24,14 +24,14 @@ cd hwskills
 本地没有仓库时，可用同一个脚本自举安装：
 
 ~~~bash
-curl -fsSL https://gitcode.com/linkeo2012/hwskills/-/raw/main/install.sh | bash
+curl -fsSL https://raw.gitcode.com/linkeo2012/hwskills/raw/main/install.sh | bash
 ~~~
 
 管道安装默认克隆到 `~/.local/share/hwskill`；指定位置时，把环境变量传给管道右侧的
 shell：
 
 ~~~bash
-curl -fsSL https://gitcode.com/linkeo2012/hwskills/-/raw/main/install.sh \
+curl -fsSL https://raw.gitcode.com/linkeo2012/hwskills/raw/main/install.sh \
   | HWSKILL_HOME=/path/to/hwskill bash
 ~~~
 
