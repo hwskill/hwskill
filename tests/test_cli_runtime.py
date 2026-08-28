@@ -1,6 +1,7 @@
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -150,6 +151,24 @@ class CliRuntimeTest(unittest.TestCase):
         custom = self.project / "audit.jsonl"
         with patch.dict("hwskill.cli.os.environ", {"HWSKILL_AUDIT_PATH": str(custom)}):
             self.assertEqual(default_audit_path(), custom)
+
+    def test_repo_root_defaults_to_hwskill_home_outside_registry_checkout(self):
+        previous = Path.cwd()
+        try:
+            os.chdir(self.project)
+            with patch.dict("hwskill.cli.os.environ", {"HWSKILL_HOME": str(ROOT)}):
+                try:
+                    code, _, _ = self.run_cli(
+                        "profile", "bind", "codex-demo",
+                        "--project", str(self.project), "--yes",
+                    )
+                except Exception as exc:
+                    self.fail(f"CLI ignored HWSKILL_HOME: {exc}")
+        finally:
+            os.chdir(previous)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(resolve_profile_ids(self.project), ["codex-demo"])
 
     def test_claude_code_alias_setup_adapter_and_unsetup(self):
         self.run_cli(

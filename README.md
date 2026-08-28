@@ -11,6 +11,37 @@
 - Codex、Claude Code、OpenCode 的项目级 Catalog 注入，及共用的 STDIO MCP Search/Load 和 JSONL 审计。
 - 一个故意包含折扣阈值缺陷的 Demo 仓库。
 
+## 用户安装
+
+本地已经有仓库时，直接按当前 checkout 安装：
+
+~~~bash
+git clone https://gitcode.com/linkeo2012/hwskills.git
+cd hwskills
+./install.sh
+~~~
+
+本地没有仓库时，可用同一个脚本自举安装：
+
+~~~bash
+curl -fsSL https://gitcode.com/linkeo2012/hwskills/-/raw/main/install.sh | bash
+~~~
+
+管道安装默认克隆到 `~/.local/share/hwskill`；指定位置时，把环境变量传给管道右侧的
+shell：
+
+~~~bash
+curl -fsSL https://gitcode.com/linkeo2012/hwskills/-/raw/main/install.sh \
+  | HWSKILL_HOME=/path/to/hwskill bash
+~~~
+
+两种方式最终都会在仓库内创建私有 `.venv`，把 `~/.local/bin/hwskill` 链接到仓库启动器，
+并在当前 shell 的个人配置文件中幂等写入 `PATH` 与 `HWSKILL_HOME`。无需激活虚拟环境；
+重启终端或按安装输出提示 source 配置文件即可。
+
+CLI 解析技能库位置的顺序为：显式 `--repo-root`、`HWSKILL_HOME`、仓库启动脚本位置。
+无法通过这三种方式确定时会明确报错，不再静默使用当前工作目录。
+
 ## 维护者流程
 
 ~~~bash
@@ -26,15 +57,15 @@ hwskill registry build --repo-root . --check
 ## 项目流程
 
 ~~~bash
-hwskill profile bind codex-demo --project /path/to/project --repo-root /path/to/hwskills --yes
-hwskill setup codex --project /path/to/project --repo-root /path/to/hwskills --yes
-hwskill doctor codex --project /path/to/project --repo-root /path/to/hwskills
+hwskill profile bind codex-demo --project /path/to/project --yes
+hwskill setup codex --project /path/to/project --yes
+hwskill doctor codex --project /path/to/project
 
-hwskill setup claude-code --project /path/to/project --repo-root /path/to/hwskills --yes
-hwskill doctor claude-code --project /path/to/project --repo-root /path/to/hwskills
+hwskill setup claude-code --project /path/to/project --yes
+hwskill doctor claude-code --project /path/to/project
 
-hwskill setup opencode --project /path/to/project --repo-root /path/to/hwskills --yes
-hwskill doctor opencode --project /path/to/project --repo-root /path/to/hwskills
+hwskill setup opencode --project /path/to/project --yes
+hwskill doctor opencode --project /path/to/project
 ~~~
 
 setup 只合并宿主的 hwskill Hook/插件和 MCP 配置：Codex 使用 `.codex/config.toml`，
@@ -102,10 +133,9 @@ bash scripts/run_opencode_gitcode_pr_agent_eval.sh
 
 两者都从现有 OpenCode `minimax-cn-coding-plan` 登录文件读取凭据。登录文件只读挂载到
 Docker，token 在容器进程内解析，不进入镜像、Docker 命令行、仓库、artifact 或审计日志。
-OpenCode 1.14.48 使用 `minimax-cn-coding-plan/MiniMax-M2.5`；当前 MiniMax Coding Plan
-Anthropic-compatible endpoint 对 Claude Code 2.1.141 明确支持的是
-`deepseek-v4-pro`/`deepseek-v4-flash` 系列，因此 Claude 评测实际使用
-`deepseek-v4-pro`，报告同时记录 `credential_provider=minimax-cn-coding-plan`。
+OpenCode 1.14.48 使用 `minimax-cn-coding-plan/MiniMax-M2.5`。Claude Code 2.1.141 的
+初始化事件记录了命令行请求标签，但真实 assistant 事件返回的模型为 `MiniMax-M3`；模型
+归属应以响应事件为准，凭据 provider 为 `minimax-cn-coding-plan`。
 
 OpenCode 的 Catalog 注入依赖 1.14.48 的
 `experimental.chat.system.transform`。`doctor opencode` 只对该验证版本报告 PASS，其他版本
@@ -123,5 +153,5 @@ observer 事后要求公开事件满足 Search→Load→运行时绝对脚本路
 | Docker smoke | 已运行 | 容器执行阶段 `--network none`，离线烟测通过 |
 | Codex Live Eval | 已运行 | Codex 0.147.0 经 Hook/MCP 完成 Search、Load、修复和 3/3 测试，审计事件齐全 |
 | GitCode PR Agent Eval | 已运行 | Agent 直接使用 Load 返回路径执行脚本，无目录搜索；PR #587 patch 获取成功 |
-| Claude Code GitCode PR Eval | 已运行 | Claude Code 2.1.141 + MiniMax Coding Plan/deepseek-v4-pro 完成 Search、Load 和一次直接脚本执行；2 个 diff 文件 |
+| Claude Code GitCode PR Eval | 已运行 | Claude Code 2.1.141 + MiniMax-M3 完成 Search、Load 和一次直接脚本执行；2 个 diff 文件 |
 | OpenCode GitCode PR Eval | 已运行 | OpenCode 1.14.48 + MiniMax-M2.5 完成 Search、Load 和一次直接脚本执行；2 个 diff 文件 |

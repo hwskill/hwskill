@@ -1,9 +1,21 @@
 #!/bin/sh
 set -eu
 
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+script_path=$0
+while [ -L "$script_path" ]; do
+  link_target=$(readlink "$script_path")
+  case "$link_target" in
+    /*) script_path=$link_target ;;
+    *) script_path=$(dirname -- "$script_path")/$link_target ;;
+  esac
+done
+repo_root=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)
+export HWSKILL_SCRIPT_ROOT="$repo_root"
 runtime_deps=
 if [ -d "$repo_root/.runtime-deps" ]; then
   runtime_deps=":$repo_root/.runtime-deps"
+fi
+if [ -x "$repo_root/.venv/bin/python" ]; then
+  exec "$repo_root/.venv/bin/python" -m hwskill "$@"
 fi
 PYTHONPATH="$repo_root/src$runtime_deps${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m hwskill "$@"
