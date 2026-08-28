@@ -17,6 +17,7 @@ if [ -d "$repo_root/.runtime-deps" ]; then
 fi
 if [ -f "$repo_root/.venv/.hwskill-installed" ] \
   && [ -x "$repo_root/.venv/bin/python" ]; then
-  exec "$repo_root/.venv/bin/python" -m hwskill "$@"
+  PYTHONPATH="$repo_root/src$runtime_deps${PYTHONPATH:+:$PYTHONPATH}" \
+    exec "$repo_root/.venv/bin/python" -m hwskill "$@"
 fi
 PYTHONPATH="$repo_root/src$runtime_deps${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m hwskill "$@"

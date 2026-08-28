@@ -27,12 +27,68 @@ class UserInstallTest(unittest.TestCase):
             "  cp \"$0\" \"$3/bin/python\"\n"
             "  exit 0\n"
             "fi\n"
-            "if [ \"${1-}\" = -m ] && [ \"${2-}\" = pip ]; then exit 0; fi\n"
+            "if [ \"${1-}\" = -m ] && [ \"${2-}\" = pip ]; then\n"
+            "  case \" $* \" in\n"
+            "    *\" -e \"*) printf 'local project build attempted\\n' >&2; exit 41 ;;\n"
+            "  esac\n"
+            "  exit 0\n"
+            "fi\n"
             "printf '%s\\n' \"$*\"\n",
             encoding="utf-8",
         )
         path.chmod(0o755)
         return path
+
+    def test_local_installer_does_not_build_the_checkout(self):
+        checkout = self.local_checkout()
+        environment = os.environ | {
+            "HOME": str(self.base / "home"),
+            "HWSKILL_BIN_DIR": str(self.base / "bin"),
+            "HWSKILL_SHELL_CONFIG": str(self.base / "bashrc"),
+            "PYTHON": str(self.fake_python()),
+            "PIP_NO_INDEX": "1",
+        }
+
+        completed = subprocess.run(
+            [str(checkout / "install.sh")],
+            env=environment, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn("local project build attempted", completed.stderr)
+        self.assertTrue((checkout / ".venv/.hwskill-installed").is_file())
+
+    def test_failed_reinstall_clears_the_ready_marker(self):
+        checkout = self.local_checkout()
+        environment = os.environ | {
+            "HOME": str(self.base / "home"),
+            "HWSKILL_BIN_DIR": str(self.base / "bin"),
+            "HWSKILL_SHELL_CONFIG": str(self.base / "bashrc"),
+            "PYTHON": str(self.fake_python()),
+        }
+        first = subprocess.run(
+            [str(checkout / "install.sh")],
+            env=environment, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        marker = checkout / ".venv/.hwskill-installed"
+        self.assertTrue(marker.is_file())
+
+        venv_python = checkout / ".venv/bin/python"
+        venv_python.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1-}\" = -m ] && [ \"${2-}\" = pip ]; then exit 37; fi\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        venv_python.chmod(0o755)
+        second = subprocess.run(
+            [str(checkout / "install.sh")],
+            env=environment, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(second.returncode, 37)
+        self.assertFalse(marker.exists())
 
     def local_checkout(self):
         checkout = self.base / "checkout"

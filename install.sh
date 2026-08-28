@@ -98,8 +98,14 @@ install_checkout() {
   if [ ! -x "$venv/bin/python" ]; then
     "$python_command" -m venv "$venv"
   fi
-  "$venv/bin/python" -m pip install --disable-pip-version-check -e "$repo_root"
-  touch "$venv/.hwskill-installed"
+  marker="$venv/.hwskill-installed"
+  rm -f "$marker"
+  PYTHONPATH="$repo_root/.runtime-deps" \
+    "$venv/bin/python" -m pip install --disable-pip-version-check \
+      "PyYAML>=6,<7" "mcp>=1,<2"
+  PYTHONPATH="$repo_root/src:$repo_root/.runtime-deps" \
+    "$venv/bin/python" -c "import hwskill, yaml, mcp"
+  touch "$marker"
 
   mkdir -p "$bin_dir"
   if [ -L "$command_path" ]; then
