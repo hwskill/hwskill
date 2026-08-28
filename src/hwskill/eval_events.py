@@ -110,7 +110,7 @@ def _claude(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _exit_code(state: dict[str, Any]) -> int:
     metadata = state.get("metadata") or {}
-    for key in ("exitCode", "exit_code", "code"):
+    for key in ("exit", "exitCode", "exit_code", "code"):
         if key in metadata:
             try:
                 return int(metadata[key])

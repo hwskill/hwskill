@@ -3,6 +3,8 @@ set -eu
 
 test ! -e "$HOME/.agents/skills"
 test ! -e /workspace-demo/.agents/skills
+test "$(claude --version)" = "2.1.141 (Claude Code)"
+test "$(opencode --version)" = "1.14.48"
 
 hwskill registry validate --repo-root "$HWSKILL_REGISTRY_ROOT" >/tmp/registry.txt
 hwskill registry build --repo-root "$HWSKILL_REGISTRY_ROOT" --check
@@ -14,6 +16,28 @@ printf '{"cwd":"/workspace-demo","session_id":"docker-smoke","source":"startup"}
       --repo-root "$HWSKILL_REGISTRY_ROOT" \
       --audit-path "$HWSKILL_AUDIT_PATH" >/tmp/hook.json
 grep -q 'catalog_digest' /tmp/hook.json
+
+hwskill setup claude-code --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" --audit-path "$HWSKILL_AUDIT_PATH" --yes
+hwskill doctor claude-code --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" >/tmp/claude-doctor.txt
+printf '{"cwd":"/workspace-demo","session_id":"docker-claude","source":"startup"}\n' \
+  | hwskill adapter claude-code session-start \
+      --repo-root "$HWSKILL_REGISTRY_ROOT" \
+      --audit-path "$HWSKILL_AUDIT_PATH" >/tmp/claude-hook.json
+grep -q 'catalog_digest' /tmp/claude-hook.json
+
+hwskill setup opencode --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" --audit-path "$HWSKILL_AUDIT_PATH" --yes
+hwskill doctor opencode --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" >/tmp/opencode-doctor.txt
+hwskill adapter opencode catalog --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" \
+  --audit-path "$HWSKILL_AUDIT_PATH" >/tmp/opencode-catalog.txt
+grep -q 'catalog_digest' /tmp/opencode-catalog.txt
+node --check /workspace-demo/.opencode/plugins/hwskill.js
+test ! -e /workspace-demo/.claude/skills
+test ! -e /workspace-demo/.opencode/skills
 
 python3 - <<'PY'
 import asyncio

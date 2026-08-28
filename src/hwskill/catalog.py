@@ -17,7 +17,8 @@ def render_effective_catalog(
     lines = [
         "hwskill Effective Skill Catalog",
         f"catalog_digest: {catalog.catalog_digest}",
-        "仅通过 hwskill_search 搜索候选，并用 hwskill_load 按需加载完整技能。",
+        "强制工作流：即使目录中已有匹配 ID，也必须先调用 hwskill_search；"
+        "只可在搜索返回后调用 hwskill_load。不要调用宿主原生 Skill 工具打开这些 ID。",
         "Skills:",
     ]
     lines.extend(f"- {item.skill_id}: {item.description}" for item in catalog.skills)

@@ -42,6 +42,8 @@ class HostAdaptersTest(unittest.TestCase):
         self.assertIn("local/gitcode-pr-review-fetch", text)
         self.assertIn("hwskill_search", text)
         self.assertIn("hwskill_load", text)
+        self.assertIn("即使目录中已有匹配 ID，也必须先调用 hwskill_search", text)
+        self.assertIn("不要调用宿主原生 Skill 工具", text)
         self.assertNotIn("# GitCode PR Review Fetch", text)
         event = json.loads(self.audit_path.read_text(encoding="utf-8"))
         self.assertEqual(event["event"], "catalog")

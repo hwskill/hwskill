@@ -133,6 +133,20 @@ class HostEvalEventsTest(unittest.TestCase):
         self.assertFalse(result["direct_resolution"])
         self.assertEqual(len(result["discovery_commands_before_invocation"]), 1)
 
+    def test_opencode_real_exit_metadata_preserves_command_failure(self):
+        from hwskill.eval_events import normalize_events
+
+        self.write([
+            self.opencode_tool(
+                "bash", "bash-1", {"command": "false"}, "", {"exit": 1}
+            )
+        ])
+
+        events = normalize_events(self.path, "opencode")
+
+        self.assertEqual(events[0]["item"]["exit_code"], 1)
+        self.assertEqual(events[0]["item"]["status"], "failed")
+
 
 if __name__ == "__main__":
     unittest.main()
