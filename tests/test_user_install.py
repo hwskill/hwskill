@@ -169,6 +169,30 @@ class UserInstallTest(unittest.TestCase):
         self.assertIn("managed markers", completed.stderr)
         self.assertEqual(shell_config.read_text(encoding="utf-8"), original)
 
+    def test_installer_refuses_reversed_managed_markers_without_data_loss(self):
+        checkout = self.local_checkout()
+        shell_config = self.base / "bashrc"
+        original = (
+            "export BEFORE=1\n# <<< hwskill <<<\n"
+            "# >>> hwskill >>>\nexport AFTER=1\n"
+        )
+        shell_config.write_text(original, encoding="utf-8")
+
+        completed = subprocess.run(
+            [str(checkout / "install.sh")],
+            env=os.environ | {
+                "HOME": str(self.base / "home"),
+                "HWSKILL_BIN_DIR": str(self.base / "bin"),
+                "HWSKILL_SHELL_CONFIG": str(shell_config),
+                "PYTHON": str(self.fake_python()),
+            },
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("managed markers", completed.stderr)
+        self.assertEqual(shell_config.read_text(encoding="utf-8"), original)
+
     def test_installer_preserves_symlinked_shell_configuration(self):
         checkout = self.local_checkout()
         dotfiles = self.base / "dotfiles/bashrc"

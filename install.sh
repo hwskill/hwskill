@@ -37,15 +37,24 @@ configure_shell() {
   done
   mkdir -p "$(dirname -- "$write_path")"
 
-  start_count=0
-  end_count=0
   if [ -f "$write_path" ]; then
-    start_count=$(grep -Fxc "$managed_start" "$write_path" || true)
-    end_count=$(grep -Fxc "$managed_end" "$write_path" || true)
-  fi
-  if [ "$start_count" -ne "$end_count" ] || [ "$start_count" -gt 1 ]; then
-    echo "hwskill managed markers are malformed in $config_path; refusing to edit" >&2
-    exit 2
+    if ! awk -v start="$managed_start" -v end="$managed_end" '
+      BEGIN { state = 0; valid = 1 }
+      $0 == start {
+        if (state != 0) valid = 0
+        state = 1
+        next
+      }
+      $0 == end {
+        if (state != 1) valid = 0
+        state = 2
+        next
+      }
+      END { if (!valid || state == 1) exit 1 }
+    ' "$write_path"; then
+      echo "hwskill managed markers are malformed in $config_path; refusing to edit" >&2
+      exit 2
+    fi
   fi
 
   temp_path=$(mktemp "${write_path}.hwskill.XXXXXX")
