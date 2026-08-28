@@ -93,6 +93,38 @@ class HostEvalEventsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "script invocation not found after completed"):
             self.observe("claude-code")
 
+    def test_claude_discovery_concurrent_with_load_is_recorded_but_not_after_load(self):
+        discovery = f"find /opt/hwskills -name {Path(SCRIPT).name}"
+        command = f"python3 {SCRIPT} {URL} --output {OUTPUT}"
+        self.write([
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "search-1", "name": "mcp__hwskill__hwskill_search", "input": {"query": "PR review"}},
+            ]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "search-1", "content": json.dumps({"results": [{"skill_id": SKILL_ID}]})},
+            ]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "load-1", "name": "mcp__hwskill__hwskill_load", "input": {"skill_id": SKILL_ID}},
+                {"type": "tool_use", "id": "find-1", "name": "Bash", "input": {"command": discovery}},
+            ]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "load-1", "content": json.dumps({"skill_file": SKILL_FILE})},
+                {"type": "tool_result", "tool_use_id": "find-1", "content": SCRIPT},
+            ]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "bash-1", "name": "Bash", "input": {"command": command}},
+            ]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "bash-1", "content": "done"},
+            ]}},
+        ])
+
+        result = self.observe("claude-code")
+
+        self.assertTrue(result["direct_resolution"])
+        self.assertEqual(result["discovery_commands_before_invocation"], [discovery])
+        self.assertEqual(result["discovery_commands_after_load"], [])
+
     def opencode_tool(self, tool, call_id, input_data, output, metadata=None):
         return {
             "type": "tool_use",

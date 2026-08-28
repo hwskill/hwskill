@@ -240,14 +240,19 @@ def observe_script_resolution(
             discovery.append(command)
 
     discovery_after_load = []
-    for event in events[load_index + 1:first_index]:
+    for event_index, event in enumerate(
+        events[load_index + 1:first_index], start=load_index + 1
+    ):
         if event.get("type") != "item.completed":
             continue
         item = event.get("item") or {}
         if item.get("type") != "command_execution":
             continue
         command = str(item.get("command", ""))
-        if _is_discovery(command, skill_file, expected_script):
+        if (
+            _completed_before_call(load_item, load_index, item, event_index)
+            and _is_discovery(command, skill_file, expected_script)
+        ):
             discovery_after_load.append(command)
 
     successful = next(
