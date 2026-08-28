@@ -94,3 +94,11 @@ def unsetup_codex(project: Path) -> SetupResult:
     config.write_text(updated, encoding="utf-8")
     state.unlink()
     return SetupResult(config, True)
+
+
+from .json_configuration import (  # noqa: E402
+    setup_claude_code,
+    setup_opencode,
+    unsetup_claude_code,
+    unsetup_opencode,
+)
