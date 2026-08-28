@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import re
 import shlex
 from typing import Any
+
+from .eval_events import normalize_events
 
 
 _DISCOVERY_TOOLS = {"fd", "find", "grep", "ls", "rg", "tree"}
@@ -18,10 +19,6 @@ _PATCH_DIAGNOSTIC = re.compile(
     r"patch: state=(?P<state>\S+) api_base=(?P<api_base>\S+) "
     r"head=(?P<head>[0-9a-fA-F]+) files=(?P<files>\d+)"
 )
-
-
-def _load_events(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
 def _tokens(command: str) -> list[str]:
@@ -140,8 +137,10 @@ def observe_script_resolution(
     *,
     expected_url: str | None = None,
     expected_output: str | None = None,
+    host: str = "codex",
 ) -> dict[str, Any]:
-    events = _load_events(event_path)
+    host = host.replace("_", "-")
+    events = normalize_events(event_path, host)
     load_index = None
     skill_file = None
 
@@ -223,6 +222,7 @@ def observe_script_resolution(
             diagnostic["files"] = int(diagnostic["files"])
 
     return {
+        "host": host,
         "skill_id": skill_id,
         "search_event_index": search_indexes[-1],
         "load_event_index": load_index,
