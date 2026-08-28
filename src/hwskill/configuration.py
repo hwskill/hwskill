@@ -74,6 +74,25 @@ def _extract_managed_block(content: str) -> tuple[str, int, int]:
     return content[start:end], start, end
 
 
+def codex_setup_is_current(project: Path) -> bool:
+    config = project / ".codex/config.toml"
+    state = project / ".hwskills/state/setup-codex.json"
+    if not config.is_file() or not state.is_file():
+        return False
+    try:
+        block, _, _ = _extract_managed_block(config.read_text(encoding="utf-8"))
+        ownership = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(ownership, dict):
+        return False
+    actual_digest = "sha256:" + hashlib.sha256(block.encode()).hexdigest()
+    return (
+        ownership.get("config") == ".codex/config.toml"
+        and ownership.get("managed_digest") == actual_digest
+    )
+
+
 def unsetup_codex(project: Path) -> SetupResult:
     config = project / ".codex/config.toml"
     if not config.exists():

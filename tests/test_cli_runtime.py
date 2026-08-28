@@ -142,6 +142,20 @@ class CliRuntimeTest(unittest.TestCase):
         self.assertEqual(json.loads(output)["profiles"], [])
         self.assertIn(str(self.project), error)
 
+    def test_info_silently_discovers_git_root_without_project(self):
+        (self.project / ".git").mkdir()
+        nested = self.project / "nested"
+        nested.mkdir()
+
+        with patch("hwskill.cli.Path.cwd", return_value=nested):
+            code, output, error = self.run_cli(
+                "info", "--repo-root", str(ROOT)
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(error, "")
+        self.assertIn(f"project:     {self.project}", output)
+
     def test_noninteractive_write_requires_explicit_project_and_yes(self):
         with patch("hwskill.cli.sys.stdin.isatty", return_value=False):
             with self.assertRaisesRegex(SystemExit, "explicit --project and --yes"):
@@ -235,6 +249,36 @@ class CliRuntimeTest(unittest.TestCase):
         names = {item["name"] for item in json.loads(output)["checks"]}
         self.assertIn("claude-hook-config", names)
         self.assertNotIn("codex-config", names)
+
+    def test_info_json_reports_cli_repository_source(self):
+        try:
+            code, output, _ = self.run_cli(
+                "info", "--project", str(self.project),
+                "--repo-root", str(ROOT), "--json",
+            )
+        except SystemExit as exc:
+            self.fail(f"info command is not implemented: {exc}")
+
+        self.assertEqual(code, 0)
+        info = json.loads(output)
+        self.assertEqual(info["installation"]["repository"], str(ROOT.resolve()))
+        self.assertEqual(info["installation"]["repository_source"], "--repo-root")
+        self.assertEqual(info["integration"]["project"], str(self.project.resolve()))
+
+    def test_info_defaults_to_human_readable_summary(self):
+        try:
+            code, output, _ = self.run_cli(
+                "info", "--project", str(self.project),
+                "--repo-root", str(ROOT),
+            )
+        except SystemExit as exc:
+            self.fail(f"info command is not implemented: {exc}")
+
+        self.assertEqual(code, 0)
+        self.assertTrue(output.startswith("hwskill v0.1.0 "))
+        self.assertIn("\nrepository:  ", output)
+        self.assertIn("\nIntegrations:\n", output)
+        self.assertIn("codex        -- ", output)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from .claude_code_adapter import run_session_start as run_claude_session_start
 from .codex_adapter import run_session_start as run_codex_session_start
 from .doctor import run_doctor
 from .importer import import_source
+from .info import collect_info, format_info_summary
 from .loader import load_skill
 from .models import SourceSpec
 from .profiles import bind_profile, resolve_profile_ids, resolve_profiles, unbind_profile
@@ -54,10 +55,24 @@ def _repo_root(value: str | None) -> Path:
         raise SystemExit(str(exc)) from exc
 
 
-def _project_path(value: str | None, *, write: bool, yes: bool = False) -> Path:
+def _repo_root_source(value: str | None) -> str:
+    if value is not None:
+        return "--repo-root"
+    if os.environ.get("HWSKILL_HOME"):
+        return "HWSKILL_HOME"
+    return "launcher"
+
+
+def _project_path(
+    value: str | None,
+    *,
+    write: bool,
+    yes: bool = False,
+    announce: bool = True,
+) -> Path:
     explicit = value is not None
     project = Path(value).resolve() if explicit else find_project(Path.cwd())
-    if not explicit:
+    if not explicit and announce:
         print(f"PROJECT\t{project}", file=sys.stderr)
     if not write:
         return project
@@ -77,6 +92,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hwskill")
     parser.add_argument("--version", action="store_true")
     commands = parser.add_subparsers(dest="command")
+    info_parser = commands.add_parser("info")
+    info_parser.add_argument("--project")
+    info_parser.add_argument("--repo-root")
+    info_parser.add_argument("--json", action="store_true")
     registry = commands.add_parser("registry")
     registry_commands = registry.add_subparsers(dest="registry_command")
     import_parser = registry_commands.add_parser("import")
@@ -165,6 +184,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.version:
         print(f"hwskill {__version__}")
+    elif args.command == "info":
+        info = collect_info(
+            _repo_root(args.repo_root),
+            _project_path(args.project, write=False, announce=False),
+            repository_source=_repo_root_source(args.repo_root),
+        )
+        if args.json:
+            print(json.dumps(info, ensure_ascii=False, indent=2))
+        else:
+            print(format_info_summary(info), end="")
     elif args.command == "registry" and args.registry_command == "import":
         source_data = yaml.safe_load(Path(args.source).read_text(encoding="utf-8"))
         records = import_source(

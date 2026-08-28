@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from hwskill.configuration import setup_claude_code, setup_opencode
+from hwskill.configuration import setup_claude_code, setup_codex, setup_opencode
 from hwskill.doctor import run_doctor
 from hwskill.profiles import bind_profile
 
@@ -40,6 +40,53 @@ class HostDoctorTest(unittest.TestCase):
         self.assertEqual(checks["claude-mcp-config"].status, "PASS")
         self.assertEqual(checks["claude-cli"].status, "PASS")
         self.assertNotIn("codex-config", checks)
+
+    def test_codex_doctor_rejects_comments_and_an_unowned_session_hook(self):
+        config = self.project / ".codex/config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            "# [mcp_servers.hwskill]\n"
+            "[[hooks.SessionStart]]\n"
+            "[[hooks.SessionStart.hooks]]\n"
+            'type = "command"\n'
+            'command = "echo unrelated"\n',
+            encoding="utf-8",
+        )
+
+        checks = self.statuses("codex")
+
+        self.assertEqual(checks["mcp-config"].status, "WARN")
+        self.assertEqual(checks["hook-config"].status, "WARN")
+
+    def test_codex_doctor_rejects_a_modified_owned_block(self):
+        setup_codex(self.project, ROOT)
+        config = self.project / ".codex/config.toml"
+        original = config.read_text(encoding="utf-8")
+        mutations = (
+            original.replace("required = true", "required = false"),
+            original.replace('command = "hwskill"', 'command = "other"', 1),
+        )
+
+        for mutated in mutations:
+            with self.subTest(mutated=mutated):
+                config.write_text(mutated, encoding="utf-8")
+                checks = self.statuses("codex")
+                self.assertEqual(checks["mcp-config"].status, "WARN")
+                self.assertEqual(checks["hook-config"].status, "WARN")
+
+    def test_codex_doctor_rejects_non_object_setup_state(self):
+        setup_codex(self.project, ROOT)
+        state = self.project / ".hwskills/state/setup-codex.json"
+
+        for invalid in ([], None, "invalid"):
+            with self.subTest(invalid=invalid):
+                state.write_text(json.dumps(invalid), encoding="utf-8")
+                try:
+                    checks = self.statuses("codex")
+                except AttributeError as exc:
+                    self.fail(f"non-object setup state escaped validation: {exc}")
+                self.assertEqual(checks["mcp-config"].status, "WARN")
+                self.assertEqual(checks["hook-config"].status, "WARN")
 
     def test_claude_doctor_warns_when_owned_mcp_command_is_modified(self):
         setup_claude_code(self.project, ROOT)

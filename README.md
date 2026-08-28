@@ -42,6 +42,36 @@ curl -fsSL https://raw.gitcode.com/linkeo2012/hwskills/raw/main/install.sh \
 CLI 解析技能库位置的顺序为：显式 `--repo-root`、`HWSKILL_HOME`、仓库启动脚本位置。
 无法通过这三种方式确定时会明确报错，不再静默使用当前工作目录。
 
+查看当前安装位置、运行时、Git 状态，以及项目对 Codex、Claude Code、OpenCode 的集成
+状态：
+
+~~~bash
+hwskill info
+hwskill info --project /path/to/project
+hwskill info --project /path/to/project --json
+~~~
+
+默认输出类似 `configure` 的安装摘要，并将各宿主标记为 `installed`、`not installed` 或
+`incomplete`。JSON 输出保留每个宿主的完整 doctor checks，适合脚本诊断。`info` 是只读
+命令，不修改技能库或业务项目。
+
+~~~text
+hwskill v0.1.0 installed.
+
+repository:  /home/user/.local/share/hwskill
+executable:  /home/user/.local/bin/hwskill
+venv:        /home/user/.local/share/hwskill/.venv
+python:      /home/user/.local/share/hwskill/.venv/bin/python
+git:         main@abc1234 clean
+
+Integrations:
+project:     /path/to/project
+profiles:    personal-baseline
+codex        -- installed
+claude-code  -- not installed
+opencode     -- incomplete
+~~~
+
 ## 维护者流程
 
 ~~~bash

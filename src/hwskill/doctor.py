@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from .configuration import codex_setup_is_current
 from .profiles import resolve_profiles
 from .registry import validate_registry
 
@@ -32,7 +33,9 @@ def _json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
+def run_common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
+    project = project.resolve()
+    registry_root = registry_root.resolve()
     records = validate_registry(registry_root)
     catalog = resolve_profiles(project, registry_root)
     checks = [
@@ -72,17 +75,17 @@ def _common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
 
 def _codex_checks(project: Path) -> list[CheckResult]:
     config = project / ".codex/config.toml"
-    text = config.read_text(encoding="utf-8") if config.is_file() else ""
+    setup_ok = codex_setup_is_current(project)
     executable = shutil.which("codex")
     return [
         CheckResult("codex-config", "PASS" if config.is_file() else "WARN", str(config)),
         CheckResult(
-            "mcp-config", "PASS" if "[mcp_servers.hwskill]" in text else "WARN",
-            "required hwskill MCP configured" if "required = true" in text else "MCP missing or optional",
+            "mcp-config", "PASS" if setup_ok else "WARN",
+            "required hwskill MCP configured" if setup_ok else "MCP missing or modified",
         ),
         CheckResult(
-            "hook-config", "PASS" if "[[hooks.SessionStart]]" in text else "WARN",
-            "SessionStart catalog hook configured" if "[[hooks.SessionStart]]" in text else "hook missing",
+            "hook-config", "PASS" if setup_ok else "WARN",
+            "SessionStart catalog hook configured" if setup_ok else "hook missing or modified",
         ),
         CheckResult("codex-cli", "PASS" if executable else "WARN", executable or "not found on PATH"),
     ]
@@ -166,10 +169,9 @@ def _opencode_checks(project: Path) -> list[CheckResult]:
     ]
 
 
-def run_doctor(host: str, project: Path, registry_root: Path) -> list[CheckResult]:
+def run_host_checks(host: str, project: Path) -> list[CheckResult]:
     host = host.replace("_", "-")
     project = project.resolve()
-    registry_root = registry_root.resolve()
     host_checks = {
         "codex": _codex_checks,
         "claude-code": _claude_checks,
@@ -177,4 +179,11 @@ def run_doctor(host: str, project: Path, registry_root: Path) -> list[CheckResul
     }
     if host not in host_checks:
         raise ValueError(f"unsupported host: {host}")
-    return [*_common_checks(project, registry_root), *host_checks[host](project)]
+    return host_checks[host](project)
+
+
+def run_doctor(host: str, project: Path, registry_root: Path) -> list[CheckResult]:
+    return [
+        *run_common_checks(project, registry_root),
+        *run_host_checks(host, project),
+    ]
