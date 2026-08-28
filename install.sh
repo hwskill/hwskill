@@ -27,18 +27,41 @@ configure_shell() {
     esac
   fi
   mkdir -p "$(dirname -- "$config_path")"
-  temp_path=$(mktemp "${config_path}.hwskill.XXXXXX")
-  if [ -f "$config_path" ]; then
+  write_path=$config_path
+  while [ -L "$write_path" ]; do
+    link_target=$(readlink "$write_path")
+    case "$link_target" in
+      /*) write_path=$link_target ;;
+      *) write_path=$(dirname -- "$write_path")/$link_target ;;
+    esac
+  done
+  mkdir -p "$(dirname -- "$write_path")"
+
+  start_count=0
+  end_count=0
+  if [ -f "$write_path" ]; then
+    start_count=$(grep -Fxc "$managed_start" "$write_path" || true)
+    end_count=$(grep -Fxc "$managed_end" "$write_path" || true)
+  fi
+  if [ "$start_count" -ne "$end_count" ] || [ "$start_count" -gt 1 ]; then
+    echo "hwskill managed markers are malformed in $config_path; refusing to edit" >&2
+    exit 2
+  fi
+
+  temp_path=$(mktemp "${write_path}.hwskill.XXXXXX")
+  if [ -f "$write_path" ]; then
     awk -v start="$managed_start" -v end="$managed_end" '
       $0 == start { managed = 1; next }
       $0 == end { managed = 0; next }
       !managed { print }
-    ' "$config_path" >"$temp_path"
+    ' "$write_path" >"$temp_path"
   fi
   repo_quoted=$(shell_quote "$repo_root")
   bin_quoted=$(shell_quote "$bin_dir")
   {
-    if [ -s "$temp_path" ]; then printf '\n'; fi
+    if [ -s "$temp_path" ] && [ -n "$(tail -n 1 "$temp_path")" ]; then
+      printf '\n'
+    fi
     printf '%s\n' "$managed_start"
     printf 'export HWSKILL_HOME=%s\n' "$repo_quoted"
     printf 'case ":$PATH:" in\n'
@@ -47,7 +70,11 @@ configure_shell() {
     printf 'esac\n'
     printf '%s\n' "$managed_end"
   } >>"$temp_path"
-  mv "$temp_path" "$config_path"
+  if [ -e "$write_path" ]; then
+    existing_mode=$(stat -c '%a' "$write_path")
+    chmod "$existing_mode" "$temp_path"
+  fi
+  mv "$temp_path" "$write_path"
   printf '%s' "$config_path"
 }
 
@@ -63,6 +90,7 @@ install_checkout() {
     "$python_command" -m venv "$venv"
   fi
   "$venv/bin/python" -m pip install --disable-pip-version-check -e "$repo_root"
+  touch "$venv/.hwskill-installed"
 
   mkdir -p "$bin_dir"
   if [ -L "$command_path" ]; then
