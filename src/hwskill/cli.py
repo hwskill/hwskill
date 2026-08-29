@@ -299,17 +299,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_parser.add_argument("--json", action="store_true")
     setup_parser = _command(commands, "setup", "Configure a host integration")
     _add_host_argument(setup_parser)
-    setup_parser.add_argument("--project")
+    _add_scope_arguments(setup_parser)
     setup_parser.add_argument("--repo-root")
     setup_parser.add_argument("--audit-path")
     setup_parser.add_argument("--yes", action="store_true")
     unsetup_parser = _command(commands, "unsetup", "Remove a host integration")
     _add_host_argument(unsetup_parser)
-    unsetup_parser.add_argument("--project")
+    _add_scope_arguments(unsetup_parser)
     unsetup_parser.add_argument("--yes", action="store_true")
     doctor_parser = _command(commands, "doctor", "Check a host integration")
     _add_host_argument(doctor_parser)
-    doctor_parser.add_argument("--project")
+    _add_scope_arguments(doctor_parser)
     doctor_parser.add_argument("--repo-root")
     doctor_parser.add_argument("--json", action="store_true")
     adapter_parser = _command(commands, "adapter", "Run host adapter commands")
@@ -523,29 +523,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded = load_skill(catalog, args.skill_id, args.expected_digest, args.raw)
         print(json.dumps(asdict(loaded), ensure_ascii=False, indent=2) if args.json else loaded.content, end="\n")
     elif args.command == "setup":
-        project_path = _project_path(args.project, write=True, yes=args.yes)
+        target = _scope_target(args, write=True)
         audit_path = Path(args.audit_path) if args.audit_path else None
         setup = {
-            "codex": lambda project, root, audit: setup_codex(
-                project_scope(project), root, audit
-            ),
+            "codex": setup_codex,
             "claude-code": setup_claude_code,
             "opencode": setup_opencode,
         }[_host(args.host)]
-        result = setup(project_path, _repo_root(args.repo_root), audit_path)
+        result = setup(target, _repo_root(args.repo_root), audit_path)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "unsetup":
-        project_path = _project_path(args.project, write=True, yes=args.yes)
+        target = _scope_target(args, write=True)
         unsetup = {
-            "codex": lambda project: unsetup_codex(project_scope(project)),
+            "codex": unsetup_codex,
             "claude-code": unsetup_claude_code,
             "opencode": unsetup_opencode,
         }[_host(args.host)]
-        result = unsetup(project_path)
+        result = unsetup(target)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "doctor":
+        target = _scope_target(args, write=False)
         checks = run_doctor(
-            _host(args.host), _project_path(args.project, write=False),
+            _host(args.host), target.project_root or target.config_root,
             _repo_root(args.repo_root),
         )
         if args.json:

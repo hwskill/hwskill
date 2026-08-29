@@ -244,6 +244,19 @@ class CliRuntimeTest(unittest.TestCase):
         self.assertTrue((destination / "chinese-thinking/SKILL.md").is_file())
         self.assertTrue((destination / "systematic-debugging/SKILL.md").is_file())
 
+    def test_setup_doctor_unsetup_require_scope_and_accept_bare_project(self):
+        for command in ("setup", "doctor", "unsetup"):
+            with self.subTest(command=command):
+                with self.assertRaises(SystemExit):
+                    main([command, "codex"])
+
+        (self.project / ".git").mkdir()
+        with patch("hwskill.cli.Path.cwd", return_value=self.project):
+            code, _, _ = self.run_cli(
+                "setup", "codex", "--project", "--repo-root", str(ROOT), "--yes"
+            )
+        self.assertEqual(code, 0)
+
     def test_info_silently_discovers_git_root_without_project(self):
         (self.project / ".git").mkdir()
         nested = self.project / "nested"
