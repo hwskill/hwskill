@@ -8,9 +8,67 @@ test "$(opencode --version)" = "1.14.48"
 
 hwskill registry validate --repo-root "$HWSKILL_REGISTRY_ROOT" >/tmp/registry.txt
 hwskill registry build --repo-root "$HWSKILL_REGISTRY_ROOT" --check
+
+user_project=$(mktemp -d /tmp/hwskill-user-project-XXXXXX)
+hwskill profile set personal-baseline --user \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" --yes
+hwskill profile show --project "$user_project" \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" --json >/tmp/user-profile.json
+
+for host in codex claude-code opencode; do
+  hwskill setup "$host" --user \
+    --repo-root "$HWSKILL_REGISTRY_ROOT" --audit-path "$HWSKILL_AUDIT_PATH" --yes
+  hwskill doctor "$host" --user \
+    --repo-root "$HWSKILL_REGISTRY_ROOT" --json >"/tmp/user-$host-doctor.json"
+done
+
+printf '{"cwd":"%s","session_id":"docker-user-codex","source":"startup"}\n' "$user_project" \
+  | hwskill adapter codex session-start --scope user \
+      --repo-root "$HWSKILL_REGISTRY_ROOT" \
+      --audit-path "$HWSKILL_AUDIT_PATH" >/tmp/user-codex-hook.json
+printf '{"cwd":"%s","session_id":"docker-user-claude","source":"startup"}\n' "$user_project" \
+  | hwskill adapter claude-code session-start --scope user \
+      --repo-root "$HWSKILL_REGISTRY_ROOT" \
+      --audit-path "$HWSKILL_AUDIT_PATH" >/tmp/user-claude-hook.json
+hwskill adapter opencode catalog --scope user --runtime-project "$user_project" \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" \
+  --audit-path "$HWSKILL_AUDIT_PATH" >/tmp/user-opencode-catalog.txt
+
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+profile = json.loads(Path("/tmp/user-profile.json").read_text())
+assert profile["effective_scope"] == "user"
+assert profile["profiles"] == ["personal-baseline"]
+
+required = {
+    "codex": {"mcp-config", "hook-config"},
+    "claude-code": {"claude-hook-config", "claude-mcp-config"},
+    "opencode": {"opencode-plugin-config", "opencode-mcp-config"},
+}
+for host, names in required.items():
+    payload = json.loads(Path(f"/tmp/user-{host}-doctor.json").read_text())
+    statuses = {item["name"]: item["status"] for item in payload["checks"]}
+    assert all(statuses[name] == "PASS" for name in names), (host, statuses)
+
+for path in (
+    "/tmp/user-codex-hook.json",
+    "/tmp/user-claude-hook.json",
+    "/tmp/user-opencode-catalog.txt",
+):
+    assert "local/chinese-thinking" in Path(path).read_text(), path
+PY
+
 hwskill profile resolve --project /workspace-demo --repo-root "$HWSKILL_REGISTRY_ROOT" --json >/tmp/effective.json
 grep -q 'superpowers/systematic-debugging' /tmp/effective.json
 
+hwskill setup codex --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" --audit-path "$HWSKILL_AUDIT_PATH" --yes
+hwskill doctor codex --project /workspace-demo \
+  --repo-root "$HWSKILL_REGISTRY_ROOT" >/tmp/codex-doctor.txt
+grep -Eq '^mcp-config[[:space:]]+PASS' /tmp/codex-doctor.txt
+grep -Eq '^hook-config[[:space:]]+PASS' /tmp/codex-doctor.txt
 printf '{"cwd":"/workspace-demo","session_id":"docker-smoke","source":"startup"}\n' \
   | hwskill adapter codex session-start \
       --repo-root "$HWSKILL_REGISTRY_ROOT" \

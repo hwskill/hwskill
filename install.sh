@@ -133,7 +133,21 @@ if [ -n "$script_dir" ] \
   exit 0
 fi
 
-install_home=${HWSKILL_HOME:-"$HOME/.local/share/hwskill"}
+install_path=
+for argument in "$@"; do
+  case "$argument" in
+    --install-path=*) install_path=${argument#--install-path=} ;;
+    *) echo "unknown installer argument: $argument" >&2; exit 2 ;;
+  esac
+done
+if [ -n "$install_path" ]; then
+  install_home=$install_path
+elif [ "$#" -gt 0 ]; then
+  echo "--install-path requires a non-empty path" >&2
+  exit 2
+else
+  install_home=${HWSKILL_HOME:-"$HOME/.local/share/hwskill"}
+fi
 repository_url=${HWSKILL_REPOSITORY_URL:-"https://gitcode.com/linkeo2012/hwskills.git"}
 if [ ! -e "$install_home" ]; then
   git clone "$repository_url" "$install_home"

@@ -365,6 +365,35 @@ class CliRuntimeTest(unittest.TestCase):
         self.assertIn("claude-hook-config", names)
         self.assertNotIn("codex-config", names)
 
+    def test_user_doctor_checks_the_user_scoped_codex_setup(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(self.project / "home"),
+                "XDG_CONFIG_HOME": str(self.project / "config"),
+                "XDG_STATE_HOME": str(self.project / "state"),
+                "CODEX_HOME": str(self.project / "codex-home"),
+            },
+            clear=True,
+        ):
+            self.run_cli(
+                "profile", "set", "personal-baseline", "--user",
+                "--repo-root", str(ROOT), "--yes",
+            )
+            self.run_cli(
+                "setup", "codex", "--user", "--repo-root", str(ROOT), "--yes",
+            )
+            code, output, _ = self.run_cli(
+                "doctor", "codex", "--user", "--repo-root", str(ROOT), "--json",
+            )
+
+        self.assertEqual(code, 0)
+        checks = {item["name"]: item for item in json.loads(output)["checks"]}
+        self.assertEqual(checks["mcp-config"]["status"], "PASS")
+        self.assertEqual(checks["hook-config"]["status"], "PASS")
+        self.assertEqual(checks["profile"]["status"], "PASS")
+        self.assertIn("3 effective skills", checks["profile"]["detail"])
+
     def test_info_json_reports_cli_repository_source(self):
         try:
             code, output, _ = self.run_cli(

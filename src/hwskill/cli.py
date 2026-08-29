@@ -544,8 +544,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "doctor":
         target = _scope_target(args, write=False)
         checks = run_doctor(
-            _host(args.host), target.project_root or target.config_root,
-            _repo_root(args.repo_root),
+            _host(args.host), target, _repo_root(args.repo_root),
         )
         if args.json:
             print(json.dumps({"checks": [asdict(item) for item in checks]}, ensure_ascii=False, indent=2))

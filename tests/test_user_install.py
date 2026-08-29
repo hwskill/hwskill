@@ -204,6 +204,41 @@ class UserInstallTest(unittest.TestCase):
             shell_config.read_text(encoding="utf-8"),
         )
 
+    def test_curl_bootstrap_accepts_install_path_argument(self):
+        source = self.base / "remote"
+        shutil.copytree(self.local_checkout(), source)
+        subprocess.run(["git", "init", "-q", str(source)], check=True)
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+        subprocess.run([
+            "git", "-C", str(source), "-c", "user.name=Test",
+            "-c", "user.email=test@example.com", "commit", "-qm", "fixture",
+        ], check=True)
+        install_home = self.base / "custom-install"
+        bin_dir = self.base / "argument-bin"
+        shell_config = self.base / "argument-rc"
+
+        completed = subprocess.run(
+            ["sh", "-s", "--", f"--install-path={install_home}"],
+            input=(ROOT / "install.sh").read_text(encoding="utf-8"),
+            cwd=self.base,
+            env=os.environ | {
+                "HOME": str(self.base / "home"),
+                "HWSKILL_REPOSITORY_URL": str(source),
+                "HWSKILL_BIN_DIR": str(bin_dir),
+                "HWSKILL_SHELL_CONFIG": str(shell_config),
+                "PYTHON": str(self.fake_python()),
+            },
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue((install_home / ".git").is_dir())
+        self.assertEqual((bin_dir / "hwskill").resolve(), install_home / "scripts/hwskill")
+        self.assertIn(
+            f"export HWSKILL_HOME='{install_home}'",
+            shell_config.read_text(encoding="utf-8"),
+        )
+
     def test_installer_refuses_malformed_managed_shell_block_without_data_loss(self):
         checkout = self.local_checkout()
         shell_config = self.base / "bashrc"

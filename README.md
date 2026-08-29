@@ -8,7 +8,7 @@
 - Superpowers 6.3.0 的 14 个 Skill 快照。
 - 每个快照都有来源、revision、许可证状态和 SHA-256 内容摘要。
 - `personal-baseline`、`superpowers`、`codex-demo` 三个 Profile。
-- Codex、Claude Code、OpenCode 的项目级 Catalog 注入，及共用的 STDIO MCP Search/Load 和 JSONL 审计。
+- Codex、Claude Code、OpenCode 的用户级与项目级 Catalog 注入，及共用的 STDIO MCP Search/Load 和 JSONL 审计。
 - 一个故意包含折扣阈值缺陷的 Demo 仓库。
 
 ## 用户安装
@@ -77,13 +77,14 @@ hwskill doctor claude-code --project # in-project
 hwskill doctor claude-code --project <project-root>
 ```
 
-当前已支持集成的宿主工具如下：
+当前已支持集成的宿主工具如下。宿主标识用于 `hwskill setup`、`doctor` 和
+`unsetup`；可执行命令用于启动宿主：
 
-| 宿主工具    | 建议版本 |
-| ----------- | -------- |
-| claude-code | (帮我填) |
-| codex       | (帮我填) |
-| opencode    | (帮我填) |
+| 宿主标识    | 可执行命令 | 已验证版本 |
+| ----------- | ---------- | ---------- |
+| claude-code | `claude`   | 2.1.141    |
+| codex       | `codex`    | 0.147.0    |
+| opencode    | `opencode` | 1.14.48    |
 
 ### 2. 选择你的使用场景
 
@@ -97,6 +98,7 @@ hwskill profile list
 
 ```bash
 hwskill profile set <profile-name> --user
+hwskill profile set <profile-name,profile-name,...> --user
 ```
 
 为特定项目设置使用场景：
@@ -104,6 +106,7 @@ hwskill profile set <profile-name> --user
 ```bash
 # 方式1：通过参数指定项目
 hwskill profile set <profile-name> --project <project-root>
+hwskill profile set <profile-name,profile-name,...> --project <project-root>
 
 # 方式2：在项目中执行
 cd <project-root>
@@ -118,13 +121,21 @@ hwskill profile show --project # in project
 hwskill profile show --project <project-root>
 ```
 
+项目设置优先于用户设置；项目没有显式设置时会回退到用户设置。显式设置空场景可以阻止
+项目回退到用户设置，删除项目设置后则会恢复回退：
+
+```bash
+hwskill profile set --empty --project <project-root>
+hwskill profile unset --project <project-root>
+```
+
 ### 3. 开始使用
 
 在项目中直接启动宿主工具，会话开始时会自动按场景注入技能信息，就如同直接安装在技能目录那样。
 
 ```bash
 cd <your-project>
-claude-code
+claude
 ```
 
 ### 4. 去中心化安装方式
@@ -135,13 +146,22 @@ claude-code
 
 ```bash
 hwskill skill dump-profile <profile-name> <skills-dir>
+hwskill skill dump-profile <profile-name,profile-name,...> <skills-dir>
 # skills-dir example: ~/.agents/skills
 ```
 
-安装特定的技能：
+查看当前注册的全部技能：
 
 ```bash
-hwskill skill dump <skill-name> <skills-dir>
+hwskill skill list
+hwskill skill list --json
+```
+
+安装特定的技能。选择器支持完整 skill ID，也支持没有二义性的 skill name；多个选择器
+使用逗号分隔：
+
+```bash
+hwskill skill dump <skill-id,skill-name,...> <skills-dir>
 # skills-dir example: ~/.agents/skills
 ```
 
@@ -161,7 +181,7 @@ hwskill registry build --repo-root . --check
 
 ## Agent 链路
 
-1. SessionStart 根据 cwd 解析 `.hwskills/profile.yaml` 和 lock。
+1. SessionStart 根据 cwd 优先解析项目 `.hwskills/profile.yaml` 和 lock；项目未设置时回退到用户配置，显式空设置不回退。
 2. Hook/插件只注入 Effective Catalog 的 ID、description、digest 和强制 Search→Load 协议。
 3. Agent 调用 `hwskill_search` 搜索当前候选集。
 4. Agent 调用 `hwskill_load` 加载一个 Skill。
@@ -185,7 +205,8 @@ Docker 离线运行验证：
 bash scripts/run_docker_smoke.sh
 ```
 
-构建阶段需要下载 Python/npm 依赖；容器执行阶段使用 `--network none`，并使用全新 HOME。
+构建阶段需要下载 Python/npm 依赖；容器执行阶段使用 `--network none` 和全新 HOME，验证
+三种宿主的用户级 setup/doctor、用户 Profile 回退与 adapter 注入，同时保留项目级集成验证。
 
 可选 Codex Live Eval（使用已有 `codex login` 登录态，或显式 API key）：
 

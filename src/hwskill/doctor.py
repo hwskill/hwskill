@@ -8,10 +8,13 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from .configuration import codex_setup_is_current
+from .configuration import (
+    claude_setup_is_current,
+    codex_setup_is_current,
+)
 from .profiles import resolve_profiles
 from .registry import validate_registry
-from .scopes import project_scope
+from .scopes import ScopeTarget, project_scope, setup_state_path
 
 
 VERIFIED_OPENCODE_VERSION = "1.14.48"
@@ -34,11 +37,26 @@ def _json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def run_common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
-    project = project.resolve()
+def _target(value: ScopeTarget | Path) -> ScopeTarget:
+    return value if isinstance(value, ScopeTarget) else project_scope(value)
+
+
+def _context_path(target: ScopeTarget) -> Path:
+    return (target.project_root or target.config_root).resolve()
+
+
+def run_common_checks(
+    target: ScopeTarget | Path, registry_root: Path
+) -> list[CheckResult]:
+    target = _target(target)
+    project = _context_path(target)
     registry_root = registry_root.resolve()
     records = validate_registry(registry_root)
-    catalog = resolve_profiles(project, registry_root)
+    catalog = resolve_profiles(
+        project,
+        registry_root,
+        user_target=target if target.kind == "user" else None,
+    )
     checks = [
         CheckResult("registry", "PASS", f"{len(records)} skills"),
         CheckResult("profile", "PASS", f"{len(catalog.skills)} effective skills"),
@@ -52,18 +70,26 @@ def run_common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
         "audit-directory", "PASS" if audit_ok else "WARN", str(audit_directory)
     ))
 
-    native_roots = (
-        project / ".agents/skills",
-        project / ".claude/skills",
-        project / ".opencode/skills",
-    )
+    if target.kind == "user":
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        native_roots = (
+            Path.home() / ".agents/skills",
+            Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "skills",
+            config_home / "opencode/skills",
+        )
+    else:
+        native_roots = (
+            project / ".agents/skills",
+            project / ".claude/skills",
+            project / ".opencode/skills",
+        )
     managed = [str(root / "hwskill") for root in native_roots if (root / "hwskill").exists()]
     checks.append(CheckResult(
         "native-projection", "ERROR" if managed else "PASS",
         ", ".join(managed) if managed else "virtual catalog only",
     ))
     unmanaged = [
-        f"{root.relative_to(project)}/{item.name}"
+        f"{root.relative_to(project) if target.kind == 'project' else root}/{item.name}"
         for root in native_roots if root.is_dir()
         for item in sorted(root.iterdir()) if item.name != "hwskill"
     ]
@@ -74,9 +100,13 @@ def run_common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
     return checks
 
 
-def _codex_checks(project: Path) -> list[CheckResult]:
-    config = project / ".codex/config.toml"
-    setup_ok = codex_setup_is_current(project_scope(project))
+def _codex_checks(target: ScopeTarget) -> list[CheckResult]:
+    config = (
+        Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "config.toml"
+        if target.kind == "user"
+        else _context_path(target) / ".codex/config.toml"
+    )
+    setup_ok = codex_setup_is_current(target)
     executable = shutil.which("codex")
     return [
         CheckResult("codex-config", "PASS" if config.is_file() else "WARN", str(config)),
@@ -92,12 +122,17 @@ def _codex_checks(project: Path) -> list[CheckResult]:
     ]
 
 
-def _claude_checks(project: Path) -> list[CheckResult]:
-    settings_path = project / ".claude/settings.json"
+def _claude_checks(target: ScopeTarget) -> list[CheckResult]:
+    project = _context_path(target)
+    settings_path = (
+        Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "settings.json"
+        if target.kind == "user"
+        else project / ".claude/settings.json"
+    )
     mcp_path = project / ".mcp.json"
     settings = _json(settings_path)
     mcp = _json(mcp_path)
-    state = _json(project / ".hwskills/state/setup-claude-code.json")
+    state = _json(setup_state_path(target, "claude-code"))
     hooks = settings.get("hooks", {}).get("SessionStart", [])
     expected_hook = state.get("hook")
     hook_ok = (
@@ -105,16 +140,19 @@ def _claude_checks(project: Path) -> list[CheckResult]:
         and isinstance(expected_hook, dict)
         and expected_hook in hooks
     )
-    actual_mcp = mcp.get("mcpServers", {}).get("hwskill") if isinstance(mcp.get("mcpServers"), dict) else None
     expected_mcp = state.get("mcp")
-    mcp_ok = (
-        isinstance(actual_mcp, dict)
-        and actual_mcp == expected_mcp
-        and actual_mcp.get("type") == "stdio"
-        and actual_mcp.get("command") == "hwskill"
-        and isinstance(actual_mcp.get("args"), list)
-        and actual_mcp["args"][:1] == ["serve-mcp"]
-    )
+    if target.kind == "user":
+        mcp_ok = hook_ok and claude_setup_is_current(target)
+    else:
+        actual_mcp = mcp.get("mcpServers", {}).get("hwskill") if isinstance(mcp.get("mcpServers"), dict) else None
+        mcp_ok = (
+            isinstance(actual_mcp, dict)
+            and actual_mcp == expected_mcp
+            and actual_mcp.get("type") == "stdio"
+            and actual_mcp.get("command") == "hwskill"
+            and isinstance(actual_mcp.get("args"), list)
+            and actual_mcp["args"][:1] == ["serve-mcp"]
+        )
     executable = shutil.which("claude")
     return [
         CheckResult("claude-settings", "PASS" if settings_path.is_file() else "WARN", str(settings_path)),
@@ -124,11 +162,17 @@ def _claude_checks(project: Path) -> list[CheckResult]:
     ]
 
 
-def _opencode_checks(project: Path) -> list[CheckResult]:
-    config_path = project / "opencode.json"
-    plugin_path = project / ".opencode/plugins/hwskill.js"
+def _opencode_checks(target: ScopeTarget) -> list[CheckResult]:
+    project = _context_path(target)
+    if target.kind == "user":
+        root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "opencode"
+        config_path = root / "opencode.json"
+        plugin_path = root / "plugins/hwskill.js"
+    else:
+        config_path = project / "opencode.json"
+        plugin_path = project / ".opencode/plugins/hwskill.js"
     config = _json(config_path)
-    state = _json(project / ".hwskills/state/setup-opencode.json")
+    state = _json(setup_state_path(target, "opencode"))
     actual_mcp = config.get("mcp", {}).get("hwskill") if isinstance(config.get("mcp"), dict) else None
     expected_mcp = state.get("mcp")
     mcp_ok = (
@@ -170,9 +214,9 @@ def _opencode_checks(project: Path) -> list[CheckResult]:
     ]
 
 
-def run_host_checks(host: str, project: Path) -> list[CheckResult]:
+def run_host_checks(host: str, target: ScopeTarget | Path) -> list[CheckResult]:
     host = host.replace("_", "-")
-    project = project.resolve()
+    target = _target(target)
     host_checks = {
         "codex": _codex_checks,
         "claude-code": _claude_checks,
@@ -180,11 +224,14 @@ def run_host_checks(host: str, project: Path) -> list[CheckResult]:
     }
     if host not in host_checks:
         raise ValueError(f"unsupported host: {host}")
-    return host_checks[host](project)
+    return host_checks[host](target)
 
 
-def run_doctor(host: str, project: Path, registry_root: Path) -> list[CheckResult]:
+def run_doctor(
+    host: str, target: ScopeTarget | Path, registry_root: Path
+) -> list[CheckResult]:
+    target = _target(target)
     return [
-        *run_common_checks(project, registry_root),
-        *run_host_checks(host, project),
+        *run_common_checks(target, registry_root),
+        *run_host_checks(host, target),
     ]

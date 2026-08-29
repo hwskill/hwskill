@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
 from typing import Any
 
 from .configuration import SetupResult
@@ -147,7 +149,29 @@ def _claude_project_mcp_path(target: ScopeTarget) -> Path:
 
 
 def _claude_mcp_get(command_runner: CommandRunner):
-    return command_runner(("claude", "mcp", "get", "hwskill", "--scope", "user"))
+    return command_runner(("claude", "mcp", "get", "hwskill"))
+
+
+def _claude_mcp_matches(
+    completed: subprocess.CompletedProcess[str], expected: Any
+) -> bool:
+    if completed.returncode != 0 or not isinstance(expected, dict):
+        return False
+    details = {}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.strip().partition(":")
+        if separator and value.strip():
+            details[key] = value.strip()
+    try:
+        args = shlex.split(details.get("Args", ""))
+    except ValueError:
+        return False
+    return (
+        details.get("Scope", "").startswith("User config")
+        and details.get("Type") == expected.get("type")
+        and details.get("Command") == expected.get("command")
+        and args == expected.get("args")
+    )
 
 
 def setup_claude_code(
@@ -184,6 +208,28 @@ def setup_claude_code(
 
     hook_index, existing_hook = _find_claude_hook(settings, state)
     _owned_value(existing_hook, state, "hook", "Claude SessionStart hook")
+    state_data = {
+        "schema_version": 1,
+        "settings": _state_path_value(target, settings_path),
+        "hook": hook,
+        "mcp": mcp,
+    }
+    mcp_config = None
+    mcp_path = None
+    if target.kind == "user":
+        inspected = _claude_mcp_get(command_runner)
+        if state is None and inspected.returncode == 0:
+            raise ValueError("existing Claude MCP entry is not owned by hwskill; refusing to edit")
+        if state is not None and not _claude_mcp_matches(inspected, state.get("mcp")):
+            raise ValueError("managed Claude MCP entry was modified outside hwskill; refusing to edit")
+    else:
+        mcp_path = _claude_project_mcp_path(target)
+        mcp_config = _read_json(mcp_path)
+        mcp_servers = mcp_config.setdefault("mcpServers", {})
+        if not isinstance(mcp_servers, dict):
+            raise ValueError("Claude mcpServers must be an object")
+        _owned_value(mcp_servers.get("hwskill"), state, "mcp", "Claude MCP entry")
+
     session_hooks = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
     if hook_index is None:
         session_hooks.append(hook)
@@ -191,18 +237,7 @@ def setup_claude_code(
         session_hooks[hook_index] = hook
 
     changed = _write_json(settings_path, settings)
-    state_data = {
-        "schema_version": 1,
-        "settings": _state_path_value(target, settings_path),
-        "hook": hook,
-        "mcp": mcp,
-    }
     if target.kind == "user":
-        inspected = _claude_mcp_get(command_runner)
-        if state is None and inspected.returncode == 0:
-            raise ValueError("existing Claude MCP entry is not owned by hwskill; refusing to edit")
-        if state is not None and inspected.returncode != 0:
-            raise ValueError("managed Claude MCP entry was modified outside hwskill; refusing to edit")
         if state is None or state.get("mcp") != mcp:
             completed = command_runner((
                 "claude", "mcp", "add-json", "hwskill",
@@ -213,12 +248,8 @@ def setup_claude_code(
                 raise ValueError(f"claude mcp add-json failed: {completed.stderr.strip()}")
             changed = True
     else:
-        mcp_path = _claude_project_mcp_path(target)
-        mcp_config = _read_json(mcp_path)
-        mcp_servers = mcp_config.setdefault("mcpServers", {})
-        if not isinstance(mcp_servers, dict):
-            raise ValueError("Claude mcpServers must be an object")
-        _owned_value(mcp_servers.get("hwskill"), state, "mcp", "Claude MCP entry")
+        assert mcp_path is not None and mcp_config is not None
+        mcp_servers = mcp_config["mcpServers"]
         mcp_servers["hwskill"] = mcp
         changed = _write_json(mcp_path, mcp_config) or changed
         state_data["mcp_config"] = _state_path_value(target, mcp_path)
@@ -244,7 +275,9 @@ def claude_setup_is_current(
     if hook != state.get("hook"):
         return False
     if target.kind == "user":
-        return _claude_mcp_get(command_runner).returncode == 0
+        return _claude_mcp_matches(
+            _claude_mcp_get(command_runner), state.get("mcp")
+        )
     mcp = _read_json(_claude_project_mcp_path(target)).get("mcpServers", {})
     return isinstance(mcp, dict) and mcp.get("hwskill") == state.get("mcp")
 
@@ -264,7 +297,9 @@ def unsetup_claude_code(
     hook_index, existing_hook = _find_claude_hook(settings, state)
     _owned_value(existing_hook, state, "hook", "Claude SessionStart hook")
     if target.kind == "user":
-        if _claude_mcp_get(command_runner).returncode != 0:
+        if not _claude_mcp_matches(
+            _claude_mcp_get(command_runner), state.get("mcp")
+        ):
             raise ValueError("managed Claude MCP entry was modified outside hwskill; refusing to edit")
         completed = command_runner(
             ("claude", "mcp", "remove", "hwskill", "--scope", "user")

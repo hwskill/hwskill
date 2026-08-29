@@ -118,7 +118,7 @@ class HostConfigurationTest(unittest.TestCase):
         class FakeRunner:
             def __init__(self):
                 self.calls: list[tuple[str, ...]] = []
-                self.configured = False
+                self.mcp = None
 
             def __call__(
                 self, argv: Sequence[str]
@@ -126,12 +126,21 @@ class HostConfigurationTest(unittest.TestCase):
                 call = tuple(argv)
                 self.calls.append(call)
                 if call[:4] == ("claude", "mcp", "get", "hwskill"):
-                    code = 0 if self.configured else 1
-                    return subprocess.CompletedProcess(call, code, "", "not found")
+                    if self.mcp is None:
+                        return subprocess.CompletedProcess(call, 1, "", "not found")
+                    output = (
+                        "hwskill:\n"
+                        "  Scope: User config (available in all your projects)\n"
+                        "  Status: ✓ Connected\n"
+                        f"  Type: {self.mcp['type']}\n"
+                        f"  Command: {self.mcp['command']}\n"
+                        f"  Args: {' '.join(self.mcp['args'])}\n"
+                    )
+                    return subprocess.CompletedProcess(call, 0, output, "")
                 if call[:4] == ("claude", "mcp", "add-json", "hwskill"):
-                    self.configured = True
+                    self.mcp = json.loads(call[4])
                 if call[:4] == ("claude", "mcp", "remove", "hwskill"):
-                    self.configured = False
+                    self.mcp = None
                 return subprocess.CompletedProcess(call, 0, "", "")
 
         runner = FakeRunner()
@@ -159,11 +168,89 @@ class HostConfigurationTest(unittest.TestCase):
             self.assertIn("user", add)
             self.assertNotIn("--project", json.dumps(add))
             self.assertTrue(claude_setup_is_current(target, command_runner=runner))
+            get_calls = [
+                call for call in runner.calls
+                if call[:4] == ("claude", "mcp", "get", "hwskill")
+            ]
+            self.assertTrue(get_calls)
+            self.assertTrue(all(
+                call == ("claude", "mcp", "get", "hwskill")
+                for call in get_calls
+            ))
             self.assertTrue(unsetup_claude_code(target, command_runner=runner).changed)
             self.assertIn(
                 ("claude", "mcp", "remove", "hwskill", "--scope", "user"),
                 runner.calls,
             )
+
+    def test_user_claude_refuses_shadowed_or_modified_mcp_entry(self):
+        setup_claude_code, claude_setup_is_current, unsetup_claude_code = (
+            require_configuration(
+                "setup_claude_code", "claude_setup_is_current", "unsetup_claude_code"
+            )
+        )
+
+        class FakeRunner:
+            def __init__(self):
+                self.mcp = None
+                self.scope = "User config (available in all your projects)"
+
+            def __call__(
+                self, argv: Sequence[str]
+            ) -> subprocess.CompletedProcess[str]:
+                call = tuple(argv)
+                if call[:4] == ("claude", "mcp", "get", "hwskill"):
+                    if self.mcp is None:
+                        return subprocess.CompletedProcess(call, 1, "", "not found")
+                    output = (
+                        "hwskill:\n"
+                        f"  Scope: {self.scope}\n"
+                        "  Status: ✓ Connected\n"
+                        f"  Type: {self.mcp['type']}\n"
+                        f"  Command: {self.mcp['command']}\n"
+                        f"  Args: {' '.join(self.mcp['args'])}\n"
+                    )
+                    return subprocess.CompletedProcess(call, 0, output, "")
+                if call[:4] == ("claude", "mcp", "add-json", "hwskill"):
+                    self.mcp = json.loads(call[4])
+                if call[:4] == ("claude", "mcp", "remove", "hwskill"):
+                    self.mcp = None
+                return subprocess.CompletedProcess(call, 0, "", "")
+
+        runner = FakeRunner()
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_CONFIG_DIR": str(self.project / "claude-home"),
+                "XDG_CONFIG_HOME": str(self.project / "user-config"),
+                "XDG_STATE_HOME": str(self.project / "user-state"),
+            },
+        ):
+            target = user_scope()
+            setup_claude_code(target, ROOT, command_runner=runner)
+
+            runner.scope = "Project config (private to this project)"
+            self.assertFalse(claude_setup_is_current(target, command_runner=runner))
+
+            runner.scope = "User config (available in all your projects)"
+            runner.mcp["command"] = "foreign-command"
+            self.assertFalse(claude_setup_is_current(target, command_runner=runner))
+            settings_path = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "settings.json"
+            state_path = Path(os.environ["XDG_STATE_HOME"]) / "hwskill/setup-claude-code.json"
+            settings_before = settings_path.read_text(encoding="utf-8")
+            state_before = state_path.read_text(encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "modified outside hwskill"):
+                setup_claude_code(
+                    target,
+                    ROOT,
+                    self.project / "different-audit.jsonl",
+                    command_runner=runner,
+                )
+            self.assertEqual(settings_path.read_text(encoding="utf-8"), settings_before)
+            self.assertEqual(state_path.read_text(encoding="utf-8"), state_before)
+            with self.assertRaisesRegex(ValueError, "modified outside hwskill"):
+                unsetup_claude_code(target, command_runner=runner)
+            self.assertIsNotNone(runner.mcp)
 
     def test_user_opencode_setup_uses_xdg_global_config_and_dynamic_plugin(self):
         setup_opencode, opencode_setup_is_current = require_configuration(
@@ -197,6 +284,10 @@ class HostConfigurationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "not owned"):
             setup_claude_code(self.project, ROOT)
+        self.assertFalse((self.project / ".claude/settings.json").exists())
+        self.assertFalse(
+            (self.project / ".hwskills/state/setup-claude-code.json").exists()
+        )
 
     def test_setup_preserves_existing_top_level_json_key_order(self):
         setup_claude_code, = require_configuration("setup_claude_code")
