@@ -39,6 +39,24 @@ from .paths import resolve_repo_root
 HOST_CHOICES = ("codex", "claude-code", "claude_code", "opencode")
 
 
+def _commands(parser: argparse.ArgumentParser, dest: str):
+    return parser.add_subparsers(dest=dest, metavar="<COMMAND>")
+
+
+def _command(subparsers, name: str, description: str) -> argparse.ArgumentParser:
+    return subparsers.add_parser(name, help=description, description=description)
+
+
+def _add_host_argument(parser: argparse.ArgumentParser) -> None:
+    choices = ", ".join(HOST_CHOICES)
+    parser.add_argument(
+        "host",
+        choices=HOST_CHOICES,
+        metavar="<HOST>",
+        help=f"One of: {choices}",
+    )
+
+
 def _host(value: str) -> str:
     return value.replace("_", "-")
 
@@ -90,94 +108,121 @@ def _project_path(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hwskill")
-    parser.add_argument("--version", action="store_true")
-    commands = parser.add_subparsers(dest="command")
-    info_parser = commands.add_parser("info")
+    parser.add_argument("--version", action="store_true", help="show the hwskill version")
+    commands = _commands(parser, "command")
+    info_parser = _command(commands, "info", "Show installation and integration status")
     info_parser.add_argument("--project")
     info_parser.add_argument("--repo-root")
     info_parser.add_argument("--json", action="store_true")
-    registry = commands.add_parser("registry")
-    registry_commands = registry.add_subparsers(dest="registry_command")
-    import_parser = registry_commands.add_parser("import")
+    registry = _command(commands, "registry", "Manage the skill registry")
+    registry_commands = _commands(registry, "registry_command")
+    import_parser = _command(
+        registry_commands, "import", "Import skills from a source manifest"
+    )
     import_parser.add_argument("--source", required=True)
     import_parser.add_argument("--repo-root")
     import_parser.add_argument("--update", action="store_true")
-    validate_parser = registry_commands.add_parser("validate")
+    validate_parser = _command(registry_commands, "validate", "Validate registry contents")
     validate_parser.add_argument("--repo-root")
-    build_parser = registry_commands.add_parser("build")
+    build_parser = _command(registry_commands, "build", "Build the registry catalog")
     build_parser.add_argument("--repo-root")
     build_parser.add_argument("--check", action="store_true")
-    profile = commands.add_parser("profile")
-    profile_commands = profile.add_subparsers(dest="profile_command")
-    bind_parser = profile_commands.add_parser("bind")
-    bind_parser.add_argument("profile_id")
+    profile = _command(commands, "profile", "Manage project profiles")
+    profile_commands = _commands(profile, "profile_command")
+    bind_parser = _command(profile_commands, "bind", "Bind a profile to a project")
+    bind_parser.add_argument(
+        "profile_id", metavar="<PROFILE_ID>", help="Profile ID to bind (e.g. codex-demo)"
+    )
     bind_parser.add_argument("--project")
     bind_parser.add_argument("--repo-root")
     bind_parser.add_argument("--yes", action="store_true")
-    unbind_parser = profile_commands.add_parser("unbind")
-    unbind_parser.add_argument("profile_id")
+    unbind_parser = _command(profile_commands, "unbind", "Unbind a profile from a project")
+    unbind_parser.add_argument(
+        "profile_id", metavar="<PROFILE_ID>", help="Profile ID to unbind (e.g. codex-demo)"
+    )
     unbind_parser.add_argument("--project")
     unbind_parser.add_argument("--repo-root")
     unbind_parser.add_argument("--yes", action="store_true")
-    list_parser = profile_commands.add_parser("list")
+    list_parser = _command(profile_commands, "list", "List profiles bound to a project")
     list_parser.add_argument("--project")
     list_parser.add_argument("--json", action="store_true")
-    resolve_parser = profile_commands.add_parser("resolve")
+    resolve_parser = _command(
+        profile_commands, "resolve", "Resolve the effective skill catalog"
+    )
     resolve_parser.add_argument("--project")
     resolve_parser.add_argument("--repo-root")
     resolve_parser.add_argument("--json", action="store_true")
-    skill = commands.add_parser("skill")
-    skill_commands = skill.add_subparsers(dest="skill_command")
-    search_parser = skill_commands.add_parser("search")
-    search_parser.add_argument("query")
+    skill = _command(commands, "skill", "Search and load effective skills")
+    skill_commands = _commands(skill, "skill_command")
+    search_parser = _command(skill_commands, "search", "Search the effective skill catalog")
+    search_parser.add_argument(
+        "query", metavar="<QUERY>", help='Search terms (e.g. "debug failing test")'
+    )
     search_parser.add_argument("--project")
     search_parser.add_argument("--repo-root")
     search_parser.add_argument("--limit", type=int, default=10)
     search_parser.add_argument("--json", action="store_true")
-    load_parser = skill_commands.add_parser("load")
-    load_parser.add_argument("skill_id")
+    load_parser = _command(skill_commands, "load", "Load a skill from the effective catalog")
+    load_parser.add_argument(
+        "skill_id",
+        metavar="<SKILL_ID>",
+        help="Skill ID to load (e.g. local/chinese-thinking)",
+    )
     load_parser.add_argument("--project")
     load_parser.add_argument("--repo-root")
     load_parser.add_argument("--expected-digest")
     load_parser.add_argument("--raw", action="store_true")
     load_parser.add_argument("--json", action="store_true")
-    setup_parser = commands.add_parser("setup")
-    setup_parser.add_argument("host", choices=HOST_CHOICES)
+    setup_parser = _command(commands, "setup", "Configure a host integration")
+    _add_host_argument(setup_parser)
     setup_parser.add_argument("--project")
     setup_parser.add_argument("--repo-root")
     setup_parser.add_argument("--audit-path")
     setup_parser.add_argument("--yes", action="store_true")
-    unsetup_parser = commands.add_parser("unsetup")
-    unsetup_parser.add_argument("host", choices=HOST_CHOICES)
+    unsetup_parser = _command(commands, "unsetup", "Remove a host integration")
+    _add_host_argument(unsetup_parser)
     unsetup_parser.add_argument("--project")
     unsetup_parser.add_argument("--yes", action="store_true")
-    doctor_parser = commands.add_parser("doctor")
-    doctor_parser.add_argument("host", choices=HOST_CHOICES)
+    doctor_parser = _command(commands, "doctor", "Check a host integration")
+    _add_host_argument(doctor_parser)
     doctor_parser.add_argument("--project")
     doctor_parser.add_argument("--repo-root")
     doctor_parser.add_argument("--json", action="store_true")
-    adapter_parser = commands.add_parser("adapter")
-    adapter_commands = adapter_parser.add_subparsers(dest="adapter_host")
-    codex_parser = adapter_commands.add_parser("codex")
-    codex_commands = codex_parser.add_subparsers(dest="adapter_command")
-    session_parser = codex_commands.add_parser("session-start")
+    adapter_parser = _command(commands, "adapter", "Run host adapter commands")
+    adapter_commands = _commands(adapter_parser, "adapter_host")
+    codex_parser = _command(adapter_commands, "codex", "Run Codex adapter commands")
+    codex_commands = _commands(codex_parser, "adapter_command")
+    session_parser = _command(
+        codex_commands, "session-start", "Render Codex session-start context"
+    )
     session_parser.add_argument("--repo-root")
     session_parser.add_argument("--audit-path")
     session_parser.add_argument("--project")
     for claude_host in ("claude-code", "claude_code"):
-        claude_parser = adapter_commands.add_parser(claude_host)
-        claude_commands = claude_parser.add_subparsers(dest="adapter_command")
-        claude_session = claude_commands.add_parser("session-start")
+        description = (
+            "Run Claude Code adapter commands"
+            if claude_host == "claude-code"
+            else "Alias for claude-code adapter commands"
+        )
+        claude_parser = _command(adapter_commands, claude_host, description)
+        claude_commands = _commands(claude_parser, "adapter_command")
+        claude_session = _command(
+            claude_commands,
+            "session-start",
+            "Render Claude Code session-start context",
+        )
         claude_session.add_argument("--repo-root")
         claude_session.add_argument("--audit-path")
         claude_session.add_argument("--project")
-    opencode_parser = adapter_commands.add_parser("opencode")
-    opencode_commands = opencode_parser.add_subparsers(dest="adapter_command")
-    catalog_parser = opencode_commands.add_parser("catalog")
+    opencode_parser = _command(adapter_commands, "opencode", "Run OpenCode adapter commands")
+    opencode_commands = _commands(opencode_parser, "adapter_command")
+    catalog_parser = _command(
+        opencode_commands, "catalog", "Render the OpenCode skill catalog"
+    )
     catalog_parser.add_argument("--project")
     catalog_parser.add_argument("--repo-root")
     catalog_parser.add_argument("--audit-path")
-    mcp_parser = commands.add_parser("serve-mcp")
+    mcp_parser = _command(commands, "serve-mcp", "Start the hwskill MCP server")
     mcp_parser.add_argument("--repo-root")
     mcp_parser.add_argument("--project", default=".")
     mcp_parser.add_argument("--audit-path")
