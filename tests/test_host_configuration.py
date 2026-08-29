@@ -1,7 +1,9 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
+from typing import Sequence
 import unittest
 from unittest.mock import patch
 
@@ -105,6 +107,85 @@ class HostConfigurationTest(unittest.TestCase):
         self.assertIn(str(self.project.resolve()), text)
         self.assertIn("--scope project", text)
         self.assertTrue(codex_setup_is_current(target))
+
+    def test_user_claude_setup_uses_settings_file_and_official_mcp_cli(self):
+        setup_claude_code, claude_setup_is_current, unsetup_claude_code = (
+            require_configuration(
+                "setup_claude_code", "claude_setup_is_current", "unsetup_claude_code"
+            )
+        )
+
+        class FakeRunner:
+            def __init__(self):
+                self.calls: list[tuple[str, ...]] = []
+                self.configured = False
+
+            def __call__(
+                self, argv: Sequence[str]
+            ) -> subprocess.CompletedProcess[str]:
+                call = tuple(argv)
+                self.calls.append(call)
+                if call[:4] == ("claude", "mcp", "get", "hwskill"):
+                    code = 0 if self.configured else 1
+                    return subprocess.CompletedProcess(call, code, "", "not found")
+                if call[:4] == ("claude", "mcp", "add-json", "hwskill"):
+                    self.configured = True
+                if call[:4] == ("claude", "mcp", "remove", "hwskill"):
+                    self.configured = False
+                return subprocess.CompletedProcess(call, 0, "", "")
+
+        runner = FakeRunner()
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_CONFIG_DIR": str(self.project / "claude-home"),
+                "XDG_CONFIG_HOME": str(self.project / "user-config"),
+                "XDG_STATE_HOME": str(self.project / "user-state"),
+            },
+        ):
+            target = user_scope()
+            result = setup_claude_code(target, ROOT, command_runner=runner)
+
+            self.assertEqual(
+                result.config_path,
+                Path(os.environ["CLAUDE_CONFIG_DIR"]) / "settings.json",
+            )
+            add = next(
+                call
+                for call in runner.calls
+                if call[:4] == ("claude", "mcp", "add-json", "hwskill")
+            )
+            self.assertIn("--scope", add)
+            self.assertIn("user", add)
+            self.assertNotIn("--project", json.dumps(add))
+            self.assertTrue(claude_setup_is_current(target, command_runner=runner))
+            self.assertTrue(unsetup_claude_code(target, command_runner=runner).changed)
+            self.assertIn(
+                ("claude", "mcp", "remove", "hwskill", "--scope", "user"),
+                runner.calls,
+            )
+
+    def test_user_opencode_setup_uses_xdg_global_config_and_dynamic_plugin(self):
+        setup_opencode, opencode_setup_is_current = require_configuration(
+            "setup_opencode", "opencode_setup_is_current"
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "XDG_CONFIG_HOME": str(self.project / "user-config"),
+                "XDG_STATE_HOME": str(self.project / "user-state"),
+            },
+        ):
+            target = user_scope()
+            result = setup_opencode(target, ROOT)
+            root = Path(os.environ["XDG_CONFIG_HOME"]) / "opencode"
+            plugin = (root / "plugins/hwskill.js").read_text(encoding="utf-8")
+
+            self.assertEqual(result.config_path, root / "opencode.json")
+            self.assertIn("process.cwd()", plugin)
+            self.assertIn("--scope", plugin)
+            self.assertNotIn(str(self.project.resolve()), plugin)
+            self.assertTrue(opencode_setup_is_current(target))
 
     def test_claude_setup_refuses_unowned_hwskill_mcp(self):
         setup_claude_code, = require_configuration("setup_claude_code")

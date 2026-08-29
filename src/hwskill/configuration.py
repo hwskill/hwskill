@@ -157,6 +157,8 @@ def unsetup_codex(target: ScopeTarget) -> SetupResult:
 
 
 from .json_configuration import (  # noqa: E402
+    claude_setup_is_current,
+    opencode_setup_is_current,
     setup_claude_code,
     setup_opencode,
     unsetup_claude_code,
