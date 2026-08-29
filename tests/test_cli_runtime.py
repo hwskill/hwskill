@@ -104,13 +104,14 @@ class CliRuntimeTest(unittest.TestCase):
             self.run_cli("unsetup", "codex", "--project", str(self.project), "--yes")
         self.assertIn(START, config.read_text(encoding="utf-8"))
 
-    def test_profile_list_unbind_and_doctor_json(self):
+    def test_profile_show_unbind_and_doctor_json(self):
         self.run_cli(
             "profile", "bind", "codex-demo", "--project", str(self.project),
             "--repo-root", str(ROOT), "--yes",
         )
         code, output, _ = self.run_cli(
-            "profile", "list", "--project", str(self.project), "--json",
+            "profile", "show", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--json",
         )
         self.assertEqual(json.loads(output)["profiles"], ["codex-demo"])
         self.run_cli(
@@ -137,10 +138,76 @@ class CliRuntimeTest(unittest.TestCase):
         nested = self.project / "nested"
         nested.mkdir()
         with patch("hwskill.cli.Path.cwd", return_value=nested):
-            code, output, error = self.run_cli("profile", "list", "--json")
+            code, output, error = self.run_cli(
+                "profile", "show", "--project", "--repo-root", str(ROOT), "--json"
+            )
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)["profiles"], [])
         self.assertIn(str(self.project), error)
+
+    def test_profile_set_requires_exactly_one_scope(self):
+        with self.assertRaises(SystemExit):
+            main(["profile", "set", "personal-baseline"])
+        with self.assertRaises(SystemExit):
+            main([
+                "profile", "set", "personal-baseline", "--user", "--project"
+            ])
+
+    def test_profile_set_empty_disables_user_fallback(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(self.project / "home"),
+                "XDG_CONFIG_HOME": str(self.project / "config"),
+                "XDG_STATE_HOME": str(self.project / "state"),
+            },
+            clear=True,
+        ):
+            self.run_cli(
+                "profile", "set", "personal-baseline", "--user",
+                "--repo-root", str(ROOT), "--yes",
+            )
+            self.run_cli(
+                "profile", "set", "--empty", "--project", str(self.project),
+                "--repo-root", str(ROOT), "--yes",
+            )
+            _, output, _ = self.run_cli(
+                "profile", "show", "--project", str(self.project),
+                "--repo-root", str(ROOT),
+            )
+
+        self.assertIn("EFFECTIVE_SCOPE\tproject", output)
+        self.assertIn("PROFILES\tnone", output)
+
+    def test_profile_list_lists_registry_definitions(self):
+        _, output, _ = self.run_cli(
+            "profile", "list", "--repo-root", str(ROOT)
+        )
+
+        self.assertIn("personal-baseline", output)
+        self.assertIn("superpowers", output)
+
+    def test_profile_show_project_reports_user_fallback(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(self.project / "home"),
+                "XDG_CONFIG_HOME": str(self.project / "config"),
+                "XDG_STATE_HOME": str(self.project / "state"),
+            },
+            clear=True,
+        ):
+            self.run_cli(
+                "profile", "set", "personal-baseline,superpowers", "--user",
+                "--repo-root", str(ROOT), "--yes",
+            )
+            _, output, _ = self.run_cli(
+                "profile", "show", "--project", str(self.project),
+                "--repo-root", str(ROOT),
+            )
+
+        self.assertIn("EFFECTIVE_SCOPE\tuser", output)
+        self.assertIn("PROFILES\tpersonal-baseline,superpowers", output)
 
     def test_info_silently_discovers_git_root_without_project(self):
         (self.project / ".git").mkdir()

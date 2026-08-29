@@ -19,7 +19,7 @@ class CliHelpTest(unittest.TestCase):
             (): {
                 "info": "Show installation and integration status",
                 "registry": "Manage the skill registry",
-                "profile": "Manage project profiles",
+                "profile": "Manage user and project profiles",
                 "skill": "Search and load effective skills",
                 "setup": "Configure a host integration",
                 "unsetup": "Remove a host integration",
@@ -35,7 +35,10 @@ class CliHelpTest(unittest.TestCase):
             ("profile",): {
                 "bind": "Bind a profile to a project",
                 "unbind": "Unbind a profile from a project",
-                "list": "List profiles bound to a project",
+                "list": "List available profile definitions",
+                "set": "Set profiles for a user or project",
+                "show": "Show explicit and effective profiles",
+                "unset": "Remove an explicit profile setting",
                 "resolve": "Resolve the effective skill catalog",
             },
             ("skill",): {
@@ -85,6 +88,10 @@ class CliHelpTest(unittest.TestCase):
         cases = {
             ("profile", "bind"): ("<PROFILE_ID>", "e.g. codex-demo"),
             ("profile", "unbind"): ("<PROFILE_ID>", "e.g. codex-demo"),
+            ("profile", "set"): (
+                "<PROFILE_NAME,PROFILE_NAME,...>",
+                "e.g. personal-baseline,superpowers",
+            ),
             ("skill", "search"): ("<QUERY>", 'e.g. "debug failing test"'),
             ("skill", "load"): (
                 "<SKILL_ID>",
@@ -96,7 +103,14 @@ class CliHelpTest(unittest.TestCase):
             with self.subTest(command_path=command_path):
                 output = self.render_help(*command_path)
                 self.assertIn(metavar, output)
-                self.assertIn(example, output)
+                self.assertIn(example, re.sub(r"\s+", " ", output))
+
+    def test_scoped_profile_help_uses_optional_project_value(self):
+        for command in ("set", "show", "unset"):
+            with self.subTest(command=command):
+                output = self.render_help("profile", command)
+                self.assertIn("--user", output)
+                self.assertIn("--project [PROJECT]", output)
 
 
 if __name__ == "__main__":
