@@ -322,6 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     session_parser.add_argument("--repo-root")
     session_parser.add_argument("--audit-path")
     session_parser.add_argument("--project")
+    session_parser.add_argument("--scope", choices=("user", "project"), default="project")
     for claude_host in ("claude-code", "claude_code"):
         description = (
             "Run Claude Code adapter commands"
@@ -338,6 +339,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         claude_session.add_argument("--repo-root")
         claude_session.add_argument("--audit-path")
         claude_session.add_argument("--project")
+        claude_session.add_argument(
+            "--scope", choices=("user", "project"), default="project"
+        )
     opencode_parser = _command(adapter_commands, "opencode", "Run OpenCode adapter commands")
     opencode_commands = _commands(opencode_parser, "adapter_command")
     catalog_parser = _command(
@@ -346,10 +350,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_parser.add_argument("--project")
     catalog_parser.add_argument("--repo-root")
     catalog_parser.add_argument("--audit-path")
+    catalog_parser.add_argument("--scope", choices=("user", "project"), default="project")
+    catalog_parser.add_argument("--runtime-project")
     mcp_parser = _command(commands, "serve-mcp", "Start the hwskill MCP server")
     mcp_parser.add_argument("--repo-root")
     mcp_parser.add_argument("--project", default=".")
     mcp_parser.add_argument("--audit-path")
+    mcp_parser.add_argument("--scope", choices=("user", "project"), default="project")
     args = parser.parse_args(argv)
     if args.version:
         print(f"hwskill {__version__}")
@@ -549,15 +556,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{item.name}\t{item.status}\t{item.detail}")
     elif args.command == "adapter" and _host(args.adapter_host) == "codex" and args.adapter_command == "session-start":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
-        print(run_codex_session_start(_repo_root(args.repo_root), audit_path, sys.stdin.read()))
+        print(run_codex_session_start(
+            _repo_root(args.repo_root), audit_path, sys.stdin.read(), scope=args.scope
+        ))
     elif args.command == "adapter" and _host(args.adapter_host) == "claude-code" and args.adapter_command == "session-start":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
-        print(run_claude_session_start(_repo_root(args.repo_root), audit_path, sys.stdin.read()))
+        print(run_claude_session_start(
+            _repo_root(args.repo_root), audit_path, sys.stdin.read(), scope=args.scope
+        ))
     elif args.command == "adapter" and args.adapter_host == "opencode" and args.adapter_command == "catalog":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
         print(render_opencode_catalog(
-            _project_path(args.project, write=False), _repo_root(args.repo_root),
+            (
+                Path(args.runtime_project).resolve()
+                if args.runtime_project
+                else _project_path(args.project, write=False)
+            ),
+            _repo_root(args.repo_root),
             AuditWriter(audit_path),
+            scope=args.scope,
         ))
     elif args.command == "serve-mcp":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
