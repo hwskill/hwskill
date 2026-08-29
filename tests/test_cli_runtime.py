@@ -209,6 +209,41 @@ class CliRuntimeTest(unittest.TestCase):
         self.assertIn("EFFECTIVE_SCOPE\tuser", output)
         self.assertIn("PROFILES\tpersonal-baseline,superpowers", output)
 
+    def test_skill_list_and_batch_dump_accept_ids_and_unique_names(self):
+        _, listed, _ = self.run_cli(
+            "skill", "list", "--repo-root", str(ROOT), "--json"
+        )
+        records = json.loads(listed)["skills"]
+        self.assertTrue(
+            {"id", "name", "layer", "revision"}.issubset(records[0])
+        )
+
+        destination = self.project / "exported"
+        _, dumped, _ = self.run_cli(
+            "skill", "dump",
+            "local/chinese-thinking,systematic-debugging",
+            str(destination), "--repo-root", str(ROOT), "--json",
+        )
+        results = json.loads(dumped)["results"]
+        self.assertEqual(
+            [item["skill_id"] for item in results],
+            ["local/chinese-thinking", "superpowers/systematic-debugging"],
+        )
+        self.assertTrue((destination / "chinese-thinking/SKILL.md").is_file())
+        self.assertTrue((destination / "systematic-debugging/SKILL.md").is_file())
+
+    def test_skill_dump_profile_accepts_plural_profile_csv(self):
+        destination = self.project / "profile-export"
+
+        _, output, _ = self.run_cli(
+            "skill", "dump-profile", "personal-baseline,codex-demo",
+            str(destination), "--repo-root", str(ROOT),
+        )
+
+        self.assertIn("SKILL\tTARGET\tSTATUS", output)
+        self.assertTrue((destination / "chinese-thinking/SKILL.md").is_file())
+        self.assertTrue((destination / "systematic-debugging/SKILL.md").is_file())
+
     def test_info_silently_discovers_git_root_without_project(self):
         (self.project / ".git").mkdir()
         nested = self.project / "nested"

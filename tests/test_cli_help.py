@@ -42,6 +42,9 @@ class CliHelpTest(unittest.TestCase):
                 "resolve": "Resolve the effective skill catalog",
             },
             ("skill",): {
+                "list": "List all registered skills",
+                "dump": "Export selected skills",
+                "dump-profile": "Export skills from profiles",
                 "search": "Search the effective skill catalog",
                 "load": "Load a skill from the effective catalog",
             },
@@ -96,6 +99,10 @@ class CliHelpTest(unittest.TestCase):
             ("skill", "load"): (
                 "<SKILL_ID>",
                 "e.g. local/chinese-thinking",
+            ),
+            ("skill", "dump"): (
+                "<SKILL_ID,SKILL_NAME,...>",
+                "e.g. chinese-thinking,brainstorming",
             ),
         }
 

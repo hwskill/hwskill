@@ -40,6 +40,11 @@ from .profiles import (
 from .projects import find_project
 from .registry import validate_registry, write_catalog
 from .search import search_skills
+from .skill_export import (
+    export_skills,
+    resolve_skill_selectors,
+    skills_for_profiles,
+)
 from .mcp_server import run_server
 from .opencode_adapter import render_catalog as render_opencode_catalog
 from .paths import resolve_repo_root
@@ -246,6 +251,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     resolve_parser.add_argument("--json", action="store_true")
     skill = _command(commands, "skill", "Search and load effective skills")
     skill_commands = _commands(skill, "skill_command")
+    skill_list_parser = _command(skill_commands, "list", "List all registered skills")
+    skill_list_parser.add_argument("--repo-root")
+    skill_list_parser.add_argument("--json", action="store_true")
+    dump_parser = _command(skill_commands, "dump", "Export selected skills")
+    dump_parser.add_argument(
+        "selectors",
+        metavar="<SKILL_ID,SKILL_NAME,...>",
+        help="e.g. chinese-thinking,brainstorming",
+    )
+    dump_parser.add_argument(
+        "destination", metavar="<SKILLS_DIR>", help="Destination skill directory"
+    )
+    dump_parser.add_argument("--repo-root")
+    dump_parser.add_argument("--json", action="store_true")
+    dump_profile_parser = _command(
+        skill_commands, "dump-profile", "Export skills from profiles"
+    )
+    dump_profile_parser.add_argument(
+        "profiles",
+        metavar="<PROFILE_NAME,PROFILE_NAME,...>",
+        help="e.g. personal-baseline,superpowers",
+    )
+    dump_profile_parser.add_argument(
+        "destination", metavar="<SKILLS_DIR>", help="Destination skill directory"
+    )
+    dump_profile_parser.add_argument("--repo-root")
+    dump_profile_parser.add_argument("--json", action="store_true")
     search_parser = _command(skill_commands, "search", "Search the effective skill catalog")
     search_parser.add_argument(
         "query", metavar="<QUERY>", help='Search terms (e.g. "debug failing test")'
@@ -414,6 +446,61 @@ def main(argv: Sequence[str] | None = None) -> int:
         project_path = _project_path(args.project, write=True, yes=args.yes)
         unbind_profile(project_path, _repo_root(args.repo_root), args.profile_id)
         print(f"UNBOUND\t{args.profile_id}")
+    elif args.command == "skill" and args.skill_command == "list":
+        records = validate_registry(_repo_root(args.repo_root))
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "skills": [
+                            {
+                                "id": item.skill_id,
+                                "name": item.name,
+                                "description": item.description,
+                                "layer": item.layer,
+                                "source_id": item.source_id,
+                                "revision": item.revision,
+                                "license": item.license,
+                                "content_digest": item.content_digest,
+                                "path": str(item.path),
+                            }
+                            for item in records
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print("ID\tNAME\tLAYER\tREVISION")
+            for item in records:
+                print(f"{item.skill_id}\t{item.name}\t{item.layer}\t{item.revision}")
+    elif args.command == "skill" and args.skill_command in {"dump", "dump-profile"}:
+        registry_root = _repo_root(args.repo_root)
+        records = validate_registry(registry_root)
+        selected = (
+            resolve_skill_selectors(args.selectors, records)
+            if args.skill_command == "dump"
+            else skills_for_profiles(args.profiles, registry_root, records)
+        )
+        results = export_skills(selected, Path(args.destination).expanduser())
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "results": [
+                            asdict(item) | {"target": str(item.target)}
+                            for item in results
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print("SKILL\tTARGET\tSTATUS")
+            for item in results:
+                print(f"{item.skill_id}\t{item.target}\t{item.status}")
     elif args.command == "skill" and args.skill_command == "search":
         catalog = resolve_profiles(_project_path(args.project, write=False), _repo_root(args.repo_root))
         results = search_skills(catalog, args.query, args.limit)
