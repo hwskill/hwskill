@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -69,16 +70,84 @@ class InfoTest(unittest.TestCase):
             str((self.repository / "scripts/hwskill").resolve()),
         )
         self.assertIsInstance(installation["command"], str)
-        self.assertIsInstance(installation["python"], str)
+        self.assertEqual(installation["python"], sys.executable)
+        self.assertEqual(
+            installation["venv_python"],
+            str(self.repository.resolve() / ".venv/bin/python"),
+        )
         self.assertEqual(
             installation["venv"], str((self.repository / ".venv").resolve())
         )
         self.assertIsInstance(installation["venv_ready"], bool)
         self.assertIn(installation["status"], {"PASS", "WARN"})
         self.assertEqual(
-            set(installation["git"]), {"branch", "commit", "dirty"}
+            set(installation["git"]), {"branch", "commit", "dirty", "remote"}
         )
         self.assertIsInstance(installation["git"]["dirty"], bool)
+
+    def test_collects_origin_as_git_repository(self):
+        subprocess.run([
+            "git", "-C", str(self.repository), "remote", "add", "origin",
+            "https://gitcode.com/example/hwskills.git",
+        ], check=True)
+
+        info = self.collect()
+
+        self.assertEqual(
+            info["installation"]["git"]["remote"],
+            "https://gitcode.com/example/hwskills.git",
+        )
+
+    def test_redacts_http_credentials_from_git_repository(self):
+        from hwskill.info import format_info_summary
+
+        subprocess.run([
+            "git", "-C", str(self.repository), "remote", "add", "origin",
+            "https://agent:secret-token@gitcode.com/example/hwskills.git",
+        ], check=True)
+
+        info = self.collect()
+        output = json.dumps(info) + format_info_summary(info)
+
+        self.assertEqual(
+            info["installation"]["git"]["remote"],
+            "https://gitcode.com/example/hwskills.git",
+        )
+        self.assertNotIn("agent", output)
+        self.assertNotIn("secret-token", output)
+
+    def test_malformed_http_git_repository_is_unavailable(self):
+        subprocess.run([
+            "git", "-C", str(self.repository), "remote", "add", "origin",
+            "https://[broken/secret-token.git",
+        ], check=True)
+
+        info = self.collect()
+
+        self.assertIsNone(info["installation"]["git"]["remote"])
+        self.assertNotIn("secret-token", json.dumps(info))
+
+    def test_http_git_repository_without_a_host_is_unavailable(self):
+        subprocess.run([
+            "git", "-C", str(self.repository), "remote", "add", "origin",
+            "https:agent:secret-token@gitcode.com/example/hwskills.git",
+        ], check=True)
+
+        info = self.collect()
+
+        self.assertIsNone(info["installation"]["git"]["remote"])
+        self.assertNotIn("secret-token", json.dumps(info))
+
+    def test_python_reports_the_venv_entrypoint_instead_of_symlink_target(self):
+        venv_python = self.repository / ".venv/bin/python"
+        venv_python.unlink()
+        venv_python.symlink_to("/usr/bin/python3")
+
+        info = self.collect()
+
+        self.assertEqual(
+            info["installation"]["venv_python"], str(venv_python)
+        )
 
     def test_installation_requires_command_to_target_this_repository(self):
         try:
@@ -129,7 +198,8 @@ class InfoTest(unittest.TestCase):
         info = self.collect()
 
         self.assertIsNone(info["installation"]["git"]["dirty"])
-        self.assertIn("git:         unavailable", format_info_summary(info))
+        self.assertIn("git repo:      unavailable", format_info_summary(info))
+        self.assertIn("git status:    unavailable", format_info_summary(info))
 
     def test_collects_profiles_and_all_host_integration_checks(self):
         info = self.collect()
@@ -212,7 +282,10 @@ class InfoTest(unittest.TestCase):
             self.fail("hwskill info summary formatter is not implemented")
         info = self.collect()
         info["installation"]["git"] = {
-            "branch": "main", "commit": "abc1234", "dirty": False,
+            "branch": "main",
+            "commit": "abc1234",
+            "dirty": False,
+            "remote": "https://gitcode.com/linkeo2012/hwskills.git",
         }
 
         output = format_info_summary(info)
@@ -221,11 +294,12 @@ class InfoTest(unittest.TestCase):
             output,
             f"hwskill v0.1.0 installed.\n"
             f"\n"
-            f"repository:  {self.repository.resolve()}\n"
-            f"executable:  {self.command}\n"
-            f"venv:        {self.repository.resolve()}/.venv\n"
-            f"python:      {info['installation']['python']}\n"
-            f"git:         main@abc1234 clean\n"
+            f"Installation:\n"
+            f"install path:  {self.repository.resolve()}\n"
+            f"executable:    {self.command}\n"
+            f"python:        {info['installation']['venv_python']}\n"
+            f"git repo:      https://gitcode.com/linkeo2012/hwskills.git\n"
+            f"git status:    main@abc1234 clean\n"
             f"\n"
             f"Integrations:\n"
             f"project:     {self.project.resolve()}\n"
@@ -234,6 +308,16 @@ class InfoTest(unittest.TestCase):
             f"claude-code  -- not installed\n"
             f"opencode     -- not installed\n",
         )
+
+    def test_summary_reports_unavailable_git_remote(self):
+        from hwskill.info import format_info_summary
+
+        info = self.collect()
+
+        output = format_info_summary(info)
+
+        self.assertIsNone(info["installation"]["git"]["remote"])
+        self.assertIn("git repo:      unavailable\n", output)
 
 
 if __name__ == "__main__":

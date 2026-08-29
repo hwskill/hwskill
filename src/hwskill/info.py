@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 
@@ -44,11 +45,30 @@ def _git_info(repository: Path) -> dict[str, str | bool | None]:
     branch = _git_output(repository, "branch", "--show-current")
     commit = _git_output(repository, "rev-parse", "--short", "HEAD")
     status = _git_output(repository, "status", "--porcelain")
+    remote = _safe_git_remote(
+        _git_output(repository, "remote", "get-url", "origin")
+    )
     return {
         "branch": branch or None,
         "commit": commit or None,
         "dirty": None if status is None else bool(status),
+        "remote": remote or None,
     }
+
+
+def _safe_git_remote(remote: str | None) -> str | None:
+    if not remote:
+        return None
+    try:
+        parsed = urlsplit(remote)
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return remote
+    if not parsed.netloc or not parsed.hostname:
+        return None
+    netloc = parsed.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def _summary_status(checks: list[CheckResult]) -> str:
@@ -147,6 +167,7 @@ def collect_info(
             "launcher": str(launcher.resolve()),
             "launcher_executable": launcher_executable,
             "python": sys.executable,
+            "venv_python": str(venv_python),
             "venv": str(venv),
             "venv_ready": venv_ready,
             "git": _git_info(repository),
@@ -186,11 +207,12 @@ def format_info_summary(info: dict[str, Any]) -> str:
     lines = [
         f"hwskill v{_display_cell(installation['version'])} {installation_status}.",
         "",
-        _summary_line("repository", installation["repository"]),
-        _summary_line("executable", installation["command"] or "not found"),
-        _summary_line("venv", installation["venv"]),
-        _summary_line("python", installation["python"]),
-        _summary_line("git", git_value),
+        "Installation:",
+        _summary_line("install path", installation["repository"], width=15),
+        _summary_line("executable", installation["command"] or "not found", width=15),
+        _summary_line("python", installation["venv_python"], width=15),
+        _summary_line("git repo", git.get("remote") or "unavailable", width=15),
+        _summary_line("git status", git_value, width=15),
         "",
         "Integrations:",
         _summary_line("project", integration["project"]),
@@ -207,5 +229,5 @@ def _display_cell(value: object) -> str:
     return re.sub(r"[\t\r\n]+", " ", str(value))
 
 
-def _summary_line(label: str, value: object) -> str:
-    return f"{label + ':':<13}{_display_cell(value)}"
+def _summary_line(label: str, value: object, *, width: int = 13) -> str:
+    return f"{label + ':':<{width}}{_display_cell(value)}"

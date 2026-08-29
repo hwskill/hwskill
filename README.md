@@ -58,11 +58,12 @@ hwskill info --project /path/to/project --json
 ~~~text
 hwskill v0.1.0 installed.
 
-repository:  /home/user/.local/share/hwskill
-executable:  /home/user/.local/bin/hwskill
-venv:        /home/user/.local/share/hwskill/.venv
-python:      /home/user/.local/share/hwskill/.venv/bin/python
-git:         main@abc1234 clean
+Installation:
+install path:  /home/user/.local/share/hwskill
+executable:    /home/user/.local/bin/hwskill
+python:        /home/user/.local/share/hwskill/.venv/bin/python
+git repo:      https://gitcode.com/example/hwskills.git
+git status:    main@abc1234 clean
 
 Integrations:
 project:     /path/to/project

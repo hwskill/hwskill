@@ -276,7 +276,9 @@ class CliRuntimeTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertTrue(output.startswith("hwskill v0.1.0 "))
-        self.assertIn("\nrepository:  ", output)
+        self.assertIn("\nInstallation:\n", output)
+        self.assertIn("\ninstall path:  ", output)
+        self.assertIn("\ngit repo:      ", output)
         self.assertIn("\nIntegrations:\n", output)
         self.assertIn("codex        -- ", output)
 
