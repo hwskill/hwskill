@@ -75,6 +75,10 @@ hwskill profile set personal-baseline,superpowers --user
 hwskill profile set codex-demo,superpowers --project
 hwskill profile set codex-demo,superpowers --project <project-root>
 
+# 显式使用空集合，阻止该项目回退到用户 Profile
+hwskill profile set --empty --project
+hwskill profile set --empty --project <project-root>
+
 hwskill profile show --user
 hwskill profile show --project
 hwskill profile show --project <project-root>
@@ -85,7 +89,7 @@ hwskill profile unset --project
 hwskill profile unset --project <project-root>
 ```
 
-`profile list` 列出仓库 `profiles/*.yaml` 中的可用 Profile，包括 ID、描述和技能数。`profile show` 同时显示请求作用域的显式值，以及对项目请求生效的 Profile、来源和是否发生用户回退。`profile unset` 删除所选作用域的 Profile 与 Lock；删除项目配置后，解析恢复到用户回退。
+Profile CSV 与 `--empty` 互斥，且 `profile set` 必须提供其中一个。`profile list` 列出仓库 `profiles/*.yaml` 中的可用 Profile，包括 ID、描述和技能数。`profile show` 同时显示请求作用域的显式值，以及对项目请求生效的 Profile、来源和是否发生用户回退。`profile unset` 删除所选作用域的 Profile 与 Lock；删除项目配置后，解析恢复到用户回退。
 
 现有 `profile bind/unbind` 保留一个版本，继续执行项目集合的增量修改并在 stderr 输出弃用提示。`profile resolve` 保留为有效 Catalog 诊断命令。
 
@@ -231,7 +235,7 @@ ID 与 Name 可以混用。空项、未知选择器或任一歧义使整个命�
 
 ## Skill 导出
 
-新增 `skill_export.py`。导出整个 Registry 快照目录，包括 `SKILL.md`、`scripts/`、`references/`、`agents/` 和其他快照文件。目标目录使用 Skill Name：
+新增 `skill_export.py`。导出 Registry 快照中的全部运行时内容，包括 `SKILL.md`、`scripts/`、`references/`、`agents/` 和其他资源，但排除仅供 Registry 治理、且不计入 `content_digest()` 的根 `skill.yaml`。目标目录使用 Skill Name：
 
 ```text
 <skills-dir>/<skill-name>/
@@ -284,7 +288,7 @@ README 表头改为“已验证版本”。Doctor 对其他版本报告 `WARN` �
 
 - Scope 参数互斥、缺失、裸项目和显式路径。
 - HOME/XDG/Codex/Claude 路径覆盖。
-- Profile CSV、去重、空项、未知项、项目覆盖、用户回退、显式空集合和 Unset 恢复回退。
+- Profile CSV、去重、空项、未知项、项目覆盖、用户回退、`--empty` 和 Unset 恢复回退。
 - Profile 与 Lock 的预生成、失败关闭和不一致错误。
 - Skill ID、Name、混合输入、多个输入、Name 歧义和目标 Name 冲突。
 - 多 Skill/多 Profile 导出、完整资源目录、摘要一致、已有目录和命令级预检原子性。
