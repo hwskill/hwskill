@@ -13,7 +13,7 @@
       "source_id": "local-agents-skills"
     },
     {
-      "content_digest": "sha256:52639c22faa11f52e2dff9f9735b4f8f6b7ce2c3e1c841dd6f8992dd81304a17",
+      "content_digest": "sha256:45e32ba0345c159ed3564c8585313b630ae2beb5365bd705b34997ff0af2f858",
       "description": "Use when 需要获取或归档 GitCode 仓库 Discussion 的完整正文、顶层评论和嵌套回复，输入为 Discussion URL 或 owner/repo 加 Discussion 编号，且需要可阅读的 Markdown 内容。",
       "id": "local/gitcode-discussion-fetch",
       "layer": "l2",
@@ -24,7 +24,7 @@
       "source_id": "local-agents-skills"
     },
     {
-      "content_digest": "sha256:5ca4faf4ac9de91f89b8801db33cb3a27e799c05b620296d9b7f7c49fc9f034c",
+      "content_digest": "sha256:c350afa82407c803d8386471bfbc721c50b6f03c02d6bde768b31d0d8ce541c1",
       "description": "Use when 调查 GitCode Pull Request /diffs、完整代码差异、diff/patch、变更文件、base/head SHA，或需要完整评论、diff_comment 行级检视意见、discussion 回复与 resolved 状态时。",
       "id": "local/gitcode-pr-review-fetch",
       "layer": "l2",

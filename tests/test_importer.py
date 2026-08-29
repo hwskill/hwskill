@@ -56,6 +56,19 @@ class ImporterTest(unittest.TestCase):
         self.assertEqual(content_digest(target), before)
         self.assertEqual(records[0].content_digest, before)
 
+    def test_import_excludes_python_cache_artifacts_from_snapshot(self):
+        cache = self.source_root / "example/scripts/__pycache__"
+        cache.mkdir(parents=True)
+        (cache / "helper.cpython-310.pyc").write_bytes(b"machine-specific cache")
+
+        records = import_source(
+            self.spec(), self.repo, imported_at="2026-08-27T00:00:00Z"
+        )
+
+        target = self.repo / "skills-src/l1/local/example"
+        self.assertFalse((target / "scripts/__pycache__").exists())
+        self.assertEqual(records[0].content_digest, content_digest(target))
+
     def test_import_rejects_symlink_outside_skill(self):
         outside = self.root / "outside.txt"
         outside.write_text("secret", encoding="utf-8")

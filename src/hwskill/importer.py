@@ -57,7 +57,13 @@ def import_source(
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{selected.name}-", dir=target.parent))
         try:
-            shutil.copytree(source, staging, dirs_exist_ok=True, symlinks=False)
+            shutil.copytree(
+                source,
+                staging,
+                dirs_exist_ok=True,
+                symlinks=False,
+                ignore=shutil.ignore_patterns("__pycache__", "*.py[cod]"),
+            )
             digest = content_digest(staging)
             governance = {
                 "schema_version": 1,
