@@ -104,13 +104,14 @@ class CliRuntimeTest(unittest.TestCase):
             self.run_cli("unsetup", "codex", "--project", str(self.project), "--yes")
         self.assertIn(START, config.read_text(encoding="utf-8"))
 
-    def test_profile_list_unbind_and_doctor_json(self):
+    def test_profile_show_unbind_and_doctor_json(self):
         self.run_cli(
             "profile", "bind", "codex-demo", "--project", str(self.project),
             "--repo-root", str(ROOT), "--yes",
         )
         code, output, _ = self.run_cli(
-            "profile", "list", "--project", str(self.project), "--json",
+            "profile", "show", "--project", str(self.project),
+            "--repo-root", str(ROOT), "--json",
         )
         self.assertEqual(json.loads(output)["profiles"], ["codex-demo"])
         self.run_cli(
@@ -137,10 +138,124 @@ class CliRuntimeTest(unittest.TestCase):
         nested = self.project / "nested"
         nested.mkdir()
         with patch("hwskill.cli.Path.cwd", return_value=nested):
-            code, output, error = self.run_cli("profile", "list", "--json")
+            code, output, error = self.run_cli(
+                "profile", "show", "--project", "--repo-root", str(ROOT), "--json"
+            )
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)["profiles"], [])
         self.assertIn(str(self.project), error)
+
+    def test_profile_set_requires_exactly_one_scope(self):
+        with self.assertRaises(SystemExit):
+            main(["profile", "set", "personal-baseline"])
+        with self.assertRaises(SystemExit):
+            main([
+                "profile", "set", "personal-baseline", "--user", "--project"
+            ])
+
+    def test_profile_set_empty_disables_user_fallback(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(self.project / "home"),
+                "XDG_CONFIG_HOME": str(self.project / "config"),
+                "XDG_STATE_HOME": str(self.project / "state"),
+            },
+            clear=True,
+        ):
+            self.run_cli(
+                "profile", "set", "personal-baseline", "--user",
+                "--repo-root", str(ROOT), "--yes",
+            )
+            self.run_cli(
+                "profile", "set", "--empty", "--project", str(self.project),
+                "--repo-root", str(ROOT), "--yes",
+            )
+            _, output, _ = self.run_cli(
+                "profile", "show", "--project", str(self.project),
+                "--repo-root", str(ROOT),
+            )
+
+        self.assertIn("EFFECTIVE_SCOPE\tproject", output)
+        self.assertIn("PROFILES\tnone", output)
+
+    def test_profile_list_lists_registry_definitions(self):
+        _, output, _ = self.run_cli(
+            "profile", "list", "--repo-root", str(ROOT)
+        )
+
+        self.assertIn("personal-baseline", output)
+        self.assertIn("superpowers", output)
+
+    def test_profile_show_project_reports_user_fallback(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(self.project / "home"),
+                "XDG_CONFIG_HOME": str(self.project / "config"),
+                "XDG_STATE_HOME": str(self.project / "state"),
+            },
+            clear=True,
+        ):
+            self.run_cli(
+                "profile", "set", "personal-baseline,superpowers", "--user",
+                "--repo-root", str(ROOT), "--yes",
+            )
+            _, output, _ = self.run_cli(
+                "profile", "show", "--project", str(self.project),
+                "--repo-root", str(ROOT),
+            )
+
+        self.assertIn("EFFECTIVE_SCOPE\tuser", output)
+        self.assertIn("PROFILES\tpersonal-baseline,superpowers", output)
+
+    def test_skill_list_and_batch_dump_accept_ids_and_unique_names(self):
+        _, listed, _ = self.run_cli(
+            "skill", "list", "--repo-root", str(ROOT), "--json"
+        )
+        records = json.loads(listed)["skills"]
+        self.assertTrue(
+            {"id", "name", "layer", "revision"}.issubset(records[0])
+        )
+
+        destination = self.project / "exported"
+        _, dumped, _ = self.run_cli(
+            "skill", "dump",
+            "local/chinese-thinking,systematic-debugging",
+            str(destination), "--repo-root", str(ROOT), "--json",
+        )
+        results = json.loads(dumped)["results"]
+        self.assertEqual(
+            [item["skill_id"] for item in results],
+            ["local/chinese-thinking", "superpowers/systematic-debugging"],
+        )
+        self.assertTrue((destination / "chinese-thinking/SKILL.md").is_file())
+        self.assertTrue((destination / "systematic-debugging/SKILL.md").is_file())
+
+    def test_skill_dump_profile_accepts_plural_profile_csv(self):
+        destination = self.project / "profile-export"
+
+        _, output, _ = self.run_cli(
+            "skill", "dump-profile", "personal-baseline,codex-demo",
+            str(destination), "--repo-root", str(ROOT),
+        )
+
+        self.assertIn("SKILL\tTARGET\tSTATUS", output)
+        self.assertTrue((destination / "chinese-thinking/SKILL.md").is_file())
+        self.assertTrue((destination / "systematic-debugging/SKILL.md").is_file())
+
+    def test_setup_doctor_unsetup_require_scope_and_accept_bare_project(self):
+        for command in ("setup", "doctor", "unsetup"):
+            with self.subTest(command=command):
+                with self.assertRaises(SystemExit):
+                    main([command, "codex"])
+
+        (self.project / ".git").mkdir()
+        with patch("hwskill.cli.Path.cwd", return_value=self.project):
+            code, _, _ = self.run_cli(
+                "setup", "codex", "--project", "--repo-root", str(ROOT), "--yes"
+            )
+        self.assertEqual(code, 0)
 
     def test_info_silently_discovers_git_root_without_project(self):
         (self.project / ".git").mkdir()

@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import shlex
+
+from .scopes import ScopeTarget, setup_state_path
 
 
 START = "# >>> hwskill managed codex >>>"
@@ -17,13 +20,36 @@ class SetupResult:
     changed: bool
 
 
-def _managed_block(registry_root: Path, audit_path: Path | None = None) -> str:
+def _codex_config_path(target: ScopeTarget) -> Path:
+    if target.kind == "user":
+        return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "config.toml"
+    assert target.project_root is not None
+    return target.project_root / ".codex/config.toml"
+
+
+def _runtime_scope_args(target: ScopeTarget) -> list[str]:
+    if target.kind == "user":
+        return ["--scope", "user"]
+    assert target.project_root is not None
+    return ["--scope", "project", "--project", str(target.project_root)]
+
+
+def _managed_block(
+    target: ScopeTarget,
+    registry_root: Path,
+    audit_path: Path | None = None,
+) -> str:
     root = str(registry_root.resolve())
-    mcp_args = ["serve-mcp", "--repo-root", root]
-    hook_command = f"hwskill adapter codex session-start --repo-root {shlex.quote(str(registry_root.resolve()))}"
+    scope_args = _runtime_scope_args(target)
+    mcp_args = ["serve-mcp", "--repo-root", root, *scope_args]
+    hook_args = [
+        "hwskill", "adapter", "codex", "session-start",
+        "--repo-root", root, *scope_args,
+    ]
     if audit_path is not None:
         mcp_args.extend(("--audit-path", str(audit_path.resolve())))
-        hook_command += f" --audit-path {shlex.quote(str(audit_path.resolve()))}"
+        hook_args.extend(("--audit-path", str(audit_path.resolve())))
+    hook_command = shlex.join(hook_args)
     return (
         f"{START}\n"
         "[mcp_servers.hwskill]\n"
@@ -40,11 +66,15 @@ def _managed_block(registry_root: Path, audit_path: Path | None = None) -> str:
     )
 
 
-def setup_codex(project: Path, registry_root: Path, audit_path: Path | None = None) -> SetupResult:
-    config = project / ".codex/config.toml"
+def setup_codex(
+    target: ScopeTarget,
+    registry_root: Path,
+    audit_path: Path | None = None,
+) -> SetupResult:
+    config = _codex_config_path(target)
     config.parent.mkdir(parents=True, exist_ok=True)
     existing = config.read_text(encoding="utf-8") if config.exists() else ""
-    block = _managed_block(registry_root, audit_path)
+    block = _managed_block(target, registry_root, audit_path)
     if START in existing:
         before, rest = existing.split(START, 1)
         _, after = rest.split(END, 1)
@@ -54,11 +84,15 @@ def setup_codex(project: Path, registry_root: Path, audit_path: Path | None = No
     changed = updated != existing
     if changed:
         config.write_text(updated, encoding="utf-8")
-    state = project / ".hwskills/state/setup-codex.json"
+    state = setup_state_path(target, "codex")
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({
         "schema_version": 1,
-        "config": str(config.relative_to(project)),
+        "config": (
+            str(config.relative_to(target.project_root))
+            if target.project_root is not None
+            else str(config)
+        ),
         "managed_digest": "sha256:" + hashlib.sha256(block.encode()).hexdigest(),
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return SetupResult(config, changed)
@@ -74,9 +108,9 @@ def _extract_managed_block(content: str) -> tuple[str, int, int]:
     return content[start:end], start, end
 
 
-def codex_setup_is_current(project: Path) -> bool:
-    config = project / ".codex/config.toml"
-    state = project / ".hwskills/state/setup-codex.json"
+def codex_setup_is_current(target: ScopeTarget) -> bool:
+    config = _codex_config_path(target)
+    state = setup_state_path(target, "codex")
     if not config.is_file() or not state.is_file():
         return False
     try:
@@ -87,24 +121,31 @@ def codex_setup_is_current(project: Path) -> bool:
     if not isinstance(ownership, dict):
         return False
     actual_digest = "sha256:" + hashlib.sha256(block.encode()).hexdigest()
+    expected_config = (
+        str(config.relative_to(target.project_root))
+        if target.project_root is not None
+        else str(config)
+    )
     return (
-        ownership.get("config") == ".codex/config.toml"
+        ownership.get("config") == expected_config
         and ownership.get("managed_digest") == actual_digest
     )
 
 
-def unsetup_codex(project: Path) -> SetupResult:
-    config = project / ".codex/config.toml"
+def unsetup_codex(target: ScopeTarget) -> SetupResult:
+    config = _codex_config_path(target)
     if not config.exists():
         return SetupResult(config, False)
     existing = config.read_text(encoding="utf-8")
     if START not in existing:
         return SetupResult(config, False)
     block, start, end = _extract_managed_block(existing)
-    state = project / ".hwskills/state/setup-codex.json"
+    state = setup_state_path(target, "codex")
     if not state.is_file():
         raise ValueError("hwskill setup state is missing; refusing to edit")
     ownership = json.loads(state.read_text(encoding="utf-8"))
+    if not isinstance(ownership, dict):
+        raise ValueError("hwskill setup state is invalid; refusing to edit")
     actual_digest = "sha256:" + hashlib.sha256(block.encode()).hexdigest()
     if ownership.get("managed_digest") != actual_digest:
         raise ValueError("managed Codex block was modified outside hwskill; refusing to edit")
@@ -116,6 +157,8 @@ def unsetup_codex(project: Path) -> SetupResult:
 
 
 from .json_configuration import (  # noqa: E402
+    claude_setup_is_current,
+    opencode_setup_is_current,
     setup_claude_code,
     setup_opencode,
     unsetup_claude_code,

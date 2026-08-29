@@ -11,6 +11,7 @@ import subprocess
 from .configuration import codex_setup_is_current
 from .profiles import resolve_profiles
 from .registry import validate_registry
+from .scopes import project_scope
 
 
 VERIFIED_OPENCODE_VERSION = "1.14.48"
@@ -75,7 +76,7 @@ def run_common_checks(project: Path, registry_root: Path) -> list[CheckResult]:
 
 def _codex_checks(project: Path) -> list[CheckResult]:
     config = project / ".codex/config.toml"
-    setup_ok = codex_setup_is_current(project)
+    setup_ok = codex_setup_is_current(project_scope(project))
     executable = shutil.which("codex")
     return [
         CheckResult("codex-config", "PASS" if config.is_file() else "WARN", str(config)),

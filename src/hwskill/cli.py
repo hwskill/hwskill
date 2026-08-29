@@ -27,13 +27,28 @@ from .importer import import_source
 from .info import collect_info, format_info_summary
 from .loader import load_skill
 from .models import SourceSpec
-from .profiles import bind_profile, resolve_profile_ids, resolve_profiles, unbind_profile
+from .profiles import (
+    bind_profile,
+    list_profiles,
+    parse_csv,
+    read_profile_ids,
+    resolve_profiles,
+    set_profiles,
+    unbind_profile,
+    unset_profiles,
+)
 from .projects import find_project
 from .registry import validate_registry, write_catalog
 from .search import search_skills
+from .skill_export import (
+    export_skills,
+    resolve_skill_selectors,
+    skills_for_profiles,
+)
 from .mcp_server import run_server
 from .opencode_adapter import render_catalog as render_opencode_catalog
 from .paths import resolve_repo_root
+from .scopes import ScopeTarget, project_scope, user_scope
 
 
 HOST_CHOICES = ("codex", "claude-code", "claude_code", "opencode")
@@ -106,6 +121,58 @@ def _project_path(
     return project
 
 
+def _add_scope_arguments(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--user", action="store_true", help="Use current-user scope")
+    group.add_argument(
+        "--project",
+        nargs="?",
+        const="",
+        metavar="PROJECT",
+        help="Use project scope, discovering the project when the path is omitted",
+    )
+
+
+def _scope_target(args: argparse.Namespace, *, write: bool) -> ScopeTarget:
+    if args.user:
+        target = user_scope()
+    else:
+        target = project_scope(args.project or None, Path.cwd())
+        if args.project == "":
+            print(f"PROJECT\t{target.project_root}", file=sys.stderr)
+    if not write:
+        return target
+    if args.yes:
+        return target
+    if not sys.stdin.isatty():
+        raise SystemExit("non-interactive writes require --yes")
+    label = "current user" if target.kind == "user" else str(target.project_root)
+    response = input(f"Apply hwskill profile changes to {label}? [y/N] ")
+    if response.strip().lower() not in {"y", "yes"}:
+        raise SystemExit("cancelled")
+    return target
+
+
+def _profile_show_data(target: ScopeTarget, registry_root: Path) -> dict[str, object]:
+    explicit = read_profile_ids(target)
+    if target.kind == "project":
+        assert target.project_root is not None
+        catalog = resolve_profiles(target.project_root, registry_root)
+    else:
+        catalog = resolve_profiles(target.config_root, registry_root, user_target=target)
+    return {
+        "scope": target.kind,
+        "target": str(target.project_root or target.config_root),
+        "configured": explicit is not None,
+        "explicit_profiles": list(explicit or ()),
+        "effective_scope": catalog.effective_scope,
+        "profiles": list(catalog.profile_ids),
+        "profile_source": str(catalog.profile_source) if catalog.profile_source else None,
+        "catalog_digest": catalog.catalog_digest,
+        "skills": list(catalog.skill_ids),
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hwskill")
     parser.add_argument("--version", action="store_true", help="show the hwskill version")
@@ -127,7 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     build_parser = _command(registry_commands, "build", "Build the registry catalog")
     build_parser.add_argument("--repo-root")
     build_parser.add_argument("--check", action="store_true")
-    profile = _command(commands, "profile", "Manage project profiles")
+    profile = _command(commands, "profile", "Manage user and project profiles")
     profile_commands = _commands(profile, "profile_command")
     bind_parser = _command(profile_commands, "bind", "Bind a profile to a project")
     bind_parser.add_argument(
@@ -143,9 +210,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     unbind_parser.add_argument("--project")
     unbind_parser.add_argument("--repo-root")
     unbind_parser.add_argument("--yes", action="store_true")
-    list_parser = _command(profile_commands, "list", "List profiles bound to a project")
-    list_parser.add_argument("--project")
+    list_parser = _command(
+        profile_commands, "list", "List available profile definitions"
+    )
+    list_parser.add_argument("--repo-root")
     list_parser.add_argument("--json", action="store_true")
+    set_parser = _command(
+        profile_commands, "set", "Set profiles for a user or project"
+    )
+    set_parser.add_argument(
+        "profiles",
+        nargs="?",
+        metavar="<PROFILE_NAME,PROFILE_NAME,...>",
+        help="e.g. personal-baseline,superpowers",
+    )
+    set_parser.add_argument(
+        "--empty",
+        action="store_true",
+        help="Set an explicit empty profile collection",
+    )
+    _add_scope_arguments(set_parser)
+    set_parser.add_argument("--repo-root")
+    set_parser.add_argument("--yes", action="store_true")
+    show_parser = _command(
+        profile_commands, "show", "Show explicit and effective profiles"
+    )
+    _add_scope_arguments(show_parser)
+    show_parser.add_argument("--repo-root")
+    show_parser.add_argument("--json", action="store_true")
+    unset_parser = _command(
+        profile_commands, "unset", "Remove an explicit profile setting"
+    )
+    _add_scope_arguments(unset_parser)
+    unset_parser.add_argument("--yes", action="store_true")
     resolve_parser = _command(
         profile_commands, "resolve", "Resolve the effective skill catalog"
     )
@@ -154,6 +251,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     resolve_parser.add_argument("--json", action="store_true")
     skill = _command(commands, "skill", "Search and load effective skills")
     skill_commands = _commands(skill, "skill_command")
+    skill_list_parser = _command(skill_commands, "list", "List all registered skills")
+    skill_list_parser.add_argument("--repo-root")
+    skill_list_parser.add_argument("--json", action="store_true")
+    dump_parser = _command(skill_commands, "dump", "Export selected skills")
+    dump_parser.add_argument(
+        "selectors",
+        metavar="<SKILL_ID,SKILL_NAME,...>",
+        help="e.g. chinese-thinking,brainstorming",
+    )
+    dump_parser.add_argument(
+        "destination", metavar="<SKILLS_DIR>", help="Destination skill directory"
+    )
+    dump_parser.add_argument("--repo-root")
+    dump_parser.add_argument("--json", action="store_true")
+    dump_profile_parser = _command(
+        skill_commands, "dump-profile", "Export skills from profiles"
+    )
+    dump_profile_parser.add_argument(
+        "profiles",
+        metavar="<PROFILE_NAME,PROFILE_NAME,...>",
+        help="e.g. personal-baseline,superpowers",
+    )
+    dump_profile_parser.add_argument(
+        "destination", metavar="<SKILLS_DIR>", help="Destination skill directory"
+    )
+    dump_profile_parser.add_argument("--repo-root")
+    dump_profile_parser.add_argument("--json", action="store_true")
     search_parser = _command(skill_commands, "search", "Search the effective skill catalog")
     search_parser.add_argument(
         "query", metavar="<QUERY>", help='Search terms (e.g. "debug failing test")'
@@ -175,17 +299,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_parser.add_argument("--json", action="store_true")
     setup_parser = _command(commands, "setup", "Configure a host integration")
     _add_host_argument(setup_parser)
-    setup_parser.add_argument("--project")
+    _add_scope_arguments(setup_parser)
     setup_parser.add_argument("--repo-root")
     setup_parser.add_argument("--audit-path")
     setup_parser.add_argument("--yes", action="store_true")
     unsetup_parser = _command(commands, "unsetup", "Remove a host integration")
     _add_host_argument(unsetup_parser)
-    unsetup_parser.add_argument("--project")
+    _add_scope_arguments(unsetup_parser)
     unsetup_parser.add_argument("--yes", action="store_true")
     doctor_parser = _command(commands, "doctor", "Check a host integration")
     _add_host_argument(doctor_parser)
-    doctor_parser.add_argument("--project")
+    _add_scope_arguments(doctor_parser)
     doctor_parser.add_argument("--repo-root")
     doctor_parser.add_argument("--json", action="store_true")
     adapter_parser = _command(commands, "adapter", "Run host adapter commands")
@@ -198,6 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     session_parser.add_argument("--repo-root")
     session_parser.add_argument("--audit-path")
     session_parser.add_argument("--project")
+    session_parser.add_argument("--scope", choices=("user", "project"), default="project")
     for claude_host in ("claude-code", "claude_code"):
         description = (
             "Run Claude Code adapter commands"
@@ -214,6 +339,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         claude_session.add_argument("--repo-root")
         claude_session.add_argument("--audit-path")
         claude_session.add_argument("--project")
+        claude_session.add_argument(
+            "--scope", choices=("user", "project"), default="project"
+        )
     opencode_parser = _command(adapter_commands, "opencode", "Run OpenCode adapter commands")
     opencode_commands = _commands(opencode_parser, "adapter_command")
     catalog_parser = _command(
@@ -222,10 +350,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_parser.add_argument("--project")
     catalog_parser.add_argument("--repo-root")
     catalog_parser.add_argument("--audit-path")
+    catalog_parser.add_argument("--scope", choices=("user", "project"), default="project")
+    catalog_parser.add_argument("--runtime-project")
     mcp_parser = _command(commands, "serve-mcp", "Start the hwskill MCP server")
     mcp_parser.add_argument("--repo-root")
     mcp_parser.add_argument("--project", default=".")
     mcp_parser.add_argument("--audit-path")
+    mcp_parser.add_argument("--scope", choices=("user", "project"), default="project")
     args = parser.parse_args(argv)
     if args.version:
         print(f"hwskill {__version__}")
@@ -258,7 +389,53 @@ def main(argv: Sequence[str] | None = None) -> int:
         valid = write_catalog(_repo_root(args.repo_root), check=args.check)
         if args.check and not valid:
             return 1
+    elif args.command == "profile" and args.profile_command == "set":
+        if args.empty == (args.profiles is not None):
+            set_parser.error("provide either PROFILES or --empty")
+        profile_ids = () if args.empty else parse_csv(args.profiles, "profile")
+        target = _scope_target(args, write=True)
+        catalog = set_profiles(target, _repo_root(args.repo_root), profile_ids)
+        print(f"SCOPE\t{target.kind}")
+        print(f"PROFILES\t{','.join(catalog.profile_ids) or 'none'}")
+        print(f"CATALOG_DIGEST\t{catalog.catalog_digest}")
+    elif args.command == "profile" and args.profile_command == "show":
+        target = _scope_target(args, write=False)
+        data = _profile_show_data(target, _repo_root(args.repo_root))
+        if args.json:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        else:
+            print(f"SCOPE\t{data['scope']}")
+            print(
+                "EXPLICIT_PROFILES\t"
+                + (",".join(data["explicit_profiles"]) or "none")
+            )
+            print(f"EFFECTIVE_SCOPE\t{data['effective_scope'] or 'none'}")
+            print("PROFILES\t" + (",".join(data["profiles"]) or "none"))
+            print(f"CATALOG_DIGEST\t{data['catalog_digest']}")
+    elif args.command == "profile" and args.profile_command == "list":
+        definitions = list_profiles(_repo_root(args.repo_root))
+        if args.json:
+            print(
+                json.dumps(
+                    {"profiles": [asdict(item) for item in definitions]},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print("PROFILE\tDESCRIPTION\tSKILLS")
+            for item in definitions:
+                print(
+                    f"{item.profile_id}\t{item.description}\t"
+                    f"{','.join(item.skill_ids)}"
+                )
+    elif args.command == "profile" and args.profile_command == "unset":
+        target = _scope_target(args, write=True)
+        changed = unset_profiles(target)
+        print(f"SCOPE\t{target.kind}")
+        print(f"STATUS\t{'REMOVED' if changed else 'UNCHANGED'}")
     elif args.command == "profile" and args.profile_command == "bind":
+        print("warning: profile bind is deprecated; use profile set", file=sys.stderr)
         project_path = _project_path(args.project, write=True, yes=args.yes)
         catalog = bind_profile(project_path, _repo_root(args.repo_root), args.profile_id)
         print(f"BOUND\t{args.profile_id}\t{catalog.catalog_digest}")
@@ -271,18 +448,66 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.json:
             for item in catalog.skills:
                 print(f"{item.skill_id}\t{item.revision}\t{item.content_digest}")
-    elif args.command == "profile" and args.profile_command == "list":
-        profile_ids = resolve_profile_ids(_project_path(args.project, write=False))
-        if args.json:
-            print(json.dumps({"profiles": profile_ids}, ensure_ascii=False, indent=2))
-        else:
-            print("PROFILE")
-            for profile_id in profile_ids:
-                print(profile_id)
     elif args.command == "profile" and args.profile_command == "unbind":
+        print("warning: profile unbind is deprecated; use profile unset", file=sys.stderr)
         project_path = _project_path(args.project, write=True, yes=args.yes)
         unbind_profile(project_path, _repo_root(args.repo_root), args.profile_id)
         print(f"UNBOUND\t{args.profile_id}")
+    elif args.command == "skill" and args.skill_command == "list":
+        records = validate_registry(_repo_root(args.repo_root))
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "skills": [
+                            {
+                                "id": item.skill_id,
+                                "name": item.name,
+                                "description": item.description,
+                                "layer": item.layer,
+                                "source_id": item.source_id,
+                                "revision": item.revision,
+                                "license": item.license,
+                                "content_digest": item.content_digest,
+                                "path": str(item.path),
+                            }
+                            for item in records
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print("ID\tNAME\tLAYER\tREVISION")
+            for item in records:
+                print(f"{item.skill_id}\t{item.name}\t{item.layer}\t{item.revision}")
+    elif args.command == "skill" and args.skill_command in {"dump", "dump-profile"}:
+        registry_root = _repo_root(args.repo_root)
+        records = validate_registry(registry_root)
+        selected = (
+            resolve_skill_selectors(args.selectors, records)
+            if args.skill_command == "dump"
+            else skills_for_profiles(args.profiles, registry_root, records)
+        )
+        results = export_skills(selected, Path(args.destination).expanduser())
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "results": [
+                            asdict(item) | {"target": str(item.target)}
+                            for item in results
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print("SKILL\tTARGET\tSTATUS")
+            for item in results:
+                print(f"{item.skill_id}\t{item.target}\t{item.status}")
     elif args.command == "skill" and args.skill_command == "search":
         catalog = resolve_profiles(_project_path(args.project, write=False), _repo_root(args.repo_root))
         results = search_skills(catalog, args.query, args.limit)
@@ -298,27 +523,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         loaded = load_skill(catalog, args.skill_id, args.expected_digest, args.raw)
         print(json.dumps(asdict(loaded), ensure_ascii=False, indent=2) if args.json else loaded.content, end="\n")
     elif args.command == "setup":
-        project_path = _project_path(args.project, write=True, yes=args.yes)
+        target = _scope_target(args, write=True)
         audit_path = Path(args.audit_path) if args.audit_path else None
         setup = {
             "codex": setup_codex,
             "claude-code": setup_claude_code,
             "opencode": setup_opencode,
         }[_host(args.host)]
-        result = setup(project_path, _repo_root(args.repo_root), audit_path)
+        result = setup(target, _repo_root(args.repo_root), audit_path)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "unsetup":
-        project_path = _project_path(args.project, write=True, yes=args.yes)
+        target = _scope_target(args, write=True)
         unsetup = {
             "codex": unsetup_codex,
             "claude-code": unsetup_claude_code,
             "opencode": unsetup_opencode,
         }[_host(args.host)]
-        result = unsetup(project_path)
+        result = unsetup(target)
         print(f"CONFIG\t{result.config_path}\t{'UPDATED' if result.changed else 'UNCHANGED'}")
     elif args.command == "doctor":
+        target = _scope_target(args, write=False)
         checks = run_doctor(
-            _host(args.host), _project_path(args.project, write=False),
+            _host(args.host), target.project_root or target.config_root,
             _repo_root(args.repo_root),
         )
         if args.json:
@@ -329,15 +555,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{item.name}\t{item.status}\t{item.detail}")
     elif args.command == "adapter" and _host(args.adapter_host) == "codex" and args.adapter_command == "session-start":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
-        print(run_codex_session_start(_repo_root(args.repo_root), audit_path, sys.stdin.read()))
+        print(run_codex_session_start(
+            _repo_root(args.repo_root), audit_path, sys.stdin.read(), scope=args.scope
+        ))
     elif args.command == "adapter" and _host(args.adapter_host) == "claude-code" and args.adapter_command == "session-start":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
-        print(run_claude_session_start(_repo_root(args.repo_root), audit_path, sys.stdin.read()))
+        print(run_claude_session_start(
+            _repo_root(args.repo_root), audit_path, sys.stdin.read(), scope=args.scope
+        ))
     elif args.command == "adapter" and args.adapter_host == "opencode" and args.adapter_command == "catalog":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()
         print(render_opencode_catalog(
-            _project_path(args.project, write=False), _repo_root(args.repo_root),
+            (
+                Path(args.runtime_project).resolve()
+                if args.runtime_project
+                else _project_path(args.project, write=False)
+            ),
+            _repo_root(args.repo_root),
             AuditWriter(audit_path),
+            scope=args.scope,
         ))
     elif args.command == "serve-mcp":
         audit_path = Path(args.audit_path) if args.audit_path else default_audit_path()

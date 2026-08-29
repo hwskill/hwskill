@@ -1,10 +1,14 @@
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from hwskill.audit import AuditWriter
-from hwskill.profiles import bind_profile
+from hwskill.configuration import setup_codex
+from hwskill.profiles import bind_profile, set_profiles
+from hwskill.scopes import project_scope, user_scope
 
 
 ROOT = Path(__file__).parents[1]
@@ -82,6 +86,45 @@ class HostAdaptersTest(unittest.TestCase):
 
         self.assertTrue(text.startswith("hwskill Effective Skill Catalog"))
         self.assertIn("local/gitcode-pr-review-fetch", text)
+
+    def test_user_codex_adapter_uses_event_cwd_and_user_profile_fallback(self):
+        run_session_start = require("hwskill.codex_adapter", "run_session_start")
+        fallback_project = Path(self.temp.name) / "fallback"
+        fallback_project.mkdir()
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(Path(self.temp.name) / "home"),
+                "XDG_CONFIG_HOME": str(Path(self.temp.name) / "config"),
+                "XDG_STATE_HOME": str(Path(self.temp.name) / "state"),
+            },
+            clear=True,
+        ):
+            user = user_scope()
+            set_profiles(user, ROOT, ("personal-baseline",))
+            output = run_session_start(
+                ROOT,
+                self.audit_path,
+                json.dumps({"cwd": str(fallback_project), "session_id": "user-1"}),
+                scope="user",
+                user_target=user,
+            )
+
+        self.assertIn("local/chinese-thinking", output)
+
+    def test_user_codex_adapter_is_empty_when_valid_project_setup_exists(self):
+        run_session_start = require("hwskill.codex_adapter", "run_session_start")
+        setup_codex(project_scope(self.project), ROOT)
+
+        output = run_session_start(
+            ROOT,
+            self.audit_path,
+            json.dumps({"cwd": str(self.project), "session_id": "user-2"}),
+            scope="user",
+        )
+
+        self.assertEqual(output, "")
+        self.assertFalse(self.audit_path.exists())
 
 
 if __name__ == "__main__":

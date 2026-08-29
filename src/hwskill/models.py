@@ -59,6 +59,8 @@ class EffectiveCatalog:
     profile_ids: tuple[str, ...]
     skills: tuple[SkillRecord, ...]
     catalog_digest: str
+    effective_scope: str | None = None
+    profile_source: Path | None = None
 
     @property
     def skill_ids(self) -> tuple[str, ...]:
