@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from hwskill.configuration import setup_claude_code, setup_codex, setup_opencode
 from hwskill.doctor import run_doctor
 from hwskill.profiles import bind_profile
+from hwskill.scopes import project_scope
 
 
 ROOT = Path(__file__).parents[1]
@@ -59,7 +60,7 @@ class HostDoctorTest(unittest.TestCase):
         self.assertEqual(checks["hook-config"].status, "WARN")
 
     def test_codex_doctor_rejects_a_modified_owned_block(self):
-        setup_codex(self.project, ROOT)
+        setup_codex(project_scope(self.project), ROOT)
         config = self.project / ".codex/config.toml"
         original = config.read_text(encoding="utf-8")
         mutations = (
@@ -75,7 +76,7 @@ class HostDoctorTest(unittest.TestCase):
                 self.assertEqual(checks["hook-config"].status, "WARN")
 
     def test_codex_doctor_rejects_non_object_setup_state(self):
-        setup_codex(self.project, ROOT)
+        setup_codex(project_scope(self.project), ROOT)
         state = self.project / ".hwskills/state/setup-codex.json"
 
         for invalid in ([], None, "invalid"):

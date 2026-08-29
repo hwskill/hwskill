@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from hwskill.configuration import setup_codex
 from hwskill.profiles import bind_profile
+from hwskill.scopes import project_scope
 
 
 ROOT = Path(__file__).parents[1]
@@ -41,7 +42,7 @@ class InfoTest(unittest.TestCase):
         self.project = self.base / "demo"
         self.project.mkdir()
         bind_profile(self.project, self.repository, "codex-demo")
-        setup_codex(self.project, self.repository)
+        setup_codex(project_scope(self.project), self.repository)
 
     def tearDown(self):
         self.temp.cleanup()

@@ -1,7 +1,11 @@
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+
+from hwskill.scopes import project_scope, user_scope
 
 
 ROOT = Path(__file__).parents[1]
@@ -65,6 +69,42 @@ class HostConfigurationTest(unittest.TestCase):
         self.assertNotIn("hwskill", cleaned_mcp["mcpServers"])
         self.assertIn("legacy", cleaned_mcp["mcpServers"])
         self.assertTrue(self.legacy_skill.exists())
+
+    def test_user_codex_setup_writes_codex_home_without_pinning_project(self):
+        setup_codex, codex_setup_is_current, unsetup_codex = require_configuration(
+            "setup_codex", "codex_setup_is_current", "unsetup_codex"
+        )
+        codex_home = self.project / "user-codex"
+        with patch.dict(
+            os.environ,
+            {
+                "CODEX_HOME": str(codex_home),
+                "XDG_CONFIG_HOME": str(self.project / "user-config"),
+                "XDG_STATE_HOME": str(self.project / "user-state"),
+            },
+        ):
+            target = user_scope()
+            result = setup_codex(target, ROOT)
+            text = result.config_path.read_text(encoding="utf-8")
+
+            self.assertEqual(result.config_path, codex_home / "config.toml")
+            self.assertNotIn("--project", text)
+            self.assertIn("--scope user", text)
+            self.assertTrue(codex_setup_is_current(target))
+            self.assertTrue(unsetup_codex(target).changed)
+
+    def test_project_codex_setup_keeps_explicit_project_runtime(self):
+        setup_codex, codex_setup_is_current = require_configuration(
+            "setup_codex", "codex_setup_is_current"
+        )
+        target = project_scope(self.project)
+
+        setup_codex(target, ROOT)
+        text = (self.project / ".codex/config.toml").read_text(encoding="utf-8")
+
+        self.assertIn(str(self.project.resolve()), text)
+        self.assertIn("--scope project", text)
+        self.assertTrue(codex_setup_is_current(target))
 
     def test_claude_setup_refuses_unowned_hwskill_mcp(self):
         setup_claude_code, = require_configuration("setup_claude_code")

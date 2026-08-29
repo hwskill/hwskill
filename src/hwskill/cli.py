@@ -519,7 +519,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         project_path = _project_path(args.project, write=True, yes=args.yes)
         audit_path = Path(args.audit_path) if args.audit_path else None
         setup = {
-            "codex": setup_codex,
+            "codex": lambda project, root, audit: setup_codex(
+                project_scope(project), root, audit
+            ),
             "claude-code": setup_claude_code,
             "opencode": setup_opencode,
         }[_host(args.host)]
@@ -528,7 +530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "unsetup":
         project_path = _project_path(args.project, write=True, yes=args.yes)
         unsetup = {
-            "codex": unsetup_codex,
+            "codex": lambda project: unsetup_codex(project_scope(project)),
             "claude-code": unsetup_claude_code,
             "opencode": unsetup_opencode,
         }[_host(args.host)]
