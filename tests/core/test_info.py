@@ -13,7 +13,7 @@ from hwskill.profiles import bind_profile
 from hwskill.scopes import project_scope
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class InfoTest(unittest.TestCase):

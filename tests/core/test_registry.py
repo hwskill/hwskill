@@ -20,8 +20,8 @@ validate_registry = registry_module.validate_registry
 write_catalog = registry_module.write_catalog
 
 
-SOURCE_SKILL = Path(__file__).parents[1] / "skills-src/l1/local/chinese-thinking"
-ROOT = Path(__file__).parents[1]
+SOURCE_SKILL = Path(__file__).parents[2] / "skills-src/l1/local/chinese-thinking"
+ROOT = Path(__file__).parents[2]
 SUPERPOWERS_REVISION = "b36e0829c6d0140e93cfef2ca599b1b07d4a7797"
 MANUAL_SKILL_IDS = (
     "local/chinese-thinking",
@@ -166,7 +166,7 @@ class RepositoryMigrationAcceptanceTest(unittest.TestCase):
             self.assertNotRegex(text, r"(?m)^root:", path)
         self.assertFalse((ROOT / "sources/local-agents-skills.yaml").exists())
         self.assertFalse((ROOT / "src/hwskill/importer.py").exists())
-        self.assertFalse((ROOT / "tests/test_importer.py").exists())
+        self.assertFalse((ROOT / "tests/core/test_importer.py").exists())
 
     def test_manual_skills_have_manual_runtime_revision_and_unchanged_digests(self):
         records = {item.skill_id: item for item in validate_registry(ROOT)}

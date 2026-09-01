@@ -18,7 +18,7 @@ from hwskill.profiles import (
 from hwskill.scopes import lock_path, profile_path, project_scope, user_scope
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class ScopedProfilesTest(unittest.TestCase):

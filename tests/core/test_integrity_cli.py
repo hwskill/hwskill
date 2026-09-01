@@ -11,7 +11,7 @@ import unittest
 from hwskill.cli import main
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class IntegrityCliTest(unittest.TestCase):

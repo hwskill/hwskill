@@ -10,7 +10,7 @@ from hwskill.mcp_server import HwskillMcpRuntime
 from hwskill.profiles import bind_profile
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class CodexRuntimeTest(unittest.IsolatedAsyncioTestCase):

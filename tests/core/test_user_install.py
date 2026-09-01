@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class UserInstallTest(unittest.TestCase):

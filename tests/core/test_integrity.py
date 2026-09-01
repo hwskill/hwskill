@@ -14,7 +14,7 @@ from hwskill.profiles import set_profiles
 from hwskill.scopes import project_scope
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class IntegrityTest(unittest.TestCase):

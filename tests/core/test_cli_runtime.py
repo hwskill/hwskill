@@ -12,7 +12,7 @@ from hwskill.configuration import END, START
 from hwskill.profiles import resolve_profile_ids
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class CliRuntimeTest(unittest.TestCase):

@@ -12,7 +12,7 @@ from hwskill.projects import find_project
 from hwskill.search import search_skills
 
 
-REGISTRY = Path(__file__).parents[1]
+REGISTRY = Path(__file__).parents[2]
 
 
 class RuntimeTest(unittest.TestCase):

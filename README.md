@@ -217,7 +217,7 @@ CLI 默认输出表格或 Markdown。传 `--json` 获取机器格式；`skill lo
 宿主测试：
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests/core -t . -v
 PYTHONPATH=src python3 -m hwskill registry validate --repo-root .
 PYTHONPATH=src python3 -m hwskill registry build --repo-root . --check
 ```
@@ -225,8 +225,8 @@ PYTHONPATH=src python3 -m hwskill registry build --repo-root . --check
 维护 source 或 Skill 后，先运行上述框架测试；单独运行 source-lifecycle 相关测试可使用：
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_source_manifest tests.test_git_source \
-  tests.test_maintenance_transaction tests.test_source_maintenance tests.test_skill_maintenance -v
+PYTHONPATH=src python3 -m unittest tests.core.test_source_manifest tests.core.test_git_source \
+  tests.core.test_maintenance_transaction tests.core.test_source_maintenance tests.core.test_skill_maintenance -v
 ```
 
 Docker 离线运行验证：

@@ -13,7 +13,7 @@ from hwskill.skill_export import (
 )
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class SkillExportTest(unittest.TestCase):

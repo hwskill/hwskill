@@ -15,7 +15,7 @@ from hwskill.maintenance_transaction import (
 )
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 class RepositoryTransactionTest(unittest.TestCase):
