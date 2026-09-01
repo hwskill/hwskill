@@ -29,7 +29,7 @@ from .source_manifest import load_source_manifest
 # ignore policy without consulting Git metadata or requiring a .gitignore file.
 _REPOSITORY_PROFILE_SCAN_EXCLUDED_DIRECTORY_PATTERNS = frozenset({
     "__pycache__", ".venv", ".runtime-deps", ".worktrees", "artifacts",
-    "build", "*.egg-info", ".git", ".superpowers",
+    "build", "*.egg-info", "*.py[cod]", ".git", ".superpowers",
 })
 
 

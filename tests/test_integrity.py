@@ -568,6 +568,44 @@ class IntegrityTest(unittest.TestCase):
             ["examples/stale-example/.hwskills/lock.yaml"],
         )
 
+    def test_repository_profile_scan_covers_simple_gitignore_directory_patterns(self) -> None:
+        """Offline pruning stays synchronized with the repository's simple ignore patterns."""
+        from hwskill.integrity import _REPOSITORY_PROFILE_SCAN_EXCLUDED_DIRECTORY_PATTERNS
+
+        simple_patterns = {
+            line.strip().rstrip("/")
+            for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith(("#", "!"))
+        }
+
+        self.assertTrue(simple_patterns <= _REPOSITORY_PROFILE_SCAN_EXCLUDED_DIRECTORY_PATTERNS)
+
+    def test_repository_profile_scan_prunes_nested_python_bytecode_directories(self) -> None:
+        """The .gitignore bytecode glob excludes generated bindings at every depth."""
+        from hwskill.integrity import check_integrity
+
+        def write_stale_pair(relative: str) -> None:
+            project = self.repo / relative
+            project.mkdir(parents=True)
+            set_profiles(project_scope(project), self.repo, ("codex-demo",))
+            lock_path = project / ".hwskills/lock.yaml"
+            lock_data = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+            lock_data["catalog_digest"] = "sha256:stale"
+            lock_path.write_text(
+                yaml.safe_dump(lock_data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
+
+        for suffix in ("pyc", "pyo", "pyd"):
+            write_stale_pair(f"nested/bogus.{suffix}/run")
+        write_stale_pair("examples/stale-example")
+
+        report = check_integrity(self.repo)
+
+        self.assertEqual(
+            [issue.path for issue in report.issues if issue.code == "stale-profile-lock"],
+            ["examples/stale-example/.hwskills/lock.yaml"],
+        )
+
     def test_test_manifest_reference_headers_report_unknown_duplicate_and_malformed_targets(self) -> None:
         """Reference validation catches stale rename targets without parsing or running cases."""
         from hwskill.integrity import validate_test_manifest_references
