@@ -515,7 +515,11 @@ def _copy_snapshot_fixture_directory(
         raise ValueError("fixture tree changed before copying")
     _assert_fixture_identity(os.fstat(source_fd), expected_directory, "/".join(relative) or ".")
     seen.add(relative)
-    for name in sorted(os.listdir(source_fd)):
+    expected_names = _expected_snapshot_fixture_children(expected_entries, relative)
+    initial_names = tuple(sorted(os.listdir(source_fd)))
+    if initial_names != expected_names:
+        raise ValueError("fixture tree changed before copying")
+    for name in initial_names:
         entry_relative = (*relative, name)
         expected = expected_entries.get(entry_relative)
         if expected is None:
@@ -541,6 +545,41 @@ def _copy_snapshot_fixture_directory(
             seen.add(entry_relative)
         else:
             raise ValueError(f"fixtures contains unsupported fixture: {'/'.join(entry_relative)}")
+    _assert_snapshot_fixture_directory_complete(
+        source_fd, expected_directory, expected_entries, relative, expected_names,
+    )
+
+
+def _expected_snapshot_fixture_children(
+    expected_entries: dict[tuple[str, ...], FixtureIdentity],
+    relative: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(sorted(
+        entry_relative[-1]
+        for entry_relative in expected_entries
+        if len(entry_relative) == len(relative) + 1 and entry_relative[:-1] == relative
+    ))
+
+
+def _assert_snapshot_fixture_directory_complete(
+    source_fd: int,
+    expected_directory: FixtureIdentity,
+    expected_entries: dict[tuple[str, ...], FixtureIdentity],
+    relative: tuple[str, ...],
+    expected_names: tuple[str, ...],
+) -> None:
+    label = "/".join(relative) or "."
+    _assert_fixture_identity(os.fstat(source_fd), expected_directory, label)
+    final_names = tuple(sorted(os.listdir(source_fd)))
+    if final_names != expected_names:
+        raise ValueError("fixture tree changed before copying")
+    for name in final_names:
+        entry_relative = (*relative, name)
+        expected = expected_entries.get(entry_relative)
+        if expected is None:
+            raise ValueError("fixture tree changed before copying")
+        current = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        _assert_fixture_identity(current, expected, "/".join(entry_relative))
 
 
 def _copy_snapshot_regular_fixture(

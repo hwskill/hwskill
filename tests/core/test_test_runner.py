@@ -308,6 +308,119 @@ class TestLocalCaseRunner(unittest.TestCase):
         self.assertEqual(result.status, "BLOCKED")
         self.assertEqual(result.cases[0].actions, ())
 
+    def test_loaded_collection_rejects_root_fixture_added_during_copy_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "touch action-ran"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        (self.fixtures / "safe.txt").write_text("trusted\n", encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+
+        def add_after_open(relative: tuple[str, ...]) -> None:
+            if relative == ("safe.txt",):
+                (self.fixtures / "added.txt").write_text("late\n", encoding="utf-8")
+
+        with patch("hwskill.test_runner._after_snapshot_fixture_file_opened", side_effect=add_after_open):
+            result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+
+    def test_loaded_collection_rejects_nested_fixture_added_during_copy_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "touch action-ran"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        nested = self.fixtures / "nested"
+        nested.mkdir()
+        (nested / "safe.txt").write_text("trusted\n", encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+
+        def add_after_open(relative: tuple[str, ...]) -> None:
+            if relative == ("nested", "safe.txt"):
+                (nested / "added.txt").write_text("late\n", encoding="utf-8")
+
+        with patch("hwskill.test_runner._after_snapshot_fixture_file_opened", side_effect=add_after_open):
+            result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+
+    def test_loaded_collection_rejects_fixture_deleted_during_copy_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "touch action-ran"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        fixture = self.fixtures / "safe.txt"
+        fixture.write_text("trusted\n", encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+
+        def remove_after_open(relative: tuple[str, ...]) -> None:
+            if relative == ("safe.txt",):
+                fixture.unlink()
+
+        with patch("hwskill.test_runner._after_snapshot_fixture_file_opened", side_effect=remove_after_open):
+            result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+
+    def test_loaded_collection_rejects_parent_mode_change_during_copy_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "touch action-ran"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        (self.fixtures / "safe.txt").write_text("trusted\n", encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+        original_mode = self.fixtures.stat().st_mode & 0o777
+
+        def chmod_after_open(relative: tuple[str, ...]) -> None:
+            if relative == ("safe.txt",):
+                self.fixtures.chmod(0o700)
+
+        with patch("hwskill.test_runner._after_snapshot_fixture_file_opened", side_effect=chmod_after_open):
+            result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.fixtures.chmod(original_mode)
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+
     def test_loaded_collection_rejects_fixtures_created_after_absent_snapshot_before_actions(self) -> None:
         from hwskill.test_manifest import load_test_collection
         from hwskill.test_runner import run_collection
