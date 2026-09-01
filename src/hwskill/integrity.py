@@ -20,10 +20,10 @@ from . import registry
 from .source_manifest import load_source_manifest
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class IntegrityIssue:
-    code: str
     path: str
+    code: str
     message: str
 
 
@@ -49,7 +49,7 @@ class IntegrityError(ValueError):
 
 def check_integrity(repo_root: Path) -> IntegrityReport:
     """Collect offline inventory problems without stopping at the first one."""
-    root = Path(repo_root).resolve()
+    root = Path(repo_root).absolute()
     issues: list[IntegrityIssue] = []
 
     skill_tree_safe = _inventory_tree_is_safe(root / "skills-src", root, issues)
@@ -71,6 +71,7 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
         except Exception as exc:
             issues.append(_issue("invalid-source-manifest", root, path, str(exc)))
 
+    profile_tree_safe = _inventory_tree_is_safe(root / "profiles", root, issues)
     profile_paths = tuple(_inventory_files(root / "profiles", "*.yaml", root, issues))
     for path in profile_paths:
         _parse_yaml_mapping(path, root, issues, "invalid-profile", "profile definition")
@@ -83,7 +84,7 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
 
     catalog_path = root / "registry" / "catalog.json"
     catalog_ok = _parse_catalog(catalog_path, root, issues)
-    registry_ok = skill_tree_safe and _validate_registry(root, issues)
+    registry_ok = skill_tree_safe and profile_tree_safe and _validate_registry(root, issues)
     if catalog_ok and registry_ok:
         expected_catalog = json.dumps(
             registry.build_catalog(root), ensure_ascii=False, sort_keys=True, indent=2
@@ -97,7 +98,7 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
                 issues.append(_issue("catalog-stale", root, catalog_path, "Catalog differs from the current registry; run hwskill registry build"))
 
     return IntegrityReport(
-        issues=tuple(sorted(issues, key=lambda item: (item.path, item.code, item.message))),
+        issues=tuple(sorted(issues)),
         skill_count=len(governance_dirs & markdown_dirs),
         source_count=len(source_paths),
         profile_count=len(profile_paths),
@@ -118,36 +119,47 @@ def _inventory_files(
     root: Path,
     issues: list[IntegrityIssue],
 ) -> Iterator[Path]:
-    if not directory.is_dir() or directory.is_symlink():
-        if directory.is_symlink():
-            issues.append(_issue("unsafe-path", root, directory, "symlinked inventory directory is not followed"))
+    if not _path_components_are_safe(root, directory, issues):
+        return
+    try:
+        directory_mode = directory.lstat().st_mode
+    except OSError:
+        return
+    if not stat.S_ISDIR(directory_mode):
         return
     for current, directories, files in os.walk(directory, followlinks=False):
         current_path = Path(current)
         retained_directories = []
         for name in directories:
             candidate = current_path / name
-            if candidate.is_symlink():
-                issues.append(_issue("unsafe-path", root, candidate, "symlinked directory is not followed"))
-            else:
+            if _path_components_are_safe(root, candidate, issues):
                 retained_directories.append(name)
         directories[:] = retained_directories
         for name in files:
             if not Path(name).match(pattern):
                 continue
             candidate = current_path / name
+            if not _path_components_are_safe(root, candidate, issues):
+                continue
             if _regular_file(candidate):
                 yield candidate
             else:
-                issues.append(_issue("unsafe-path", root, candidate, "inventory file must be a regular file"))
+                _unsafe_path(root, candidate, issues, "inventory file must be a regular file")
 
 
 def _inventory_tree_is_safe(directory: Path, root: Path, issues: list[IntegrityIssue]) -> bool:
     """Reject links before a focused Registry parser could resolve one."""
-    if not directory.exists():
+    if not _path_components_are_safe(root, directory, issues):
+        return False
+    try:
+        directory_mode = directory.lstat().st_mode
+    except FileNotFoundError:
         return True
-    if directory.is_symlink() or not directory.is_dir():
-        issues.append(_issue("unsafe-path", root, directory, "Skill inventory root must be a real directory"))
+    except OSError as exc:
+        _unsafe_path(root, directory, issues, f"cannot inspect inventory root: {exc}")
+        return False
+    if not stat.S_ISDIR(directory_mode):
+        _unsafe_path(root, directory, issues, "inventory root must be a real directory")
         return False
     safe = True
     for current, directories, files in os.walk(directory, followlinks=False):
@@ -155,22 +167,24 @@ def _inventory_tree_is_safe(directory: Path, root: Path, issues: list[IntegrityI
         retained_directories = []
         for name in directories:
             candidate = current_path / name
-            if candidate.is_symlink():
-                issues.append(_issue("unsafe-path", root, candidate, "symlinked directory is not followed"))
+            if not _path_components_are_safe(root, candidate, issues):
                 safe = False
             else:
                 retained_directories.append(name)
         directories[:] = retained_directories
         for name in files:
             candidate = current_path / name
+            if not _path_components_are_safe(root, candidate, issues):
+                safe = False
+                continue
             try:
                 mode = candidate.lstat().st_mode
             except OSError as exc:
-                issues.append(_issue("unsafe-path", root, candidate, f"cannot inspect Skill payload: {exc}"))
+                _unsafe_path(root, candidate, issues, f"cannot inspect Skill payload: {exc}")
                 safe = False
                 continue
             if not stat.S_ISREG(mode):
-                issues.append(_issue("unsafe-path", root, candidate, "Skill payload must be a regular file"))
+                _unsafe_path(root, candidate, issues, "Skill payload must be a regular file")
                 safe = False
     return safe
 
@@ -183,17 +197,17 @@ def _inventory_repository_locks(root: Path, issues: list[IntegrityIssue]) -> Ite
             candidate = current_path / name
             if name in {".git", ".venv", "__pycache__"}:
                 continue
-            if candidate.is_symlink():
-                issues.append(_issue("unsafe-path", root, candidate, "symlinked directory is not followed"))
-            else:
+            if _path_components_are_safe(root, candidate, issues):
                 retained_directories.append(name)
         directories[:] = retained_directories
         if current_path.name == ".hwskills" and "lock.yaml" in files:
             candidate = current_path / "lock.yaml"
+            if not _path_components_are_safe(root, candidate, issues):
+                continue
             if _regular_file(candidate):
                 yield candidate
             else:
-                issues.append(_issue("unsafe-path", root, candidate, "repository lock must be a regular file"))
+                _unsafe_path(root, candidate, issues, "repository lock must be a regular file")
 
 
 def _inventory_test_manifests(root: Path, issues: list[IntegrityIssue]) -> Iterator[Path]:
@@ -208,6 +222,8 @@ def _parse_yaml_mapping(
     code: str,
     label: str,
 ) -> None:
+    if not _path_components_are_safe(root, path, issues):
+        return
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
@@ -218,6 +234,8 @@ def _parse_yaml_mapping(
 
 
 def _parse_catalog(path: Path, root: Path, issues: list[IntegrityIssue]) -> bool:
+    if not _path_components_are_safe(root, path, issues):
+        return False
     if not _regular_file(path):
         issues.append(_issue("invalid-catalog", root, path, "Catalog must be a regular JSON file"))
         return False
@@ -246,6 +264,33 @@ def _regular_file(path: Path) -> bool:
         return stat.S_ISREG(path.lstat().st_mode)
     except OSError:
         return False
+
+
+def _path_components_are_safe(root: Path, path: Path, issues: list[IntegrityIssue]) -> bool:
+    """Ensure no component below the repository root is a symlink before any read."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        _unsafe_path(root, path, issues, "inventory path escapes the repository root")
+        return False
+    candidate = root
+    for component in relative.parts:
+        candidate = candidate / component
+        try:
+            mode = candidate.lstat().st_mode
+        except OSError:
+            return True
+        if stat.S_ISLNK(mode):
+            _unsafe_path(root, candidate, issues, "symlinked path component is not followed")
+            return False
+    return True
+
+
+def _unsafe_path(root: Path, path: Path, issues: list[IntegrityIssue], message: str) -> None:
+    issue = _issue("unsafe-path", root, path, message)
+    if any(existing.code == issue.code and existing.path == issue.path for existing in issues):
+        return
+    issues.append(issue)
 
 
 def _issue(code: str, root: Path, path: Path, message: str) -> IntegrityIssue:

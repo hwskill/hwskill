@@ -12,12 +12,14 @@ ROOT = Path(__file__).parents[1]
 class IntegrityTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = TemporaryDirectory()
+        self.external = TemporaryDirectory()
         self.repo = Path(self.temp.name)
         for name in ("skills-src", "sources", "profiles", "registry"):
             shutil.copytree(ROOT / name, self.repo / name)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+        self.external.cleanup()
 
     def make_orphan_skill(self, relative_path: str) -> None:
         skill = self.repo / relative_path / "SKILL.md"
@@ -52,7 +54,7 @@ class IntegrityTest(unittest.TestCase):
 
         self.assertEqual(
             report.issues,
-            tuple(sorted(report.issues, key=lambda issue: (issue.path, issue.code, issue.message))),
+            tuple(sorted(report.issues)),
         )
         self.assertEqual(
             {issue.code for issue in report.issues},
@@ -93,6 +95,52 @@ class IntegrityTest(unittest.TestCase):
 
         self.assertIn("unsafe-path", {issue.code for issue in report.issues})
         self.assertNotIn("invalid-registry", {issue.code for issue in report.issues})
+
+    def test_symlinked_registry_is_not_read_as_an_invalid_catalog(self) -> None:
+        """An unsafe Catalog parent stops parsing before external JSON is reached."""
+        from hwskill.integrity import check_integrity
+
+        external_registry = Path(self.external.name) / "registry"
+        external_registry.mkdir()
+        (external_registry / "catalog.json").write_text("{ invalid json", encoding="utf-8")
+        shutil.rmtree(self.repo / "registry")
+        (self.repo / "registry").symlink_to(external_registry, target_is_directory=True)
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("unsafe-path", {issue.code for issue in report.issues})
+        self.assertNotIn("invalid-catalog", {issue.code for issue in report.issues})
+
+    def test_symlinked_tests_parent_is_not_read_as_a_test_manifest(self) -> None:
+        """A linked tests directory cannot inject an external malformed manifest."""
+        from hwskill.integrity import check_integrity
+
+        external_tests = Path(self.external.name) / "tests"
+        external_manifest = external_tests / "skills/example/test.yaml"
+        external_manifest.parent.mkdir(parents=True)
+        external_manifest.write_text("[ invalid yaml", encoding="utf-8")
+        (self.repo / "tests").symlink_to(external_tests, target_is_directory=True)
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("unsafe-path", {issue.code for issue in report.issues})
+        self.assertNotIn("invalid-test-manifest", {issue.code for issue in report.issues})
+
+    def test_repeated_inventory_checks_report_one_unsafe_path(self) -> None:
+        """One physical link must not emit one unsafe finding per inventory pass."""
+        from hwskill.integrity import check_integrity
+
+        external_skills = Path(self.external.name) / "skills"
+        external_skills.mkdir()
+        shutil.rmtree(self.repo / "skills-src")
+        (self.repo / "skills-src").symlink_to(external_skills, target_is_directory=True)
+
+        report = check_integrity(self.repo)
+
+        self.assertEqual(
+            len([issue for issue in report.issues if issue.code == "unsafe-path" and issue.path == "skills-src"]),
+            1,
+        )
 
 
 if __name__ == "__main__":
