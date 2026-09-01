@@ -28,18 +28,15 @@ CredentialInspector = Callable[[str, Mapping[str, str], Path, Callable[[Path], b
 
 
 class ImageIdentity(Protocol):
-    """The immutable image identity produced by the later Docker runner."""
+    """An already-resolved immutable image identity from the Docker runner."""
 
     image: str
     digest: str
 
 
-ImageIdentityProvider = Callable[[], ImageIdentity | None]
-
-
 @dataclass(frozen=True)
 class ExpectedImage:
-    """Injectable image identity for setup before DockerTestRunner exists."""
+    """Test image identity structurally compatible with the later ImageInfo."""
 
     image: str
     digest: str
@@ -111,17 +108,23 @@ def configure_test_setup(
     check: bool = False,
     replacement: TestConfiguration | None = None,
     prompt: Callable[[str], str] = input,
-    image_identity: ImageIdentity | ImageIdentityProvider | None = None,
+    image_identity: ImageIdentity | None = None,
     inspection_kwargs: Mapping[str, object] | None = None,
     inspect: Callable[..., SetupReport] | None = None,
     write: Callable[[TestConfiguration], None] = write_test_configuration,
 ) -> SetupReport:
-    """Keep a usable model by default; require a replacement when it is unusable.
+    """Inspect setup and keep a usable model unless replacement is required.
 
-    Check mode is intentionally an early return: it neither prompts nor writes
-    and inspection never invokes Docker build commands.
+    ``image_identity`` must be an already-resolved immutable identity, never a
+    provider or build callback.  The CLI/Task 8 integration must decide whether
+    to build (outside ``--check``) or perform a read-only identity lookup before
+    calling this service.  The exact supplied value is forwarded unchanged to
+    both the current and replacement inspections.  Check mode neither prompts
+    nor writes and never invokes image build or discovery callbacks.
     """
-    identity = _resolve_image_identity(image_identity)
+    if callable(image_identity):
+        raise TypeError("image_identity must be an already-resolved ImageIdentity, not a callable provider")
+    identity = image_identity
     report = _inspect_configuration(current, runner, identity, inspection_kwargs, inspect)
     if check:
         return report
@@ -242,17 +245,6 @@ def _expected_image(value: ImageIdentity | None) -> tuple[str, str] | None:
     return image, digest
 
 
-def _resolve_image_identity(value: ImageIdentity | ImageIdentityProvider | None) -> ImageIdentity | None:
-    if value is None:
-        return None
-    if callable(value):
-        try:
-            return value()
-        except Exception:
-            return None
-    return value
-
-
 def _inspect_configuration(
     config: TestConfiguration,
     runner: SetupRunner,
@@ -260,11 +252,12 @@ def _inspect_configuration(
     inspection_kwargs: Mapping[str, object] | None,
     inspect: Callable[..., SetupReport] | None,
 ) -> SetupReport:
-    """Use the real inspector with the resolved identity, or an injected adapter.
+    """Use the real inspector with the supplied identity, or an injected adapter.
 
     Custom inspectors retain the original ``(config, runner)`` contract by
     default.  Callers that want additional injected dependencies can pass them
-    through ``inspection_kwargs``.
+    through ``inspection_kwargs``.  The default inspector receives the exact
+    already-resolved identity supplied to ``configure_test_setup``.
     """
     options = dict(inspection_kwargs or {})
     if inspect is None:

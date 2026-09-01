@@ -120,6 +120,33 @@ class TestTestSetup(unittest.TestCase):
         self.assertEqual(writes, [])
         self.assertEqual(prompts, [])
 
+    def test_check_mode_never_invokes_a_callable_image_identity(self) -> None:
+        from hwskill.test_setup import configure_test_setup, SetupCheck, SetupReport
+
+        class ExplosiveIdentity:
+            def __init__(self) -> None:
+                self.invoked = False
+
+            def __call__(self):
+                self.invoked = True
+                raise AssertionError("image identity providers must not be invoked")
+
+        current = SetupReport("READY", (SetupCheck("model-availability", "READY", "available"),))
+        identity = ExplosiveIdentity()
+        writes = []
+        prompts = []
+        with self.assertRaisesRegex(TypeError, "already-resolved ImageIdentity"):
+            configure_test_setup(
+                self.config, check=True, runner=object(), image_identity=identity,
+                inspect=lambda *_args, **_kwargs: current,
+                write=lambda config: writes.append(config),
+                prompt=lambda message: prompts.append(message) or "replace",
+            )
+
+        self.assertFalse(identity.invoked)
+        self.assertEqual(writes, [])
+        self.assertEqual(prompts, [])
+
     def test_unusable_current_model_requires_explicit_replacement(self) -> None:
         from hwskill.test_setup import configure_test_setup, SetupCheck, SetupReport
 
@@ -272,18 +299,16 @@ class TestTestSetup(unittest.TestCase):
             new_probe: _completed(new_probe, '{"type":"message"}\n'),
         })
         identity = ExpectedImage(IMAGE_NAME, IMAGE_DIGEST)
-        provider_calls = []
         with TemporaryDirectory() as directory:
             path = Path(directory) / "test.yaml"
             write_test_configuration(current, path=path)
             report = configure_test_setup(
                 current, replacement=replacement, runner=runner,
-                image_identity=lambda: provider_calls.append(identity) or identity,
+                image_identity=identity,
                 inspection_kwargs={"environment": {"CODEX_API_KEY": "set"}},
                 write=lambda config: write_test_configuration(config, path=path),
             )
             self.assertEqual(report.status, "READY")
-            self.assertEqual(provider_calls, [identity])
             self.assertIn("new-model", path.read_text(encoding="utf-8"))
 
     def test_configure_identity_mismatch_preserves_current_file(self) -> None:
