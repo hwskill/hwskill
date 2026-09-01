@@ -127,7 +127,10 @@ def _parse_source(data: Any, path: Path) -> UpstreamSource:
         raise SourceManifestError(f"{path}: upstream.repository must be a remote Git URL")
     track = _string(upstream_data["track"], "upstream.track")
     if not _is_full_ref(track):
-        raise SourceManifestError(f"{path}: upstream.track must be a full refs/... reference")
+        raise SourceManifestError(
+            f"{path}: upstream.track must be refs/heads/..., refs/tags/..., "
+            "or a full 40-character Git revision"
+        )
     skills_path = _safe_relative_path(upstream_data["skills_path"], "upstream.skills_path")
     ignored = tuple(_parse_ignored(item) for item in _collection(upstream_data["ignore"], "upstream.ignore"))
 
@@ -234,16 +237,28 @@ def _safe_relative_path(data: Any, label: str) -> str:
 
 
 def _is_remote_git_url(repository: str) -> bool:
+    if _is_local_repository_path(repository):
+        return False
     parsed = urlsplit(repository)
     if parsed.scheme in {"https", "ssh", "git"}:
         return bool(parsed.netloc and parsed.path and not parsed.query and not parsed.fragment)
     return bool(_SCP_GIT_URL_RE.fullmatch(repository))
 
 
-def _is_full_ref(track: str) -> bool:
-    return track.startswith("refs/") and len(track) > len("refs/") and all(
-        part not in {"", ".", ".."} for part in track.split("/")
+def _is_local_repository_path(repository: str) -> bool:
+    return repository.startswith(("/", "\\")) or bool(
+        re.match(r"^[A-Za-z]:[\\/]", repository)
     )
+
+
+def _is_full_ref(track: str) -> bool:
+    if _SHA1_RE.fullmatch(track):
+        return True
+    for prefix in ("refs/heads/", "refs/tags/"):
+        if track.startswith(prefix):
+            suffix = track.removeprefix(prefix)
+            return bool(suffix) and all(part not in {"", ".", ".."} for part in suffix.split("/"))
+    return False
 
 
 def _validate_unique(values: list[str], label: str) -> None:

@@ -52,6 +52,20 @@ class SkillRecord:
     content_digest: str
     path: Path
 
+    def __post_init__(self) -> None:
+        if self.source_kind == "manual":
+            if self.source_id is not None:
+                raise ValueError("manual source_kind requires source_id to be None")
+            if self.revision != "manual":
+                raise ValueError("manual source_kind requires revision to be manual")
+            return
+        if self.source_kind != "upstream":
+            raise ValueError("source_kind must be manual or upstream")
+        if not isinstance(self.source_id, str) or not self.source_id.strip():
+            raise ValueError("upstream source_kind requires a non-empty source_id")
+        if not isinstance(self.revision, str) or not self.revision.strip() or self.revision == "manual":
+            raise ValueError("upstream source_kind requires a non-manual revision")
+
 
 @dataclass(frozen=True)
 class EffectiveCatalog:

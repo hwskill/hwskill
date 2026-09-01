@@ -64,7 +64,14 @@ class SourceManifestTest(unittest.TestCase):
             load_all_sources(self.root)
 
     def test_rejects_local_repository_paths_and_non_remote_urls(self):
-        for repository in ("/srv/superpowers", "file:///srv/superpowers", ".", "../superpowers"):
+        for repository in (
+            "/srv/superpowers",
+            "file:///srv/superpowers",
+            ".",
+            "../superpowers",
+            r"C:\skills",
+            r"\\server\share\skills",
+        ):
             with self.subTest(repository=repository):
                 data = self.source_data()
                 data["upstream"]["repository"] = repository
@@ -92,6 +99,21 @@ class SourceManifestTest(unittest.TestCase):
         data = self.source_data()
         data["resolved"]["revision"] = "a" * 12
         with self.assertRaisesRegex(SourceManifestError, "revision"):
+            load_source_manifest(self.write_source(data))
+
+    def test_track_accepts_a_full_commit_sha(self):
+        data = self.source_data()
+        data["upstream"]["track"] = "c" * 40
+
+        source = load_source_manifest(self.write_source(data))
+
+        self.assertEqual(source.upstream.track, "c" * 40)
+
+    def test_rejects_full_refs_outside_heads_and_tags(self):
+        data = self.source_data()
+        data["upstream"]["track"] = "refs/pull/1/head"
+
+        with self.assertRaisesRegex(SourceManifestError, "track"):
             load_source_manifest(self.write_source(data))
 
     def test_rejects_unsafe_skill_and_ignore_paths(self):
