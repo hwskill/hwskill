@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import ipaddress
 from pathlib import Path, PurePosixPath
 import re
+import socket
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
@@ -269,9 +270,21 @@ def _is_nonlocal_remote_host(host: str | None) -> bool:
     if not canonical or canonical == "localhost":
         return False
     try:
-        return not ipaddress.ip_address(canonical).is_loopback
+        address = ipaddress.ip_address(canonical)
     except ValueError:
-        return True
+        try:
+            address = ipaddress.IPv4Address(socket.inet_aton(canonical))
+        except (OSError, ValueError):
+            return True
+    return _is_nonlocal_ip_address(address)
+
+
+def _is_nonlocal_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if address.is_loopback or address.is_unspecified:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return not (address.ipv4_mapped.is_loopback or address.ipv4_mapped.is_unspecified)
+    return True
 
 
 def _is_local_repository_path(repository: str) -> bool:

@@ -81,6 +81,16 @@ class SourceManifestTest(unittest.TestCase):
             "git@localhost:repo.git",
             "https://127.0.0.1/repo.git",
             "ssh://[::1]/repo.git",
+            "https://127.1/repo.git",
+            "https://127.0.1/repo.git",
+            "https://127.000.000.001/repo.git",
+            "https://0177.0.0.1/repo.git",
+            "https://0x7f.0.0.1/repo.git",
+            "https://2130706433/repo.git",
+            "git@127.1:repo.git",
+            "https://[::ffff:127.0.0.1]/repo.git",
+            "https://0.0.0.0/repo.git",
+            "ssh://[::]/repo.git",
             "https://@/repo.git",
             "https://:443/repo.git",
         ):
@@ -103,6 +113,8 @@ class SourceManifestTest(unittest.TestCase):
             "git@github.com:obra/superpowers.git",
             "ssh://git@github.com/obra/superpowers.git",
             "git://github.com/obra/superpowers.git",
+            "https://git@10.24.8.16:8443/platform/skills.git",
+            "ssh://git@[fd00::1]:2222/platform/skills.git",
         ):
             with self.subTest(repository=repository):
                 data = self.source_data()
