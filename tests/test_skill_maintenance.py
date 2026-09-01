@@ -300,6 +300,35 @@ class SkillMaintenanceTest(unittest.TestCase):
                 plan_adopt_skill(self.repo, "team", "team/review", "review", False, self.git)
         digest.assert_not_called()
 
+    def test_find_skill_rejects_symlinked_governance_before_loader_reads_external_yaml(self) -> None:
+        from hwskill.skill_maintenance import SkillMaintenanceError, plan_update_manual
+
+        skill = self.make_manual_skill("team/review")
+        external = self.root / "external-valid-governance.yaml"
+        external.write_text(yaml.safe_dump({
+            "id": "team/review", "layer": "l2", "source": {"kind": "manual"},
+        }), encoding="utf-8")
+        governance = skill / "skill.yaml"
+        governance.unlink()
+        governance.symlink_to(external)
+
+        with patch("hwskill.skill_maintenance._load_governance", side_effect=AssertionError("loader invoked")) as loader:
+            with self.assertRaisesRegex(SkillMaintenanceError, "unsafe skills-src"):
+                plan_update_manual(self.repo, "team/review")
+        loader.assert_not_called()
+
+    def test_find_skill_rejects_symlinked_skills_root_before_inventory_load(self) -> None:
+        from hwskill.skill_maintenance import SkillMaintenanceError, plan_create_manual
+
+        external = self.root / "external-skills"
+        external.mkdir()
+        (self.repo / "skills-src").symlink_to(external, target_is_directory=True)
+
+        with patch("hwskill.skill_maintenance._load_governance", side_effect=AssertionError("loader invoked")) as loader:
+            with self.assertRaisesRegex(SkillMaintenanceError, "skills-src must be a real directory"):
+                plan_create_manual(self.repo, "team/review", "l2", "review description", "MIT")
+        loader.assert_not_called()
+
     def test_failed_planning_never_writes_real_tree(self) -> None:
         from hwskill.skill_maintenance import SkillMaintenanceError, plan_move_skill
 

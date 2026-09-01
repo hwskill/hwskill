@@ -348,7 +348,17 @@ def _stage_catalog(tx: RepositoryTransaction) -> None:
 def _find_skill(root: Path, skill_id: str, *, required: bool) -> _SkillLocation | None:
     found: list[_SkillLocation] = []
     skills_root = root / "skills-src"
-    if skills_root.is_dir():
+    try:
+        skills_root.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise SkillMaintenanceError("cannot inspect skills-src") from error
+    else:
+        # All lifecycle planners pass through this inventory scan.  Validate
+        # before globbing or loading any governance file so symlinked parents,
+        # payloads, and skill.yaml files cannot redirect a repository read.
+        _assert_safe_skill_tree(skills_root, "skills-src")
         for governance_path in sorted(skills_root.glob("**/skill.yaml")):
             governance = _load_governance(governance_path)
             if governance.get("id") != skill_id:
