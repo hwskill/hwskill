@@ -71,6 +71,22 @@ class HostEvalEventsTest(unittest.TestCase):
         self.assertTrue(result["execution_succeeded"])
         self.assertEqual(result["patch_diagnostic"]["files"], 2)
 
+    def test_codex_normalization_keeps_observable_calls_but_drops_reasoning(self):
+        from hwskill.eval_events import normalize_events
+
+        self.write([
+            {"type": "item.completed", "item": {"type": "reasoning", "text": "hidden"}},
+            {"type": "item.completed", "item": {
+                "type": "command_execution", "command": "true", "exit_code": 0,
+                "status": "completed", "aggregated_output": "ok",
+            }},
+        ])
+
+        events = normalize_events(self.path, "codex")
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["item"]["type"], "command_execution")
+
     def test_claude_concurrent_load_and_script_is_not_reordered_into_direct_execution(self):
         command = f"python3 {SCRIPT} {URL} --output {OUTPUT}"
         self.write([

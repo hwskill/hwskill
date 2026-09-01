@@ -161,13 +161,51 @@ def _opencode(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
-def normalize_events(path: Path, host: str) -> list[dict[str, Any]]:
+def _codex_exit_code(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("exit_code", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _codex(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retain completed observable calls, excluding messages and hidden reasoning."""
+    normalized: list[dict[str, Any]] = []
+    for event in events:
+        item = event.get("item") if event.get("type") == "item.completed" else None
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type == "command_execution":
+            normalized.append(_completed({
+                "type": "command_execution",
+                "command": str(item.get("command", "")),
+                "exit_code": _codex_exit_code(item),
+                "status": str(item.get("status", "failed")),
+                "aggregated_output": _text(item.get("aggregated_output")),
+            }))
+        elif item_type == "mcp_tool_call":
+            normalized.append(_completed({
+                "type": "mcp_tool_call",
+                "tool": str(item.get("tool", "")),
+                "arguments": item.get("arguments") or {},
+                "status": str(item.get("status", "failed")),
+                "result": {"structured_content": _structured(item.get("result") or {})},
+            }))
+    return normalized
+
+
+def normalize_event_records(events: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
+    """Normalize in-memory host records so raw streams never reach artifacts."""
     host = host.replace("_", "-")
-    events = _read(path)
     if host == "codex":
-        return events
+        return _codex(events)
     if host == "claude-code":
         return _claude(events)
     if host == "opencode":
         return _opencode(events)
     raise ValueError(f"unsupported event host: {host}")
+
+
+def normalize_events(path: Path, host: str) -> list[dict[str, Any]]:
+    return normalize_event_records(_read(path), host)

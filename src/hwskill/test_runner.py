@@ -99,7 +99,13 @@ class UnavailableAgentExecutor:
         )
 
 
-def run_case(case: TestCase, environment: TestEnvironment, artifact_root: Path) -> CaseResult:
+def run_case(
+    case: TestCase,
+    environment: TestEnvironment,
+    artifact_root: Path,
+    *,
+    agent_executor: ActionExecutor | None = None,
+) -> CaseResult:
     """Run one case in a fresh workspace and retain normalized evidence."""
     case_dir = Path(artifact_root).absolute() / safe_artifact_id(case.case_id)
     case_dir.mkdir(parents=True, exist_ok=False)
@@ -113,7 +119,10 @@ def run_case(case: TestCase, environment: TestEnvironment, artifact_root: Path) 
 
         baseline = _workspace_snapshot(workspace)
         command_executor = CommandExecutor()
-        agent_executor: ActionExecutor = UnavailableAgentExecutor()
+        if agent_executor is None:
+            # Import lazily to keep Task 3's command-only runner independently usable.
+            from .test_agent import AgentExecutor
+            agent_executor = AgentExecutor()
 
         if case.prepare is not None:
             prepare_result = _execute(
@@ -157,7 +166,13 @@ def run_case(case: TestCase, environment: TestEnvironment, artifact_root: Path) 
         elif isinstance(case.post_check, CommandAction):
             status = _post_check_status(post_result.exit_code)
         else:
-            status = "BLOCKED"
+            from .test_agent import parse_agent_post_check
+            try:
+                response = (post_result.artifact_dir / "final-response.md").read_text(encoding="utf-8")
+            except OSError:
+                status = "BLOCKED"
+            else:
+                status = parse_agent_post_check(response)
         return _finish_case(case, case_dir, workspace, baseline, environment, tuple(actions), status)
     except (OSError, ValueError):
         return _finish_case(case, case_dir, workspace, {}, environment, tuple(actions), "BLOCKED")
@@ -169,6 +184,8 @@ def run_collection(
     collection: TestCollection,
     environment: TestEnvironment,
     artifact_root: Path,
+    *,
+    agent_executor: ActionExecutor | None = None,
 ) -> CollectionResult:
     """Run cases in declaration order; a malformed case cannot crash the collection."""
     results: list[CaseResult] = []
@@ -178,6 +195,7 @@ def run_collection(
                 case,
                 replace(environment, fixtures_dir=collection.fixtures_dir),
                 artifact_root,
+                agent_executor=agent_executor,
             ))
         except Exception as exc:  # defensive isolation at collection boundary
             results.append(_exception_case_result(case, environment, artifact_root, exc))
@@ -224,8 +242,16 @@ def _execute(
     action_dir = case_dir / "actions" / safe_artifact_id(action.action_id)
     action_dir.mkdir(parents=True, exist_ok=False)
     context = ActionContext(workspace, action_dir, environment)
-    if post_check_context is not None and isinstance(action, CommandAction):
-        return _run_post_check(action, context, post_check_context, case_dir)
+    if post_check_context is not None:
+        if isinstance(action, CommandAction):
+            return _run_post_check(action, context, post_check_context, case_dir)
+        from .test_agent import append_agent_post_check_metadata
+        action = replace(
+            action,
+            prompt=append_agent_post_check_metadata(
+                action.prompt, post_check_context, case_dir, workspace,
+            ),
+        )
     executor = command_executor if isinstance(action, CommandAction) else agent_executor
     return executor.run(action, context)
 
