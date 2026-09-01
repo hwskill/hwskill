@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -9,7 +10,7 @@ from unittest.mock import patch
 import yaml
 
 from hwskill.digest import content_digest
-from hwskill.pending_verification import VerificationResult
+from hwskill.pending_verification import VerificationResult, load_pending_verification
 from hwskill.git_source import ResolvedTrack
 from hwskill.source_manifest import (
     IgnoredSkill,
@@ -148,6 +149,19 @@ class SkillMaintenanceTest(unittest.TestCase):
         with self.assertRaisesRegex(SkillMaintenanceError, "source update.*overwrite"):
             plan_update_manual(self.repo, "team/other")
         self.assertTrue(upstream.exists())
+
+    def test_skip_tests_accepts_authoritative_non_lowercase_underscore_skill_id(self) -> None:
+        from hwskill.skill_maintenance import plan_create_manual
+
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        plan = plan_create_manual(self.repo, "team/Review_Name", "l2", "review description", "MIT")
+
+        plan.apply(skip_tests=True)
+
+        self.assertTrue((self.repo / "skills-src/l2/team/Review_Name/SKILL.md").is_file())
+        pending_record = load_pending_verification(self.repo)
+        self.assertIsNotNone(pending_record)
+        self.assertEqual(pending_record.selection, plan.selection)
 
     def test_move_changes_physical_layer_but_rename_migrates_identity_references(self) -> None:
         from hwskill.skill_maintenance import plan_move_skill, plan_rename_skill

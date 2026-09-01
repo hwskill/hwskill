@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fcntl
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -11,6 +12,7 @@ import secrets
 import stat
 import subprocess
 from typing import Mapping
+import unicodedata
 
 from .test_impact import TestSelection, load_impact_inventory
 
@@ -36,6 +38,7 @@ class VerificationResult:
 class PreparedPendingVerification:
     path: Path
     directory_fd: int
+    lock_fd: int
     temporary_name: str
     previous: bytes | None
     published: bool = False
@@ -70,14 +73,15 @@ class PreparedPendingVerification:
 
     def _close(self) -> None:
         if not self.closed:
-            os.close(self.directory_fd)
             self.closed = True
+            _close_pending_state(self.directory_fd, self.lock_fd)
 
 
 _PENDING_NAME = "pending-verification.json"
-_IDENTIFIER_COMPONENT = re.compile(r"[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?")
-_PATH_COMPONENT = re.compile(r"[a-z0-9][a-z0-9._-]*")
+_LOCK_NAME = "pending-verification.lock"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_MAX_IDENTIFIER_COMPONENT_LENGTH = 255
+_MAX_REPOSITORY_PATH_LENGTH = 4096
 
 
 def write_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> Path:
@@ -93,12 +97,20 @@ def write_pending_verification(repo_root: Path, selection: TestSelection, digest
 def prepare_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> PreparedPendingVerification:
     data = _pending_data(selection, digests)
     directory_fd, directory_path = _open_pending_directory(repo_root, create=True)
+    lock_fd: int | None = None
     try:
+        lock_fd = _acquire_pending_lock(directory_fd)
         previous = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
         encoded = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-        return PreparedPendingVerification(directory_path / _PENDING_NAME, directory_fd, _write_temporary_at(directory_fd, encoded), previous)
+        return PreparedPendingVerification(
+            directory_path / _PENDING_NAME, directory_fd, lock_fd,
+            _write_temporary_at(directory_fd, encoded), previous,
+        )
     except BaseException:
-        os.close(directory_fd)
+        if lock_fd is None:
+            os.close(directory_fd)
+        else:
+            _close_pending_state(directory_fd, lock_fd)
         raise
 
 
@@ -107,42 +119,54 @@ def load_pending_verification(repo_root: Path) -> PendingVerification | None:
         directory_fd, _ = _open_pending_directory(repo_root, create=False)
     except PendingVerificationError:
         return None
+    lock_fd: int | None = None
     try:
+        lock_fd = _acquire_pending_lock(directory_fd)
         raw = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
         return None if raw is None else _parse_pending(raw)
     except (PendingVerificationError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         return None
     finally:
-        os.close(directory_fd)
+        if lock_fd is None:
+            os.close(directory_fd)
+        else:
+            _close_pending_state(directory_fd, lock_fd)
 
 
 def clear_pending_verification(repo_root: Path, passed: VerificationResult) -> bool:
-    record = load_pending_verification(repo_root)
-    if record is None or record.selection != passed.selection or record.digests != tuple(sorted(passed.digests.items())):
-        return False
-    try:
-        current = {item.skill_id: item.content_digest for item in load_impact_inventory(repo_root).skills}
-    except Exception:
-        return False
-    if any(current.get(skill_id) != digest for skill_id, digest in record.digests):
-        return False
-    statuses = dict(passed.case_statuses)
-    if any(statuses.get(case_id) != "PASS" for case_id in record.selection.required_case_ids):
-        return False
     try:
         directory_fd, _ = _open_pending_directory(repo_root, create=False)
     except PendingVerificationError:
         return False
+    lock_fd: int | None = None
     try:
-        if _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True) is None:
+        lock_fd = _acquire_pending_lock(directory_fd)
+        raw = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
+        record = None if raw is None else _parse_pending(raw)
+        if record is None or record.selection != passed.selection or record.digests != tuple(sorted(passed.digests.items())):
+            return False
+        try:
+            current = {item.skill_id: item.content_digest for item in load_impact_inventory(repo_root).skills}
+        except Exception:
+            return False
+        if any(current.get(skill_id) != digest for skill_id, digest in record.digests):
+            return False
+        statuses = dict(passed.case_statuses)
+        if any(statuses.get(case_id) != "PASS" for case_id in record.selection.required_case_ids):
+            return False
+        _before_clear_unlink()
+        if _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True) != raw:
             return False
         os.unlink(_PENDING_NAME, dir_fd=directory_fd)
         _fsync_fd(directory_fd)
         return True
-    except OSError:
+    except (PendingVerificationError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         return False
     finally:
-        os.close(directory_fd)
+        if lock_fd is None:
+            os.close(directory_fd)
+        else:
+            _close_pending_state(directory_fd, lock_fd)
 
 
 def _open_pending_directory(repo_root: Path, *, create: bool) -> tuple[int, Path]:
@@ -201,6 +225,41 @@ def _open_directory_path(path: Path) -> int:
 
 def _directory_flags() -> int:
     return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _acquire_pending_lock(directory_fd: int) -> int:
+    try:
+        lock_fd = os.open(
+            _LOCK_NAME,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            0o600,
+            dir_fd=directory_fd,
+        )
+    except OSError as exc:
+        raise PendingVerificationError("pending verification lock is unsafe") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+            raise PendingVerificationError("pending verification lock is unsafe")
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return lock_fd
+    except BaseException:
+        os.close(lock_fd)
+        raise
+
+
+def _close_pending_state(directory_fd: int, lock_fd: int) -> None:
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        try:
+            os.close(lock_fd)
+        finally:
+            os.close(directory_fd)
+
+
+def _before_clear_unlink() -> None:
+    """Deterministic test seam; the pending-state lock remains held here."""
 
 
 def _write_temporary_at(directory_fd: int, value: bytes) -> str:
@@ -327,7 +386,15 @@ def _digest_mapping_is_safe(digests: object) -> bool:
 
 
 def _identifier_component_is_safe(value: object) -> bool:
-    return isinstance(value, str) and bool(_IDENTIFIER_COMPONENT.fullmatch(value))
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and len(value) <= _MAX_IDENTIFIER_COMPONENT_LENGTH
+        and value not in {".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and not _contains_control(value)
+    )
 
 
 def _skill_id_is_safe(value: object) -> bool:
@@ -356,12 +423,34 @@ def _digest_is_safe(value: object) -> bool:
 
 
 def _repo_path_is_safe(value: object) -> bool:
-    if not isinstance(value, str) or not value or value != value.strip() or "\\" in value:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > _MAX_REPOSITORY_PATH_LENGTH
+        or "\\" in value
+        or _contains_control(value)
+    ):
         return False
     path = PurePosixPath(value)
     if path.is_absolute() or path.as_posix() != value or any(part in {".", ".."} for part in path.parts):
         return False
-    return all(part == "SKILL.md" or bool(_PATH_COMPONENT.fullmatch(part)) for part in path.parts)
+    return all(_repo_path_component_is_safe(part) for part in path.parts)
+
+
+def _repo_path_component_is_safe(value: str) -> bool:
+    return (
+        bool(value)
+        and len(value) <= _MAX_IDENTIFIER_COMPONENT_LENGTH
+        and value not in {".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and not _contains_control(value)
+    )
+
+
+def _contains_control(value: str) -> bool:
+    return any(unicodedata.category(character).startswith("C") for character in value)
 
 
 def _collection_path_is_safe(value: object) -> bool:

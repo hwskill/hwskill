@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import os
 import subprocess
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -57,6 +58,22 @@ class PendingVerificationTest(unittest.TestCase):
         record = load_pending_verification(self.repo)
         self.assertEqual(record.digests, (("team/review", _DIGEST_A),))
         self.assertEqual(record.selection, self.selection)
+
+    def test_writer_accepts_authoritative_whitespace_bearing_skill_component(self) -> None:
+        selection = TestSelection(
+            skill_ids=("team/ Review ",),
+            collection_paths=(Path("tests/skills/team/ Review /test.yaml"),),
+            reasons=("skill-added:team/ Review ",),
+            changed_paths=("skills-src/l2/team/ Review /SKILL.md",),
+        )
+        digests = {"team/ Review ": _DIGEST_A}
+
+        write_pending_verification(self.repo, selection, digests)
+
+        record = load_pending_verification(self.repo)
+        self.assertIsNotNone(record)
+        self.assertEqual(record.selection, selection)
+        self.assertEqual(record.digests, (("team/ Review ", _DIGEST_A),))
 
     def test_only_exact_digests_and_all_required_passes_clear(self) -> None:
         write_pending_verification(self.repo, self.selection, self.digests)
@@ -134,8 +151,8 @@ class PendingVerificationTest(unittest.TestCase):
                 path = self.repo / ".git/hwskill/pending-verification.json"
                 self.assertEqual(path.read_bytes(), original)
 
-    def test_writer_rejects_secret_bearing_public_inputs_without_persisting(self) -> None:
-        sentinel = "PROMPT-OUTPUT-CREDENTIAL-SECRET"
+    def test_writer_rejects_control_bearing_public_inputs_without_persisting(self) -> None:
+        sentinel = "PROMPT\nOUTPUT\nCREDENTIAL"
         initial = TestSelection(changed_paths=(f"sources/{sentinel}.yaml",))
         with self.assertRaises(pending.PendingVerificationError):
             write_pending_verification(self.repo, initial, {})
@@ -156,6 +173,75 @@ class PendingVerificationTest(unittest.TestCase):
                     write_pending_verification(self.repo, selection, digests)
                 self.assertEqual(path.read_bytes(), original)
                 self.assertNotIn(sentinel.encode("utf-8"), path.read_bytes())
+
+    def test_clear_cannot_delete_a_newer_record_published_during_evidence_check(self) -> None:
+        write_pending_verification(self.repo, self.selection, self.digests)
+        evidence = VerificationResult(
+            self.selection, self.digests,
+            (("skill:team/review", "PASS"), ("profile:review-workflow", "PASS")),
+        )
+        clear_at_unlink = threading.Event()
+        permit_clear = threading.Event()
+        writer_started = threading.Event()
+        clear_result: list[bool] = []
+        newer = TestSelection(core=True)
+
+        def pause_clear() -> None:
+            clear_at_unlink.set()
+            if not permit_clear.wait(timeout=3):
+                raise RuntimeError("test did not release clear")
+
+        with patch("hwskill.pending_verification._before_clear_unlink", side_effect=pause_clear):
+            clearer = threading.Thread(
+                target=lambda: clear_result.append(clear_pending_verification(self.repo, evidence)),
+            )
+            clearer.start()
+            self.assertTrue(clear_at_unlink.wait(timeout=3))
+
+            def publish_newer() -> None:
+                writer_started.set()
+                write_pending_verification(self.repo, newer, {})
+
+            publisher = threading.Thread(target=publish_newer)
+            publisher.start()
+            self.assertTrue(writer_started.wait(timeout=3))
+            permit_clear.set()
+            clearer.join(timeout=3)
+            publisher.join(timeout=3)
+
+        self.assertFalse(clearer.is_alive())
+        self.assertFalse(publisher.is_alive())
+        self.assertEqual(clear_result, [True])
+        pending_record = load_pending_verification(self.repo)
+        self.assertIsNotNone(pending_record)
+        self.assertEqual(pending_record.selection, newer)
+
+    def test_lock_must_be_a_regular_file_and_prepared_locks_close_once(self) -> None:
+        gitdir = self.repo / ".git"
+        lock = gitdir / "hwskill/pending-verification.lock"
+        lock.parent.mkdir()
+        outside = Path(self.temporary.name) / "outside-lock"
+        outside.write_text("outside", encoding="utf-8")
+        lock.symlink_to(outside)
+        with self.assertRaises(pending.PendingVerificationError):
+            write_pending_verification(self.repo, self.selection, self.digests)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "outside")
+
+        lock.unlink()
+        os.mkfifo(lock)
+        with self.assertRaises(pending.PendingVerificationError):
+            write_pending_verification(self.repo, self.selection, self.digests)
+        lock.unlink()
+
+        prepared = prepare_pending_verification(self.repo, self.selection, self.digests)
+        directory_fd, lock_fd = prepared.directory_fd, prepared.lock_fd
+        prepared.discard()
+        prepared.discard()
+        self.assertTrue(prepared.closed)
+        with self.assertRaises(OSError):
+            os.fstat(directory_fd)
+        with self.assertRaises(OSError):
+            os.fstat(lock_fd)
 
     def test_existing_hwskill_symlink_is_rejected_without_external_write(self) -> None:
         gitdir = self.repo / ".git"
