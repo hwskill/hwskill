@@ -8,6 +8,7 @@ integrity tasks; the inventory here is their common, safe traversal boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,8 @@ from typing import Any, Iterator
 import yaml
 
 from . import registry
+from .models import EffectiveCatalog
+from .profiles import ProfileDefinition, _lock_data
 from .source_manifest import load_source_manifest
 
 
@@ -89,14 +92,6 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
 
     profile_tree_safe = _inventory_tree_is_safe(root / "profiles", root, issues)
     profile_paths = tuple(_inventory_files(root / "profiles", "*.yaml", root, issues))
-    for path in profile_paths:
-        _parse_yaml_mapping(path, root, issues, "invalid-profile", "profile definition")
-
-    for path in _inventory_repository_locks(root, issues):
-        _parse_yaml_mapping(path, root, issues, "invalid-lock", "repository lock")
-
-    for path in _inventory_test_manifests(root, issues):
-        _parse_yaml_mapping(path, root, issues, "invalid-test-manifest", "test manifest")
 
     catalog_path = root / "registry" / "catalog.json"
     catalog_data = _parse_catalog(catalog_path, root, issues)
@@ -104,11 +99,25 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
         governed_skills, registry_ok = _governed_skills(
             root, governance, issues, validate_profiles=profile_tree_safe
         )
+        profile_definitions = _validate_profile_definitions(
+            root, profile_paths, {item.record.skill_id for item in governed_skills}, issues
+        )
+        _validate_repository_profile_locks(
+            root, profile_definitions, governed_skills, issues
+        )
+        issues.extend(validate_test_manifest_references(
+            root,
+            {item.record.skill_id for item in governed_skills},
+            set(profile_definitions),
+        ))
         _check_source_skill_consistency(root, source_references, governed_skills, issues)
         if catalog_data is not None:
             _check_catalog_entries(root, catalog_path, catalog_data, governed_skills, issues)
     else:
         governed_skills, registry_ok = (), False
+        profile_definitions = _validate_profile_definitions(root, profile_paths, set(), issues)
+        _validate_repository_profile_locks(root, profile_definitions, (), issues)
+        issues.extend(validate_test_manifest_references(root, set(), set(profile_definitions)))
     registry_ok = skill_tree_safe and profile_tree_safe and registry_ok
     if catalog_data is not None and registry_ok:
         expected_catalog = json.dumps(
@@ -214,7 +223,10 @@ def _inventory_tree_is_safe(directory: Path, root: Path, issues: list[IntegrityI
     return safe
 
 
-def _inventory_repository_locks(root: Path, issues: list[IntegrityIssue]) -> Iterator[Path]:
+def _inventory_repository_profile_pairs(
+    root: Path, issues: list[IntegrityIssue],
+) -> Iterator[tuple[Path | None, Path | None]]:
+    """Yield repository-owned profile/lock pairs without following links."""
     for current, directories, files in os.walk(root, followlinks=False):
         current_path = Path(current)
         retained_directories = []
@@ -225,37 +237,242 @@ def _inventory_repository_locks(root: Path, issues: list[IntegrityIssue]) -> Ite
             if _path_components_are_safe(root, candidate, issues):
                 retained_directories.append(name)
         directories[:] = retained_directories
-        if current_path.name == ".hwskills" and "lock.yaml" in files:
-            candidate = current_path / "lock.yaml"
-            if not _path_components_are_safe(root, candidate, issues):
-                continue
-            if _regular_file(candidate):
-                yield candidate
-            else:
-                _unsafe_path(root, candidate, issues, "repository lock must be a regular file")
+        if current_path.name != ".hwskills":
+            continue
+        profile = current_path / "profile.yaml" if "profile.yaml" in files else None
+        lock = current_path / "lock.yaml" if "lock.yaml" in files else None
+        safe_profile = _repository_pair_file(root, profile, issues, "repository profile")
+        safe_lock = _repository_pair_file(root, lock, issues, "repository lock")
+        if safe_profile is not None or safe_lock is not None:
+            yield safe_profile, safe_lock
 
 
-def _inventory_test_manifests(root: Path, issues: list[IntegrityIssue]) -> Iterator[Path]:
-    for kind in ("skills", "profiles"):
-        yield from _inventory_files(root / "tests" / kind, "test.yaml", root, issues)
+def _repository_pair_file(
+    root: Path, path: Path | None, issues: list[IntegrityIssue], label: str,
+) -> Path | None:
+    if path is None:
+        return None
+    if not _path_components_are_safe(root, path, issues):
+        return None
+    if _regular_file(path):
+        return path
+    _unsafe_path(root, path, issues, f"{label} must be a regular file")
+    return None
 
 
-def _parse_yaml_mapping(
+def _read_yaml_mapping(
     path: Path,
     root: Path,
     issues: list[IntegrityIssue],
     code: str,
     label: str,
-) -> None:
+) -> dict[str, Any] | None:
+    """Read one already-inventoried mapping and preserve unrelated diagnostics."""
     if not _path_components_are_safe(root, path, issues):
-        return
+        return None
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         issues.append(_issue(code, root, path, f"cannot parse {label}: {exc}"))
-        return
+        return None
     if not isinstance(data, dict):
         issues.append(_issue(code, root, path, f"{label} must be a mapping"))
+        return None
+    return data
+
+
+def _validate_profile_definitions(
+    root: Path,
+    profile_paths: tuple[Path, ...],
+    known_skill_ids: set[str],
+    issues: list[IntegrityIssue],
+) -> dict[str, ProfileDefinition]:
+    """Return parseable repository Profile definitions while reporting broken edges."""
+    definitions: dict[str, ProfileDefinition] = {}
+    origins: dict[str, list[Path]] = {}
+    for path in sorted(profile_paths, key=lambda item: _relative_path(root, item)):
+        data = _read_yaml_mapping(path, root, issues, "invalid-profile", "profile definition")
+        if data is None:
+            continue
+        profile_id = data.get("id")
+        skills = data.get("skills")
+        description = data.get("description", "")
+        if (
+            not isinstance(profile_id, str)
+            or not profile_id
+            or profile_id != path.stem
+            or not isinstance(skills, list)
+            or any(not isinstance(skill_id, str) or not skill_id for skill_id in skills)
+            or len(skills) != len(set(skills))
+        ):
+            issues.append(_issue("invalid-profile", root, path, "invalid profile definition"))
+            continue
+        origins.setdefault(profile_id, []).append(path)
+        definitions.setdefault(
+            profile_id,
+            ProfileDefinition(profile_id, str(description), tuple(skills)),
+        )
+        for skill_id in sorted(set(skills) - known_skill_ids):
+            issues.append(_issue(
+                "unknown-profile-skill", root, path,
+                f"profile {profile_id} references an unknown Skill: {skill_id}",
+            ))
+    for profile_id, paths in sorted(origins.items()):
+        if len(paths) > 1:
+            canonical = min(paths, key=lambda item: _relative_path(root, item))
+            issues.append(_issue(
+                "duplicate-profile-id", root, canonical,
+                f"profile id is declared by multiple definitions: {profile_id}",
+            ))
+    return definitions
+
+
+def _validate_repository_profile_locks(
+    root: Path,
+    definitions: dict[str, ProfileDefinition],
+    governed_skills: tuple[_GovernedSkill, ...],
+    issues: list[IntegrityIssue],
+) -> None:
+    """Compare every checked-in project binding to the canonical lock payload."""
+    by_skill_id = {item.record.skill_id: item.record for item in governed_skills}
+    profile_pairs = tuple(_inventory_repository_profile_pairs(root, issues))
+    for profile_path, lock_path in sorted(
+        profile_pairs,
+        key=lambda pair: _relative_path(root, pair[0] or pair[1]),
+    ):
+        if profile_path is None:
+            if lock_path is not None:
+                issues.append(_issue(
+                    "missing-profile-selection", root, lock_path,
+                    "repository lock has no sibling profile.yaml",
+                ))
+            continue
+        if lock_path is None:
+            issues.append(_issue(
+                "missing-profile-lock", root, profile_path,
+                "repository profile.yaml has no sibling lock.yaml",
+            ))
+            continue
+        profile_data = _read_yaml_mapping(
+            profile_path, root, issues, "invalid-profile-selection", "repository profile selection",
+        )
+        lock_data = _read_yaml_mapping(
+            lock_path, root, issues, "invalid-lock", "repository lock",
+        )
+        if profile_data is None or lock_data is None:
+            continue
+        profile_ids = _repository_profile_ids(profile_data)
+        if profile_ids is None:
+            issues.append(_issue(
+                "invalid-profile-selection", root, profile_path,
+                "repository profile selection has an invalid profiles list",
+            ))
+            continue
+        missing_profiles = sorted(set(profile_ids) - set(definitions))
+        if missing_profiles:
+            for profile_id in missing_profiles:
+                issues.append(_issue(
+                    "unknown-profile", root, profile_path,
+                    f"repository profile selection references an unknown profile: {profile_id}",
+                ))
+            continue
+        selected_skill_ids = {
+            skill_id
+            for profile_id in profile_ids
+            for skill_id in definitions[profile_id].skill_ids
+        }
+        missing_skills = sorted(selected_skill_ids - set(by_skill_id))
+        if missing_skills:
+            for skill_id in missing_skills:
+                issues.append(_issue(
+                    "unknown-profile-skill", root, profile_path,
+                    f"repository profile selection resolves an unknown Skill: {skill_id}",
+                ))
+            continue
+        records = tuple(by_skill_id[skill_id] for skill_id in sorted(selected_skill_ids))
+        digest_input = json.dumps(
+            [(record.skill_id, record.content_digest) for record in records],
+            separators=(",", ":"),
+        ).encode()
+        catalog = EffectiveCatalog(
+            project=profile_path.parent.parent,
+            registry_root=root,
+            profile_ids=profile_ids,
+            skills=records,
+            catalog_digest="sha256:" + hashlib.sha256(digest_input).hexdigest(),
+            effective_scope="project",
+            profile_source=profile_path,
+        )
+        expected = _lock_data(catalog)
+        actual = {
+            "schema_version": lock_data.get("schema_version"),
+            "catalog_digest": lock_data.get("catalog_digest"),
+            "skills": lock_data.get("skills"),
+        }
+        if actual != expected:
+            issues.append(_issue(
+                "stale-profile-lock", root, lock_path,
+                "lock does not match the resolved profile; set the profile again",
+            ))
+
+
+def _repository_profile_ids(data: dict[str, Any]) -> tuple[str, ...] | None:
+    values = data.get("profiles", ())
+    if not isinstance(values, (list, tuple)):
+        return None
+    profile_ids = tuple(str(item) for item in values)
+    if any(not profile_id for profile_id in profile_ids):
+        return None
+    return tuple(dict.fromkeys(profile_ids))
+
+
+def validate_test_manifest_references(
+    repo_root: Path,
+    known_skill_ids: set[str],
+    known_profile_ids: set[str],
+) -> tuple[IntegrityIssue, ...]:
+    """Validate declarative test target headers without parsing or executing cases."""
+    root = Path(repo_root).absolute()
+    issues: list[IntegrityIssue] = []
+    if not _repository_root_is_safe(root, issues):
+        return tuple(sorted(issues))
+    targets: dict[tuple[str, str], list[Path]] = {}
+    for kind in ("skills", "profiles"):
+        for path in _inventory_files(root / "tests" / kind, "test.yaml", root, issues):
+            data = _read_yaml_mapping(path, root, issues, "invalid-test-manifest", "test manifest")
+            if data is None:
+                continue
+            target = data.get("target")
+            schema_version = data.get("schema_version")
+            target_kind = target.get("kind") if isinstance(target, dict) else None
+            target_id = target.get("id") if isinstance(target, dict) else None
+            if (
+                schema_version != 1
+                or target_kind not in {"skill", "profile"}
+                or not isinstance(target_id, str)
+                or not target_id
+                or target_id != target_id.strip()
+            ):
+                issues.append(_issue(
+                    "invalid-test-manifest", root, path,
+                    "test manifest must define schema_version 1 and a target kind/id",
+                ))
+                continue
+            targets.setdefault((target_kind, target_id), []).append(path)
+            known_ids = known_skill_ids if target_kind == "skill" else known_profile_ids
+            if target_id not in known_ids:
+                issues.append(_issue(
+                    f"unknown-test-{target_kind}", root, path,
+                    f"test target references an unknown {target_kind}: {target_id}",
+                ))
+    for (target_kind, target_id), paths in sorted(targets.items()):
+        if len(paths) > 1:
+            canonical = min(paths, key=lambda item: _relative_path(root, item))
+            issues.append(_issue(
+                "duplicate-test-target", root, canonical,
+                f"multiple test collections target {target_kind} {target_id}",
+            ))
+    return tuple(sorted(issues))
 
 
 def _parse_catalog(path: Path, root: Path, issues: list[IntegrityIssue]) -> dict[str, Any] | None:

@@ -10,6 +10,8 @@ from unittest.mock import patch
 import yaml
 
 from hwskill.digest import content_digest
+from hwskill.profiles import set_profiles
+from hwskill.scopes import project_scope
 
 
 ROOT = Path(__file__).parents[1]
@@ -398,6 +400,108 @@ class IntegrityTest(unittest.TestCase):
         codes = [issue.code for issue in report.issues]
         self.assertTrue({"catalog-extra-skill", "catalog-missing-skill", "catalog-skill-mismatch"} <= set(codes))
         self.assertEqual(codes.count("catalog-stale"), 1)
+
+    def test_integrity_aggregates_repository_profile_pair_failures(self) -> None:
+        """Repository profile bindings must carry a matching, current lock pair."""
+        from hwskill.integrity import check_integrity
+
+        stale_project = self.repo / "examples/stale-lock"
+        stale_project.mkdir(parents=True)
+        stale_target = project_scope(stale_project)
+        set_profiles(stale_target, self.repo, ("codex-demo",))
+        stale_lock = yaml.safe_load((stale_project / ".hwskills/lock.yaml").read_text(encoding="utf-8"))
+        stale_lock["catalog_digest"] = "sha256:stale"
+        (stale_project / ".hwskills/lock.yaml").write_text(
+            yaml.safe_dump(stale_lock, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+        missing_lock = self.repo / "examples/missing-lock/.hwskills"
+        missing_lock.mkdir(parents=True)
+        (missing_lock / "profile.yaml").write_text(
+            "schema_version: 1\nprofiles:\n- codex-demo\n", encoding="utf-8"
+        )
+
+        missing_profile = self.repo / "examples/missing-profile/.hwskills"
+        missing_profile.mkdir(parents=True)
+        (missing_profile / "lock.yaml").write_text(
+            "schema_version: 1\ncatalog_digest: sha256:stale\nskills: []\n", encoding="utf-8"
+        )
+
+        malformed_profile = self.repo / "examples/malformed-profile/.hwskills"
+        malformed_profile.mkdir(parents=True)
+        (malformed_profile / "profile.yaml").write_text("profiles: [\n", encoding="utf-8")
+        (malformed_profile / "lock.yaml").write_text("skills: []\n", encoding="utf-8")
+
+        malformed_lock = self.repo / "examples/malformed-lock/.hwskills"
+        malformed_lock.mkdir(parents=True)
+        (malformed_lock / "profile.yaml").write_text(
+            "schema_version: 1\nprofiles:\n- codex-demo\n", encoding="utf-8"
+        )
+        (malformed_lock / "lock.yaml").write_text("skills: [\n", encoding="utf-8")
+
+        report = check_integrity(self.repo)
+
+        self.assertTrue({
+            "missing-profile-lock", "missing-profile-selection", "stale-profile-lock",
+            "invalid-profile-selection", "invalid-lock",
+        } <= {issue.code for issue in report.issues})
+
+    def test_integrity_reports_unknown_skill_in_repository_profile_definition(self) -> None:
+        """A definition cannot silently retain a deleted or renamed Skill ID."""
+        from hwskill.integrity import check_integrity
+
+        profile_path = self.repo / "profiles/codex-demo.yaml"
+        profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+        profile["skills"].append("missing/renamed-skill")
+        profile_path.write_text(
+            yaml.safe_dump(profile, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("unknown-profile-skill", {issue.code for issue in report.issues})
+
+    def test_test_manifest_reference_headers_report_unknown_duplicate_and_malformed_targets(self) -> None:
+        """Reference validation catches stale rename targets without parsing or running cases."""
+        from hwskill.integrity import validate_test_manifest_references
+
+        def write_manifest(relative: str, body: str) -> None:
+            path = self.repo / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+
+        write_manifest(
+            "tests/skills/unknown/test.yaml",
+            "schema_version: 1\ntarget:\n  kind: skill\n  id: missing/renamed-skill\ncases: []\n",
+        )
+        write_manifest(
+            "tests/profiles/unknown/test.yaml",
+            "schema_version: 1\ntarget:\n  kind: profile\n  id: missing-profile\ncases: []\n",
+        )
+        write_manifest(
+            "tests/skills/a/test.yaml",
+            "schema_version: 1\ntarget:\n  kind: skill\n  id: local/chinese-thinking\ncases: []\n",
+        )
+        write_manifest(
+            "tests/skills/b/test.yaml",
+            "schema_version: 1\ntarget:\n  kind: skill\n  id: local/chinese-thinking\ncases: []\n",
+        )
+        write_manifest(
+            "tests/skills/bad-schema/test.yaml",
+            "schema_version: 2\ntarget:\n  kind: skill\n  id: local/chinese-thinking\ncases: []\n",
+        )
+
+        issues = validate_test_manifest_references(
+            self.repo,
+            {"local/chinese-thinking"},
+            {"codex-demo"},
+        )
+
+        self.assertTrue({
+            "unknown-test-skill", "unknown-test-profile", "duplicate-test-target", "invalid-test-manifest",
+        } <= {issue.code for issue in issues})
+        duplicate = next(issue for issue in issues if issue.code == "duplicate-test-target")
+        self.assertEqual(duplicate.path, "tests/skills/a/test.yaml")
 
 
 if __name__ == "__main__":
