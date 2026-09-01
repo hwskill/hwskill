@@ -13,7 +13,8 @@ import yaml
 
 from .digest import content_digest
 from .git_source import DiscoveredSkill, GitSourceClient, GitSourceError, ResolvedTrack, discover_skills, verify_existing_tag
-from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction
+from .integrity import require_integrity
+from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction, validated_plan
 from . import registry as registry_module
 from .source_manifest import (
     IgnoredSkill,
@@ -76,11 +77,6 @@ def inspect_source(repo_root: Path, source: UpstreamSource, git_client: GitSourc
         return snapshot.inspection
 
 
-def validate_integrity(repo_root: Path) -> None:
-    """Validate the offline source, Skill, Catalog, and Profile invariants."""
-    _validate_candidate(Path(repo_root))
-
-
 def plan_add_source(
     repo_root: Path,
     request: SourceAddRequest,
@@ -139,8 +135,7 @@ def plan_add_source(
             )
             _stage_source_manifest(tx, staged)
             _stage_catalog(tx)
-            _validate_candidate(tx.candidate_root)
-            return MaintenancePlan(tx, MaintenanceSummary(
+            return _validated_plan(tx, MaintenanceSummary(
                 operation="source-add", source_ids=(staged.source_id,),
                 added_skill_ids=tuple(item.skill_id for item in staged.skills),
                 source_details=({"source_id": staged.source_id, "status": "success", "repository": staged.upstream.repository, "track": staged.upstream.track, "old_revision": None, "new_revision": staged.resolved_revision, "deltas": {"added": [item.path for item in staged.skills], "updated": [], "removed": [], "ignored": [item.path for item in staged.upstream.ignore]}},),
@@ -198,8 +193,7 @@ def plan_update_sources(
             for snapshot in snapshots:
                 summaries.append(_stage_source_update(tx, snapshot, policies))
             _stage_catalog(tx)
-            _validate_candidate(tx.candidate_root)
-            return MaintenancePlan(tx, _combine_summaries("source-update", summaries))
+            return _validated_plan(tx, _combine_summaries("source-update", summaries))
         except BaseException:
             tx.discard()
             raise
@@ -245,8 +239,7 @@ def plan_ignore_change(
     try:
         _stage_source_manifest(tx, replace(source, upstream=replace(source.upstream, ignore=new_ignore)))
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(operation=f"source-ignore-{operation}", source_ids=(source_id,)))
+        return _validated_plan(tx, MaintenanceSummary(operation=f"source-ignore-{operation}", source_ids=(source_id,)))
     except BaseException:
         tx.discard()
         raise
@@ -292,8 +285,7 @@ def plan_delete_source(
             )
         tx.delete(source_path.relative_to(root))
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, summary)
+        return _validated_plan(tx, summary)
     except BaseException:
         tx.discard()
         raise
@@ -406,7 +398,11 @@ def _infer_existing_id(by_path: dict[str, ResolvedSourceSkill], path: str) -> st
 
 
 def _transaction(root: Path) -> RepositoryTransaction:
-    return RepositoryTransaction(root, validate=_validate_candidate)
+    return RepositoryTransaction(root)
+
+
+def _validated_plan(tx: RepositoryTransaction, summary: MaintenanceSummary) -> MaintenancePlan:
+    return validated_plan(tx, summary, require_integrity)
 
 
 def _stage_source_manifest(tx: RepositoryTransaction, source: UpstreamSource) -> None:
@@ -473,55 +469,6 @@ def _catalog_content(root: Path) -> str:
     return json.dumps(catalog, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
-def _validate_candidate(root: Path) -> None:
-    sources = _load_sources_with_paths(root)
-    records = _collect_catalog_records(root)
-    by_id = {item["id"]: item for item in records}
-    governance_sources = _governance_sources(root, records)
-    expected: dict[str, tuple[UpstreamSource, ResolvedSourceSkill]] = {}
-    for _, source in sources:
-        for item in source.skills:
-            if item.skill_id in expected:
-                raise SourceMaintenanceError(f"duplicate resolved Skill id: {item.skill_id}")
-            expected[item.skill_id] = (source, item)
-            record = by_id.get(item.skill_id)
-            if record is None:
-                raise SourceMaintenanceError(f"resolved Skill payload is missing: {item.skill_id}")
-            provenance = governance_sources[item.skill_id]
-            if record["source_kind"] != "upstream" or provenance.get("kind") != "upstream":
-                raise SourceMaintenanceError(f"resolved Skill provenance mismatch: {item.skill_id}")
-            if (
-                record["source_id"] != source.source_id
-                or record["revision"] != source.resolved_revision
-                or provenance.get("source_id") != source.source_id
-                or provenance.get("revision") != source.resolved_revision
-            ):
-                raise SourceMaintenanceError(f"resolved Skill metadata mismatch: {item.skill_id}")
-            if provenance.get("upstream_path") != item.path:
-                raise SourceMaintenanceError(f"resolved Skill upstream path mismatch: {item.skill_id}")
-            if (
-                record["content_digest"] != item.content_digest
-                or record["layer"] != item.layer
-                or record["path"] != _skill_destination(item.layer, item.skill_id).as_posix()
-            ):
-                raise SourceMaintenanceError(f"resolved Skill location mismatch: {item.skill_id}")
-    for record in records:
-        if record["source_kind"] == "upstream" and record["id"] not in expected:
-            raise SourceMaintenanceError(f"upstream Skill is not resolved: {record['id']}")
-    for profile in sorted((root / "profiles").glob("*.yaml")) if (root / "profiles").is_dir() else ():
-        data = _load_yaml(profile)
-        if not isinstance(data, dict) or data.get("id") != profile.stem or not isinstance(data.get("skills"), list):
-            raise SourceMaintenanceError(f"invalid Profile: {profile.name}")
-        if len(data["skills"]) != len(set(data["skills"])):
-            raise SourceMaintenanceError(f"duplicate Profile Skill: {profile.stem}")
-        missing = [item for item in data["skills"] if item not in by_id]
-        if missing:
-            raise SourceMaintenanceError(f"unknown Skill in Profile {profile.stem}: {', '.join(missing)}")
-    catalog = root / "registry/catalog.json"
-    if not catalog.is_file() or catalog.read_text(encoding="utf-8") != _catalog_content(root):
-        raise SourceMaintenanceError("catalog is not consistent with candidate Skills")
-
-
 def _collect_catalog_records(root: Path) -> list[dict[str, object]]:
     if not _has_governance(root):
         return []
@@ -534,22 +481,6 @@ def _collect_catalog_records(root: Path) -> list[dict[str, object]]:
 def _has_governance(root: Path) -> bool:
     skills_root = root / "skills-src"
     return skills_root.is_dir() and next(skills_root.glob("**/skill.yaml"), None) is not None
-
-
-def _governance_sources(root: Path, records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
-    provenance: dict[str, dict[str, object]] = {}
-    for record in records:
-        skill_id = str(record["id"])
-        data = _load_governance(root / str(record["path"]) / "skill.yaml")
-        source = data.get("source")
-        if not isinstance(source, dict) or source.get("kind") not in {"manual", "upstream"}:
-            raise SourceMaintenanceError(f"invalid source kind: {skill_id}")
-        if source["kind"] == "manual" and set(source) != {"kind"}:
-            raise SourceMaintenanceError(f"invalid manual source kind: {skill_id}")
-        if source["kind"] == "upstream" and set(source) != {"kind", "source_id", "revision", "upstream_path"}:
-            raise SourceMaintenanceError(f"invalid upstream source kind: {skill_id}")
-        provenance[skill_id] = source
-    return provenance
 
 
 def _load_sources_with_paths(root: Path) -> tuple[tuple[Path, UpstreamSource], ...]:

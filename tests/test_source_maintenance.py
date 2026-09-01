@@ -241,15 +241,19 @@ class SourceMaintenanceTest(unittest.TestCase):
                 plan_ignore_change(self.repo, "team", "future-skill", "add")
 
     def test_unrelated_ignore_rejects_wrong_upstream_path_and_orphan(self) -> None:
-        from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
+        from hwskill.integrity import IntegrityError
+        from hwskill.source_maintenance import plan_ignore_change
 
         self._source()
         governance_path = self.repo / "skills-src/l1/team/changed-skill/skill.yaml"
         governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
         governance["source"]["upstream_path"] = "wrong-path"
         governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
-        with self.assertRaisesRegex(SourceMaintenanceError, "upstream path"):
+        original = (self.repo / "sources/team.yaml").read_bytes()
+        with self.assertRaises(IntegrityError) as rejected:
             plan_ignore_change(self.repo, "team", "future-skill", "add")
+        self.assertIn("source-skill-path-mismatch", {issue.code for issue in rejected.exception.report.issues})
+        self.assertEqual((self.repo / "sources/team.yaml").read_bytes(), original)
 
         governance["source"]["upstream_path"] = "changed-skill"
         governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
@@ -257,11 +261,13 @@ class SourceMaintenanceTest(unittest.TestCase):
             "team/orphan", "l2", body="orphan",
             source={"kind": "upstream", "source_id": "team", "revision": "a" * 40, "upstream_path": "orphan"},
         )
-        with self.assertRaisesRegex(SourceMaintenanceError, "not resolved"):
+        with self.assertRaises(IntegrityError) as rejected:
             plan_ignore_change(self.repo, "team", "future-skill", "add")
+        self.assertIn("upstream-skill-unresolved", {issue.code for issue in rejected.exception.report.issues})
 
     def test_unrelated_ignore_rejects_resolved_skill_with_manual_provenance(self) -> None:
-        from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
+        from hwskill.integrity import IntegrityError
+        from hwskill.source_maintenance import plan_ignore_change
 
         self._source()
         governance_path = self.repo / "skills-src/l1/team/changed-skill/skill.yaml"
@@ -269,8 +275,11 @@ class SourceMaintenanceTest(unittest.TestCase):
         governance["source"] = {"kind": "manual"}
         governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
 
-        with self.assertRaisesRegex(SourceMaintenanceError, "provenance mismatch"):
+        original = (self.repo / "sources/team.yaml").read_bytes()
+        with self.assertRaises(IntegrityError) as rejected:
             plan_ignore_change(self.repo, "team", "future-skill", "add")
+        self.assertIn("manual-skill-resolved", {issue.code for issue in rejected.exception.report.issues})
+        self.assertEqual((self.repo / "sources/team.yaml").read_bytes(), original)
 
     def test_all_update_resolves_every_source_before_any_candidate_is_applied(self) -> None:
         from hwskill.source_maintenance import UpdatePolicies, plan_update_sources

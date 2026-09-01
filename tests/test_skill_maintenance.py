@@ -162,6 +162,7 @@ class SkillMaintenanceTest(unittest.TestCase):
         self.assertEqual(yaml.safe_load(test_path.read_text(encoding="utf-8"))["target"]["id"], "team/check")
 
     def test_delete_requires_explicit_profile_policy_and_never_deletes_test_references(self) -> None:
+        from hwskill.integrity import IntegrityError
         from hwskill.skill_maintenance import SkillReferencedError, find_skill_references, plan_delete_skill
 
         self.make_manual_skill("team/review")
@@ -175,9 +176,11 @@ class SkillMaintenanceTest(unittest.TestCase):
         with self.assertRaisesRegex(SkillReferencedError, "test.yaml"):
             plan_delete_skill(self.repo, "team/review", True)
         test_path.unlink()
-        plan_delete_skill(self.repo, "team/review", True).apply()
-        self.assertFalse((self.repo / "skills-src/l2/team/review").exists())
-        self.assertEqual(yaml.safe_load((self.repo / "profiles/demo.yaml").read_text(encoding="utf-8"))["skills"], [])
+        with self.assertRaises(IntegrityError) as rejected:
+            plan_delete_skill(self.repo, "team/review", True)
+        self.assertIn("invalid-registry", {issue.code for issue in rejected.exception.report.issues})
+        self.assertTrue((self.repo / "skills-src/l2/team/review").exists())
+        self.assertEqual(yaml.safe_load((self.repo / "profiles/demo.yaml").read_text(encoding="utf-8"))["skills"], ["team/review"])
 
     def test_manualize_preserves_payload_and_removes_source_resolution_in_one_plan(self) -> None:
         from hwskill.skill_maintenance import plan_manualize_skill

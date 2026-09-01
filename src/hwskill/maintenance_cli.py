@@ -7,6 +7,7 @@ from typing import TextIO
 
 from .console_output import format_json, format_maintenance_plan, plan_data
 from .git_source import GitSourceClient, GitSourceError, discover_skills
+from .integrity import IntegrityError
 from .maintenance_transaction import TransactionConflictError, TransactionError
 from .skill_maintenance import (
     SkillMaintenanceError, plan_adopt_skill, plan_create_manual, plan_delete_skill,
@@ -189,7 +190,14 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
                     choices = sorted(refs.refs)
                     interaction.write("Available tracks:\n" + "".join(f"  {i}. {value}\n" for i, value in enumerate(choices, 1)))
                     selected = _ask(stdin, interaction, "Track", source.upstream.track)
-                    args.track = source.upstream.track if not selected.strip() else (choices[_select_indices(selected, len(choices))[0]] if selected.isdigit() else selected)
+                    if not selected.strip():
+                        args.track = source.upstream.track
+                    elif selected.isdigit():
+                        args.track = choices[_select_indices(selected, len(choices))[0]]
+                    elif selected in choices:
+                        args.track = selected
+                    else:
+                        raise UsageError("unknown track selection")
                 if not args.on_added or not args.on_removed:
                     if not _interactive(stdin) or args.yes: raise UsageError("source update requires --on-added and --on-removed")
                     args.on_added = args.on_added or _ask(stdin, interaction, "On added (include/ignore/fail)", "include")
@@ -226,7 +234,7 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
         stderr.write(f"usage: {error}\n"); return 2
     except SourceManifestError as error:
         stderr.write(f"manifest: {error}\n"); return 2
-    except (SourceMaintenanceError, SkillMaintenanceError) as error:
+    except (SourceMaintenanceError, SkillMaintenanceError, IntegrityError) as error:
         stderr.write(f"error: {error}\n"); return 1
     except (GitSourceError, OSError) as error:
         stderr.write(f"blocked: {error}\n"); return 3

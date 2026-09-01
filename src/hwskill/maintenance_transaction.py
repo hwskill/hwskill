@@ -56,6 +56,16 @@ BeforeOperation = Callable[[int, str], None]
 Validate = Callable[[Path], None]
 
 
+def validated_plan(
+    transaction: "RepositoryTransaction",
+    summary: MaintenanceSummary,
+    validate: Validate,
+) -> MaintenancePlan:
+    """Close a failed candidate before exposing a maintenance plan."""
+    transaction.validate(validate)
+    return MaintenancePlan(transaction, summary)
+
+
 @dataclass
 class _TargetHandle:
     relative_path: Path
@@ -118,6 +128,15 @@ class RepositoryTransaction:
     ) -> None:
         self.write_bytes(relative_path, content.encode(encoding))
 
+    def validate(self, callback: Validate) -> None:
+        """Validate the active candidate and discard it if the gate rejects it."""
+        self._require_active()
+        try:
+            callback(self.candidate_root)
+        except BaseException:
+            self.discard()
+            raise
+
     def delete(self, relative_path: Path) -> None:
         self._require_active()
         path = self._candidate_path(relative_path)
@@ -149,7 +168,7 @@ class RepositoryTransaction:
     def apply(self) -> None:
         self._require_active()
         if self._validate is not None:
-            self._validate(self.candidate_root)
+            self.validate(self._validate)
         targets = self.changed_paths()
         self._assert_preimages(targets)
         if not targets:

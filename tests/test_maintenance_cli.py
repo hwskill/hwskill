@@ -236,7 +236,7 @@ class MaintenanceCliTest(unittest.TestCase):
         source = UpstreamSource("team", UpstreamConfig("https://x/team.git", "refs/heads/main", "library", (IgnoredSkill("future", "x"),)), SourceDefaults("team", "l1", "MIT"), "b" * 40, ())
         write_source_manifest(self.repo / "sources/team.yaml", source)
         args = SimpleNamespace(command="source", source_command="ignore", ignore_command="add", source_id="team", path="future2", repo_root=str(self.repo), yes=True, json=True)
-        self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(), self.git), 0)
+        self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(), self.git), 1)
         # Existing upstream path that collides with a manual ID gets the exact service guidance.
         args.ignore_command="remove"; args.path="future"; stdout=StringIO(); code=run_maintenance_command(args, self.repo, self._streams()[0], stdout, StringIO(), self.git)
         self.assertIn(code, (0, 1))

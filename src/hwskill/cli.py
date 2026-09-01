@@ -43,12 +43,11 @@ from .skill_export import (
     skills_for_profiles,
 )
 from .mcp_server import run_server
+from .integrity_cli import register_integrity_command, run_integrity_command
 from .maintenance_cli import register_maintenance_commands, run_maintenance_command
 from .opencode_adapter import render_catalog as render_opencode_catalog
 from .paths import resolve_repo_root
 from .scopes import ScopeTarget, project_scope, user_scope
-from .source_manifest import SourceManifestError
-from .source_maintenance import SourceMaintenanceError, validate_integrity
 
 
 HOST_CHOICES = ("codex", "claude-code", "claude_code", "opencode")
@@ -181,10 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     info_parser.add_argument("--project")
     info_parser.add_argument("--repo-root")
     info_parser.add_argument("--json", action="store_true")
-    integrity_parser = _command(
-        commands, "integrity-check", "Validate repository source integrity"
-    )
-    integrity_parser.add_argument("--repo-root")
+    register_integrity_command(commands)
     registry = _command(commands, "registry", "Manage the skill registry")
     registry_commands = _commands(registry, "registry_command")
     validate_parser = _command(registry_commands, "validate", "Validate registry contents")
@@ -357,6 +353,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     mcp_parser.add_argument("--audit-path")
     mcp_parser.add_argument("--scope", choices=("user", "project"), default="project")
     args = parser.parse_args(argv)
+    if args.command == "integrity-check":
+        integrity_code = run_integrity_command(
+            args,
+            _repo_root(args.repo_root),
+            sys.stdout,
+        )
+        assert integrity_code is not None
+        return integrity_code
     if args.command == "source" or (
         args.command == "skill" and args.skill_command in {"create", "update", "move", "rename", "delete", "manualize"}
     ):
@@ -377,13 +381,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(info, ensure_ascii=False, indent=2))
         else:
             print(format_info_summary(info), end="")
-    elif args.command == "integrity-check":
-        try:
-            validate_integrity(_repo_root(args.repo_root))
-        except (SourceManifestError, SourceMaintenanceError) as error:
-            print(f"integrity: {error}", file=sys.stderr)
-            return 1
-        print("Integrity check passed")
     elif args.command == "registry" and args.registry_command == "validate":
         records = registry_module.validate_registry(_repo_root(args.repo_root))
         print("ID\tREVISION\tDIGEST")

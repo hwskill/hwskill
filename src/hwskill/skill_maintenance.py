@@ -11,7 +11,8 @@ import yaml
 from .digest import content_digest
 from .frontmatter import FrontmatterError, parse_skill_markdown
 from .git_source import DiscoveredSkill, GitSourceClient
-from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction
+from .integrity import require_integrity
+from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction, validated_plan
 from .profiles import ProfileError, remove_profile_skill_id, replace_profile_skill_id
 from .source_manifest import IgnoredSkill, ResolvedSourceSkill, UpstreamSource
 from .source_maintenance import (
@@ -21,7 +22,6 @@ from .source_maintenance import (
     _load_sources_with_paths,
     _skill_destination,
     _stage_source_manifest,
-    _validate_candidate,
     _yaml,
 )
 
@@ -86,8 +86,7 @@ def plan_create_manual(
         tx.write_text(destination / "SKILL.md", _markdown(name, description, ""))
         _write_governance(tx, destination, skill_id, layer, name, description, license_name, {"kind": "manual"})
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(operation="skill-create", added_skill_ids=(skill_id,)))
+        return _validated_plan(tx, MaintenanceSummary(operation="skill-create", added_skill_ids=(skill_id,)))
     except BaseException:
         tx.discard()
         raise
@@ -110,8 +109,7 @@ def plan_update_manual(repo_root: Path, skill_id: str) -> MaintenancePlan:
             existing=location.governance,
         )
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(operation="skill-update", updated_skill_ids=(skill_id,)))
+        return _validated_plan(tx, MaintenanceSummary(operation="skill-update", updated_skill_ids=(skill_id,)))
     except BaseException:
         tx.discard()
         raise
@@ -144,8 +142,7 @@ def plan_move_skill(repo_root: Path, skill_id: str, layer: str) -> MaintenancePl
                 ),
             ))
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(operation="skill-move", updated_skill_ids=(skill_id,)))
+        return _validated_plan(tx, MaintenanceSummary(operation="skill-move", updated_skill_ids=(skill_id,)))
     except BaseException:
         tx.discard()
         raise
@@ -184,8 +181,7 @@ def plan_rename_skill(repo_root: Path, old_id: str, new_id: str) -> MaintenanceP
                 ),
             ))
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(
+        return _validated_plan(tx, MaintenanceSummary(
             operation="skill-rename", updated_skill_ids=(new_id,), affected_profile_ids=affected_profiles,
         ))
     except BaseException:
@@ -220,8 +216,7 @@ def plan_delete_skill(repo_root: Path, skill_id: str, remove_from_profiles: bool
                 upstream=dataclass_replace(source.upstream, ignore=tuple(sorted(ignored.values(), key=lambda item: item.path))),
             ))
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(
+        return _validated_plan(tx, MaintenanceSummary(
             operation="skill-delete", removed_skill_ids=(skill_id,), affected_profile_ids=affected_profiles,
         ))
     except BaseException:
@@ -252,8 +247,7 @@ def plan_manualize_skill(repo_root: Path, skill_id: str) -> MaintenancePlan:
             upstream=dataclass_replace(source.upstream, ignore=tuple(sorted(ignored.values(), key=lambda item: item.path))),
         ))
         _stage_catalog(tx)
-        _validate_candidate(tx.candidate_root)
-        return MaintenancePlan(tx, MaintenanceSummary(
+        return _validated_plan(tx, MaintenanceSummary(
             operation="skill-manualize", source_ids=(source.source_id,), manualized_skill_ids=(skill_id,),
         ))
     except BaseException:
@@ -326,8 +320,7 @@ def plan_adopt_skill(
             )
             _stage_source_manifest(tx, staged_source)
             _stage_catalog(tx)
-            _validate_candidate(tx.candidate_root)
-            return MaintenancePlan(tx, MaintenanceSummary(
+            return _validated_plan(tx, MaintenanceSummary(
                 operation="source-adopt", source_ids=(source.source_id,),
                 added_skill_ids=(skill_id,) if existing is None else (),
                 updated_skill_ids=() if existing is None else (skill_id,),
@@ -338,7 +331,11 @@ def plan_adopt_skill(
 
 
 def _transaction(root: Path) -> RepositoryTransaction:
-    return RepositoryTransaction(root, validate=_validate_candidate)
+    return RepositoryTransaction(root)
+
+
+def _validated_plan(tx: RepositoryTransaction, summary: MaintenanceSummary) -> MaintenancePlan:
+    return validated_plan(tx, summary, require_integrity)
 
 
 def _stage_catalog(tx: RepositoryTransaction) -> None:
