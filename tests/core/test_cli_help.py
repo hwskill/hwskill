@@ -141,6 +141,11 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("hwskill registry build --repo-root . --check", text)
         self.assertIn("hwskill integrity-check", text)
         self.assertIn("hwskill test affected", text)
+        self.assertIn("setsid", text)
+        self.assertIn("标准 Docker", text)
+        specification = (ROOT / "docs/superpowers/specs/2026-09-01-skill-source-maintenance-and-testing-design.md").read_text(encoding="utf-8")
+        self.assertIn("HWSKILL_TEST_EVIDENCE_WORKSPACE", specification)
+        self.assertIn("setsid", specification)
 
 
 if __name__ == "__main__":

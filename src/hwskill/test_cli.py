@@ -861,6 +861,8 @@ def _write_run(result: TestRunResult, json_output: bool, stdout: TextIO) -> None
     print(f"  Model       {result.model}", file=stdout)
     print(f"  Version     {result.host_version}", file=stdout)
     print(f"  Artifacts   {result.artifact_root}", file=stdout)
+    if result.runner == "local":
+        print("  Trust       local debugging only; not immutable or security evidence", file=stdout)
     if result.blocked_reason is not None:
         print(f"  Blocked     {result.blocked_reason}", file=stdout)
     for collection in data["collections"]:

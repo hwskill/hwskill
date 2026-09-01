@@ -79,6 +79,7 @@ class TestCliTest(unittest.TestCase):
 
         self.assertEqual(all_code, 0)
         self.assertIn("Collection  skill:team/review", all_output)
+        self.assertIn("Trust       local debugging only; not immutable or security evidence", all_output)
         self.assertEqual(skill_code, 0)
         self.assertIn("skill:team/review", skill_output)
         self.assertEqual(profile_code, 0)

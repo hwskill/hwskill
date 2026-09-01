@@ -168,6 +168,12 @@ class EvalObserverTest(unittest.TestCase):
             command + " || true",
             command + "\nprintf ignored",
             command + " > forged-output.txt",
+            command + " >&2",
+            command + " <&0",
+            command + " &> forged-output.txt",
+            command + " <<< forged-input",
+            command + " <> forged-output.txt",
+            command + " >| forged-output.txt",
             command + " --output",
             command + " --output --another-flag",
             command + " --output=",
@@ -180,6 +186,23 @@ class EvalObserverTest(unittest.TestCase):
                 ])
                 with self.assertRaisesRegex(ValueError, "script invocation not found"):
                     self.observe()
+
+    def test_accepts_the_explicit_safe_command_env_assignment_and_python_unbuffered_forms(self):
+        base = f"{SCRIPT} https://gitcode.com/openeuler/OmniStream/pull/587 --output /workspace/pr-587.patch"
+        safe_commands = (
+            f"command python3 {base}",
+            f"python3 -u {base}",
+            f"env SAFE=1 python3 {base}",
+            f"SAFE=1 python3 -u {base}",
+            f"/bin/bash -lc 'command python3 -u {base}'",
+        )
+        for command in safe_commands:
+            with self.subTest(command=command):
+                self.write_events([
+                    self.search_event(), self.load_event(),
+                    completed({"type": "command_execution", "command": command, "exit_code": 0}),
+                ])
+                self.assertTrue(self.observe()["execution_succeeded"])
 
     def test_reports_directory_discovery_before_load(self):
         discovery = "/bin/bash -lc 'find /opt/hwskills/skills-src -name fetch_gitcode_pr_patch.py'"

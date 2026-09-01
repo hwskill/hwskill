@@ -901,6 +901,50 @@ class WorkerExecutionTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(observed, "socket-ok-export-denied")
 
+    def test_docker_guard_denies_agent_the_sibling_evidence_snapshot_but_allows_post_check_read(self) -> None:
+        from hwskill import network_guard
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            pool = root / "workspace-pool"
+            workspace = pool / "case"
+            evidence = pool / "evidence"
+            workspace.mkdir(parents=True)
+            evidence.mkdir()
+            (evidence / "trusted.txt").write_text("sealed", encoding="utf-8")
+            agent_probe = (
+                "import pathlib; source=pathlib.Path(%r); "
+                "\ntry: source.read_text(); pathlib.Path('agent-result').write_text('leaked')"
+                "\nexcept OSError: pathlib.Path('agent-result').write_text('denied')"
+            ) % str(evidence / "trusted.txt")
+            agent = subprocess.run(
+                (sys.executable, str(Path(network_guard.__file__).resolve()),
+                 "--read-write", str(workspace), "--", sys.executable, "-c", agent_probe),
+                cwd=workspace, text=True, capture_output=True, check=False,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace)},
+            )
+            post_probe = (
+                "import pathlib; evidence=pathlib.Path(%r); "
+                "assert evidence.read_text() == 'sealed'; "
+                "\ntry: evidence.write_text('mutated')"
+                "\nexcept OSError: pathlib.Path('post-result').write_text('readonly')"
+                "\nelse: raise SystemExit('evidence write unexpectedly succeeded')"
+            ) % str(evidence / "trusted.txt")
+            post = subprocess.run(
+                (sys.executable, str(Path(network_guard.__file__).resolve()),
+                 "--read-write", str(workspace), "--read-only", str(evidence), "--",
+                 sys.executable, "-c", post_probe),
+                cwd=workspace, text=True, capture_output=True, check=False,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace)},
+            )
+            agent_result = (workspace / "agent-result").read_text(encoding="utf-8")
+            post_result = (workspace / "post-result").read_text(encoding="utf-8")
+
+        self.assertEqual(agent.returncode, 0, agent.stderr)
+        self.assertEqual(agent_result, "denied")
+        self.assertEqual(post.returncode, 0, post.stderr)
+        self.assertEqual(post_result, "readonly")
+
     def test_worker_exports_no_raw_secret_while_preserving_agent_business_changes(self) -> None:
         from hwskill.test_artifacts import ActionResult
         from hwskill.test_worker import WorkerRequest, WorkerSelection, execute_worker
@@ -1296,6 +1340,24 @@ cases:
             popen.call_args.args[0],
             ("python", str(Path(network_guard.__file__).resolve()), "--", "/bin/bash", "-lc", "true"),
         )
+
+    def test_command_post_check_guard_keeps_workspace_writable_and_adds_readonly_evidence(self) -> None:
+        from hwskill.test_runner import TestEnvironment, _command_prefix
+
+        with TemporaryDirectory() as directory:
+            pool = Path(directory) / "workspace-pool"
+            workspace = pool / "case"
+            evidence = pool / "evidence"
+            pool.mkdir()
+            workspace.mkdir()
+            evidence.mkdir()
+            environment = TestEnvironment(
+                Path(directory), "docker", "codex", "model", "high", workspace_root=pool,
+                command_prefix=("guard", "--read-write", str(pool), "--"),
+            )
+            prefix = _command_prefix(environment, workspace, evidence)
+
+        self.assertEqual(prefix, ("guard", "--read-write", str(workspace), "--read-only", str(evidence), "--"))
 
     def test_command_executor_blocks_when_isolation_guard_cannot_install(self) -> None:
         from hwskill.test_manifest import CommandAction

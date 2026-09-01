@@ -247,6 +247,11 @@ hwskill test tests/profiles/codex-demo/test.yaml --runner docker
 hwskill test tests/skills/local/gitcode-pr-review-fetch/test.yaml --runner docker
 ```
 
+`--runner local` 只用于宿主上的功能调试；即使显示 PASS，也不是不可变性或安全隔离证据，
+不能替代标准 Docker 结果。原因包括本地 Agent 进程可通过 `setsid` 脱离其已知进程组；
+runner 会尽力终止已知后代并对 post-check 使用快照，但可信门禁仍必须使用 Docker 的
+文件系统隔离。
+
 `codex-demo` Profile collection 在隔离 fixture 中修复订单折扣阈值边界，并运行业务
 单元测试。GitCode collection 要求 Agent 通过 Search/Load 使用
 `local/gitcode-pr-review-fetch`，取得 `openeuler/OmniStream#587` 的 patch；post-check

@@ -25,11 +25,11 @@ def main() -> int:
         context_path = _environment_path("HWSKILL_TEST_CONTEXT")
         artifacts = _environment_path("HWSKILL_TEST_ARTIFACTS")
         workspace = _real_directory(_environment_path("HWSKILL_TEST_WORKSPACE"), "workspace")
-        agent_workspace = _environment_path("HWSKILL_TEST_AGENT_WORKSPACE")
+        evidence = _real_directory(_environment_path("HWSKILL_TEST_EVIDENCE_WORKSPACE"), "evidence workspace")
         context = _load_context(context_path)
         _require_successful_agent(context)
-        patch = workspace / "pr-587.patch"
-        expected_output = str(agent_workspace / "pr-587.patch")
+        patch = evidence / "pr-587.patch"
+        expected_output = str(workspace / "pr-587.patch")
         _require_patch(patch)
         resolution = observe_script_resolution(
             artifacts / "actions" / "run-agent" / "events.jsonl",

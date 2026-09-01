@@ -309,7 +309,7 @@ class MigratedEvalCollectionTest(unittest.TestCase):
                 "HWSKILL_TEST_CONTEXT": str(context),
                 "HWSKILL_TEST_ARTIFACTS": str(artifacts),
                 "HWSKILL_TEST_WORKSPACE": str(workspace),
-                "HWSKILL_TEST_AGENT_WORKSPACE": str(workspace),
+                "HWSKILL_TEST_EVIDENCE_WORKSPACE": str(workspace),
                 "HWSKILL_TEST_REPO_ROOT": str(ROOT),
                 "HWSKILL_TEST_PYTHON": os.sys.executable,
                 "HWSKILL_TEST_PYTHONPATH": str(ROOT / "src"),

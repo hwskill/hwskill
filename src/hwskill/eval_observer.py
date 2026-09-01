@@ -11,7 +11,8 @@ from .eval_events import normalize_events
 _DISCOVERY_TOOLS = {"fd", "find", "grep", "ls", "rg", "tree"}
 _SHELLS = {"bash", "dash", "sh", "zsh"}
 _SEPARATORS = {"&&", "||", ";", "|"}
-_UNSAFE_AUDIT_TOKENS = _SEPARATORS | {"&", ">", ">>", "<", "<<"}
+_UNSAFE_AUDIT_CHARACTERS = frozenset(";|&<>")
+_SAFE_PYTHON_OPTIONS = frozenset({"-u"})
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _NATIVE_SKILL_ROOT = re.compile(
     r"(?:^|/|\s)\.(?:agents|codex|claude|opencode)/skills(?:/|\s|$)"
@@ -71,7 +72,7 @@ def _single_auditable_tokens(command: str) -> list[str] | None:
     if "\n" in command or "\r" in command:
         return None
     outer = _lex(command)
-    if not outer or any(token in _UNSAFE_AUDIT_TOKENS for token in outer):
+    if not outer or any(_UNSAFE_AUDIT_CHARACTERS.intersection(token) for token in outer):
         return None
     if Path(outer[0]).name not in _SHELLS:
         return outer
@@ -111,6 +112,8 @@ def _command_argv(segment: list[str]) -> list[str]:
             segment[index].startswith("-") or _ASSIGNMENT.match(segment[index])
         ):
             index += 1
+    if index < len(segment) and segment[index] == "command":
+        index += 1
     return segment[index:]
 
 
@@ -128,9 +131,14 @@ def _invocation_argv(
         return None
     executable = Path(argv[0]).name
     if executable.startswith("python"):
-        if len(argv) < 2 or argv[1] != expected_script:
+        script_index = 1
+        while script_index < len(argv) and argv[script_index].startswith("-"):
+            if argv[script_index] not in _SAFE_PYTHON_OPTIONS:
+                return None
+            script_index += 1
+        if len(argv) <= script_index or argv[script_index] != expected_script:
             return None
-        arguments = argv[2:]
+        arguments = argv[script_index + 1:]
     elif argv[0] == expected_script:
         arguments = argv[1:]
     else:

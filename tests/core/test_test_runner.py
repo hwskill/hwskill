@@ -113,11 +113,26 @@ class TestLocalCaseRunner(unittest.TestCase):
         command = (
             'python3 -c "import os,pathlib; '
             'assert all(pathlib.Path(os.environ[name]).is_absolute() for name in '
-            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE','HWSKILL_TEST_REPO_ROOT','HWSKILL_TEST_PYTHON','HWSKILL_TEST_PYTHONPATH'])\""
+            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE','HWSKILL_TEST_EVIDENCE_WORKSPACE','HWSKILL_TEST_REPO_ROOT','HWSKILL_TEST_PYTHON','HWSKILL_TEST_PYTHONPATH'])\""
         )
         result = run_case(self.case(post_check=CommandAction("post-check", command)), self.environment(), self.artifacts)
 
         self.assertEqual(result.status, "PASS")
+
+    def test_command_post_check_keeps_the_shared_workspace_writable_and_reads_sealed_evidence(self) -> None:
+        from hwskill.test_runner import run_case
+
+        command = (
+            'test -f seed.txt; touch post-check-marker; '
+            'test -f "$HWSKILL_TEST_WORKSPACE/post-check-marker"; '
+            'test "$(cat \"$HWSKILL_TEST_EVIDENCE_WORKSPACE/seed.txt\")" = seed; '
+            'printf changed > seed.txt; '
+            'test "$(cat \"$HWSKILL_TEST_EVIDENCE_WORKSPACE/seed.txt\")" = seed'
+        )
+        result = run_case(self.case(post_check=CommandAction("post-check", command)), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+        self.assertNotIn("post-check-marker", (result.artifact_dir / "workspace.diff").read_text(encoding="utf-8"))
 
     def test_every_command_action_receives_runner_owned_repository_and_python_paths(self) -> None:
         from hwskill.test_runner import run_case

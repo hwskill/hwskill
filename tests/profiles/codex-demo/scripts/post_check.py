@@ -27,11 +27,12 @@ def main() -> int:
         context = _load_context(_environment_path("HWSKILL_TEST_CONTEXT"))
         artifacts = _real_directory(_environment_path("HWSKILL_TEST_ARTIFACTS"), "artifacts")
         workspace = _real_directory(_environment_path("HWSKILL_TEST_WORKSPACE"), "workspace")
+        evidence = _real_directory(_environment_path("HWSKILL_TEST_EVIDENCE_WORKSPACE"), "evidence workspace")
         repository = _real_directory(_environment_path("HWSKILL_TEST_REPO_ROOT"), "repository")
         _require_successful_action(context, "run-agent")
         _require_successful_action(context, "run-business-tests")
-        source = workspace / "order_pricing.py"
-        _require_exact_fixture_repair(repository, workspace)
+        source = evidence / "order_pricing.py"
+        _require_exact_fixture_repair(repository, evidence)
         _require_business_oracle(source)
         diff = _read_regular_file(artifacts, "workspace.diff")
         _require_trusted_workspace_changes(diff)

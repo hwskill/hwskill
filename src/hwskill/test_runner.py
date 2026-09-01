@@ -59,7 +59,7 @@ class CaseContext:
     artifact_dir: Path
     environment: TestEnvironment
     actions: tuple[ActionResult, ...]
-    agent_workspace: Path | None = None
+    evidence_workspace: Path | None = None
 
     def write(self, path: Path) -> None:
         """Write only normalized action metadata, never action output or secrets."""
@@ -74,7 +74,7 @@ class CaseContext:
         write_json(path, {
             "case_id": self.case_id,
             "workspace": str(self.workspace),
-            "agent_workspace": str(self.agent_workspace) if self.agent_workspace is not None else None,
+            "evidence_workspace": str(self.evidence_workspace) if self.evidence_workspace is not None else None,
             "runner": self.environment.runner,
             "host": self.environment.host,
             "model": self.environment.model,
@@ -176,7 +176,7 @@ def run_case(
         except (OSError, ValueError):
             return _finish_case(case, case_dir, workspace, baseline, environment, tuple(actions), "BLOCKED")
         pre_post_context = CaseContext(
-            case.case_id, evidence_workspace, case_dir, environment, tuple(actions), workspace,
+            case.case_id, workspace, case_dir, environment, tuple(actions), evidence_workspace,
         )
         pre_post_context.write(case_dir / "context.json")
         _write_workspace_diff_from_states(
@@ -184,19 +184,19 @@ def run_case(
         )
         post_result = _execute(
             _with_case_workdir(case.post_check, case.workdir),
-            evidence_workspace,
+            workspace,
             case_dir,
             environment,
             command_executor,
             agent_executor,
             case_dir / "context.json",
-            workspace,
+            evidence_workspace,
         )
         actions.append(post_result)
         if sealed_evidence_after != _workspace_snapshot(evidence_workspace):
             return _finish_case(
-                case, case_dir, evidence_workspace, baseline, environment, tuple(actions), "BLOCKED",
-                agent_workspace=workspace, after=evidence_after,
+                case, case_dir, workspace, baseline, environment, tuple(actions), "BLOCKED",
+                evidence_workspace=evidence_workspace, after=evidence_after,
             )
         if any(item.status == "blocked" for item in actions):
             status: Literal["PASS", "FAIL", "BLOCKED"] = "BLOCKED"
@@ -214,8 +214,8 @@ def run_case(
                 else:
                     status = parse_agent_post_check(response)
         return _finish_case(
-            case, case_dir, evidence_workspace, baseline, environment, tuple(actions), status,
-            agent_workspace=workspace, after=evidence_after,
+            case, case_dir, workspace, baseline, environment, tuple(actions), status,
+            evidence_workspace=evidence_workspace, after=evidence_after,
         )
     except (OSError, ValueError):
         return _finish_case(case, case_dir, workspace, {}, environment, tuple(actions), "BLOCKED")
@@ -287,14 +287,14 @@ def _execute(
     command_executor: ActionExecutor,
     agent_executor: ActionExecutor,
     post_check_context: Path | None,
-    agent_workspace: Path | None = None,
+    evidence_workspace: Path | None = None,
 ) -> ActionResult:
     action_dir = case_dir / "actions" / safe_artifact_id(action.action_id)
     action_dir.mkdir(parents=True, exist_ok=False)
     context = ActionContext(workspace, action_dir, environment)
     if post_check_context is not None:
         if isinstance(action, CommandAction):
-            return _run_post_check(action, context, post_check_context, case_dir, agent_workspace)
+            return _run_post_check(action, context, post_check_context, case_dir, evidence_workspace)
         from .test_agent import append_agent_post_check_metadata
         action = replace(
             action,
@@ -318,24 +318,26 @@ def _run_post_check(
     context: ActionContext,
     context_path: Path,
     case_dir: Path,
-    agent_workspace: Path | None,
+    evidence_workspace: Path | None,
 ) -> ActionResult:
     additions = {
         "HWSKILL_TEST_CONTEXT": str(context_path.absolute()),
         "HWSKILL_TEST_ARTIFACTS": str(case_dir.absolute()),
         "HWSKILL_TEST_WORKSPACE": str(context.workspace.absolute()),
-        "HWSKILL_TEST_AGENT_WORKSPACE": str((agent_workspace or context.workspace).absolute()),
+        "HWSKILL_TEST_EVIDENCE_WORKSPACE": str((evidence_workspace or context.workspace).absolute()),
         "HWSKILL_TEST_REPO_ROOT": str(context.environment.repo_root.absolute()),
         "HWSKILL_TEST_PYTHON": str(Path(sys.executable).absolute()),
         "HWSKILL_TEST_PYTHONPATH": str((context.environment.repo_root / "src").absolute()),
     }
-    return _run_command(action, context, additions)
+    return _run_command(action, context, additions, evidence_workspace=evidence_workspace)
 
 
 def _run_command(
     action: CommandAction,
     context: ActionContext,
     extra_environment: dict[str, str] | None = None,
+    *,
+    evidence_workspace: Path | None = None,
 ) -> ActionResult:
     payload = {
         "action_id": action.action_id,
@@ -349,7 +351,7 @@ def _run_command(
         try:
             _after_workdir_opened(context.workspace, action.workdir)
             process = subprocess.Popen(
-                context.environment.command_prefix + ("/bin/bash", "-lc", action.command),
+                _command_prefix(context.environment, context.workspace, evidence_workspace) + ("/bin/bash", "-lc", action.command),
                 cwd=cwd,
                 env=command_environment,
                 stdout=subprocess.PIPE,
@@ -417,14 +419,14 @@ def _finish_case(
     actions: tuple[ActionResult, ...],
     status: Literal["PASS", "FAIL", "BLOCKED"],
     *,
-    agent_workspace: Path | None = None,
+    evidence_workspace: Path | None = None,
     after: dict[str, tuple[int, str]] | None = None,
 ) -> CaseResult:
     if after is None:
         _write_workspace_diff(case_dir / "workspace.diff", baseline, workspace, environment.secret_values)
     else:
         _write_workspace_diff_from_states(case_dir / "workspace.diff", baseline, after, environment.secret_values)
-    CaseContext(case.case_id, workspace, case_dir, environment, actions, agent_workspace).write(case_dir / "context.json")
+    CaseContext(case.case_id, workspace, case_dir, environment, actions, evidence_workspace).write(case_dir / "context.json")
     return CaseResult(case.case_id, status, case_dir, actions)
 
 
@@ -500,6 +502,30 @@ def _agent_command_prefix(environment: TestEnvironment, workspace: Path) -> tupl
     pool = str(environment.workspace_root.absolute())
     isolated = str(workspace.absolute())
     return tuple(isolated if value == pool else value for value in prefix)
+
+
+def _command_prefix(
+    environment: TestEnvironment,
+    workspace: Path,
+    evidence_workspace: Path | None = None,
+) -> tuple[str, ...]:
+    """Keep command actions in their writable workspace, exposing evidence read-only.
+
+    The Docker worker's static guard begins with a workspace-pool rule.  Per
+    action, replace only that rule with the current case workspace; a command
+    post-check receives a separate read-only rule for its immutable evidence.
+    """
+    prefix = environment.command_prefix
+    if environment.workspace_root is None or not prefix:
+        return prefix
+    pool = str(environment.workspace_root.absolute())
+    isolated = str(workspace.absolute())
+    narrowed = tuple(isolated if value == pool else value for value in prefix)
+    if evidence_workspace is None:
+        return narrowed
+    if not narrowed or narrowed[-1] != "--":
+        raise ValueError("command isolation prefix must terminate with --")
+    return (*narrowed[:-1], "--read-only", str(evidence_workspace.absolute()), "--")
 
 
 def _open_anchored_workdir(workspace: Path, configured: str | None) -> tuple[int, str]:

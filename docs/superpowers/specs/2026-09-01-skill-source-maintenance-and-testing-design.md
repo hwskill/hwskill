@@ -575,12 +575,15 @@ artifacts/tests/<run-id>/<case-id>/
 HWSKILL_TEST_CONTEXT=<absolute-path>/context.json
 HWSKILL_TEST_ARTIFACTS=<absolute-path>/artifacts/<case-id>
 HWSKILL_TEST_WORKSPACE=<absolute-path>/workspace
+HWSKILL_TEST_EVIDENCE_WORKSPACE=<absolute-path>/sealed-evidence-snapshot
 HWSKILL_TEST_REPO_ROOT=<absolute-path>/repository
 HWSKILL_TEST_PYTHON=<runner-python-absolute-path>
 HWSKILL_TEST_PYTHONPATH=<repository>/src
 ```
 
-Command post-check 可读取 Agent `events.jsonl`，检查工具顺序、参数、运行时路径、文件范围和业务结果。`HWSKILL_TEST_PYTHON*` 是 runner 提供的受控 import contract，使本地 source-tree 执行不依赖调用者偶然继承的 `PYTHONPATH`。退出码 `0` 为 PASS、`1` 为 FAIL，其他退出码为 BLOCKED。
+Command post-check 的 cwd 与 `HWSKILL_TEST_WORKSPACE` 保持为原可写共享 workspace，以兼容普通断言和维护脚本；涉及 Agent 结果、patch、oracle 或变更范围的业务输入必须从 runner-owned、sealed 的 `HWSKILL_TEST_EVIDENCE_WORKSPACE` 读取。diff 同样由该快照生成。Docker 中 post-check 只读获得快照，Agent 不获得快照；snapshot 前后都验证身份。`HWSKILL_TEST_PYTHON*` 是 runner 提供的受控 import contract，使本地 source-tree 执行不依赖调用者偶然继承的 `PYTHONPATH`。退出码 `0` 为 PASS、`1` 为 FAIL，其他退出码为 BLOCKED。
+
+`--runner local` 的 Agent 执行仅用于功能调试，不能作为安全隔离或不可变性证据的 PASS。即便 runner 会终止已知进程组，Agent 仍可能通过 `setsid` 脱离该组；标准可信行为证据必须由 Docker runner 的文件系统隔离产生。
 
 Agent post-check 获得只读 context 与 artifacts，最终必须返回符合 schema 的 JSON：
 
