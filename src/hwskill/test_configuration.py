@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import yaml
 
@@ -20,6 +20,10 @@ from .hosts import canonical_host
 
 
 _SCHEMA_VERSION = 1
+_MAX_CONFIG_BYTES = 64 * 1024
+SUPPORTED_REASONING_EFFORTS = frozenset({
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+})
 
 
 class TestConfigurationError(ValueError):
@@ -71,6 +75,16 @@ class TestConfiguration:
     hosts: Mapping[str, HostModel]
 
 
+@dataclass(frozen=True)
+class AtomicFileOperations:
+    """The failure-prone atomic publication operations, injectable in tests."""
+
+    replace: Callable[..., None] = os.replace
+    chmod: Callable[..., None] = os.chmod
+    fsync: Callable[[int], None] = os.fsync
+    unlink: Callable[..., None] = os.unlink
+
+
 def test_config_path(
     *,
     environment: Mapping[str, str] | None = None,
@@ -80,7 +94,10 @@ def test_config_path(
     env = os.environ if environment is None else environment
     base = env.get("XDG_CONFIG_HOME")
     if base:
-        return Path(base) / "hwskill" / "test.yaml"
+        candidate = Path(base)
+        if not candidate.is_absolute():
+            raise TestConfigurationError("XDG_CONFIG_HOME must be an absolute path")
+        return candidate / "hwskill" / "test.yaml"
     return (Path.home() if home is None else Path(home)) / ".config" / "hwskill" / "test.yaml"
 
 
@@ -91,10 +108,14 @@ def load_test_configuration(*, path: Path | None = None) -> TestConfiguration:
         directory_fd = _open_config_parent(config_path, create=False)
         try:
             descriptor = _open_regular_file(config_path.name, directory_fd)
-            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=True) as handle:
-                text = handle.read()
+            with os.fdopen(descriptor, "rb", closefd=True) as handle:
+                raw = handle.read(_MAX_CONFIG_BYTES + 1)
+            if len(raw) > _MAX_CONFIG_BYTES:
+                raise TestConfigurationError("test configuration exceeds maximum size")
+            text = raw.decode("utf-8")
         finally:
             os.close(directory_fd)
+        _reject_yaml_references(text)
         payload = yaml.load(text, Loader=_ConfigurationLoader)
     except _YamlMappingKeyError as exc:
         raise TestConfigurationError(str(exc)) from exc
@@ -103,21 +124,28 @@ def load_test_configuration(*, path: Path | None = None) -> TestConfiguration:
     return _parse_configuration(payload)
 
 
-def write_test_configuration(config: TestConfiguration, *, path: Path | None = None) -> None:
+def write_test_configuration(
+    config: TestConfiguration,
+    *,
+    path: Path | None = None,
+    operations: AtomicFileOperations | None = None,
+) -> None:
     """Atomically replace one mode-safe regular configuration file.
 
-    The target and all existing parent components are checked with ``lstat``;
-    consequently a configuration path can never redirect this write through a
-    user-controlled symlink.
+    Descriptor-anchored parent traversal and ``O_NOFOLLOW`` prevent a
+    configuration path from redirecting this write through a user-controlled
+    symlink.
     """
     validated = _validate_configuration(config)
     config_path = _absolute_config_path(test_config_path() if path is None else Path(path))
     content = yaml.safe_dump(
         _serialize_configuration(validated), allow_unicode=True, sort_keys=False,
     )
+    if len(content.encode("utf-8")) > _MAX_CONFIG_BYTES:
+        raise TestConfigurationError("test configuration exceeds maximum size")
     directory_fd = _open_config_parent(config_path, create=True)
     try:
-        _atomic_write(config_path.name, directory_fd, content)
+        _atomic_write(config_path.name, directory_fd, content, operations or AtomicFileOperations())
     finally:
         os.close(directory_fd)
 
@@ -151,7 +179,7 @@ def _parse_configuration(value: Any) -> TestConfiguration:
         _exact_keys(item, {"model", "reasoning"}, f"host {host}")
         hosts[host] = HostModel(
             _nonempty_string(item["model"], f"host {host}.model"),
-            _nonempty_string(item["reasoning"], f"host {host}.reasoning"),
+            _reasoning(item["reasoning"], f"host {host}.reasoning"),
         )
     return _validate_configuration(TestConfiguration(
         runner=data["runner"], default_host=data["default_host"], hosts=hosts,
@@ -176,7 +204,7 @@ def _validate_configuration(value: TestConfiguration) -> TestConfiguration:
             raise TestConfigurationError(f"host {host} must contain a HostModel")
         hosts[host] = HostModel(
             _nonempty_string(model.model, f"host {host}.model"),
-            _nonempty_string(model.reasoning, f"host {host}.reasoning"),
+            _reasoning(model.reasoning, f"host {host}.reasoning"),
         )
     if default_host not in hosts:
         raise TestConfigurationError("default_host must have a configured model")
@@ -216,6 +244,24 @@ def _nonempty_string(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or "\x00" in value or len(value) > 512:
         raise TestConfigurationError(f"{label} must be a non-empty safe string")
     return value
+
+
+def _reasoning(value: Any, label: str) -> str:
+    reasoning = _nonempty_string(value, label)
+    if reasoning not in SUPPORTED_REASONING_EFFORTS:
+        raise TestConfigurationError(f"{label} must be a supported reasoning effort")
+    return reasoning
+
+
+def _reject_yaml_references(text: str) -> None:
+    try:
+        for event in yaml.parse(text, Loader=_ConfigurationLoader):
+            if isinstance(event, yaml.events.AliasEvent) or getattr(event, "anchor", None) is not None:
+                raise TestConfigurationError("YAML anchors and aliases are not allowed")
+    except TestConfigurationError:
+        raise
+    except yaml.YAMLError as exc:
+        raise TestConfigurationError(f"cannot parse test configuration: {exc}") from exc
 
 
 def _canonical_host(value: Any, label: str) -> str:
@@ -279,10 +325,18 @@ def _open_regular_file(name: str, directory_fd: int) -> int:
     if not stat.S_ISREG(metadata.st_mode):
         os.close(descriptor)
         raise TestConfigurationError(f"test configuration must be a regular non-symlink file: {name}")
+    if metadata.st_size > _MAX_CONFIG_BYTES:
+        os.close(descriptor)
+        raise TestConfigurationError("test configuration exceeds maximum size")
     return descriptor
 
 
-def _atomic_write(name: str, directory_fd: int, content: str) -> None:
+def _atomic_write(
+    name: str,
+    directory_fd: int,
+    content: str,
+    operations: AtomicFileOperations,
+) -> None:
     try:
         existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
     except FileNotFoundError:
@@ -300,16 +354,13 @@ def _atomic_write(name: str, directory_fd: int, content: str) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
             handle.write(content)
             handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
-        os.chmod(name, 0o600, dir_fd=directory_fd, follow_symlinks=False)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            pass
+            operations.chmod(temporary_name, 0o600, dir_fd=directory_fd, follow_symlinks=False)
+            operations.fsync(handle.fileno())
+        operations.replace(temporary_name, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        operations.fsync(directory_fd)
     except Exception:
         try:
-            os.unlink(temporary_name, dir_fd=directory_fd)
+            operations.unlink(temporary_name, dir_fd=directory_fd)
         except FileNotFoundError:
             pass
         raise

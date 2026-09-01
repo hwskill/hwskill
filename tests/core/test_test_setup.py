@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -19,6 +20,10 @@ class _Runner:
 
 def _completed(argv: tuple[str, ...], stdout: str = "ok\n", returncode: int = 0):
     return subprocess.CompletedProcess(argv, returncode, stdout, "failure" if returncode else "")
+
+
+IMAGE_DIGEST = "sha256:" + hashlib.sha256(b"hwskill-standard-test-image").hexdigest()
+IMAGE_NAME = f"hwskill/test@{IMAGE_DIGEST}"
 
 
 class TestTestSetup(unittest.TestCase):
@@ -41,33 +46,34 @@ class TestTestSetup(unittest.TestCase):
         self.assertNotIn("missing", report.checks[0].detail)
 
     def test_missing_host_cli_is_reported_without_leaking_command_output(self) -> None:
-        from hwskill.test_setup import inspect_test_setup
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
 
         docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
-        image = ("docker", "image", "inspect", "--format", "{{.Id}}", "hwskill/test:latest")
-        runner = _Runner({docker_info: _completed(docker_info), image: _completed(image, "sha256:image\n")})
-        report = inspect_test_setup(self.config, runner, environment={})
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        runner = _Runner({docker_info: _completed(docker_info, "24.0.7\n"), image: _completed(image, IMAGE_DIGEST + "\n")})
+        report = inspect_test_setup(self.config, runner, environment={}, expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST))
 
         host = next(item for item in report.checks if item.name == "host-cli")
         self.assertEqual(host.status, "BLOCKED")
         self.assertNotIn("missing", host.detail)
 
     def test_current_model_is_displayed_and_successful_probe_makes_ready(self) -> None:
-        from hwskill.test_setup import inspect_test_setup
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
 
         docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
-        image = ("docker", "image", "inspect", "--format", "{{.Id}}", "hwskill/test:latest")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
         version = ("codex", "--version")
         probe = (
             "codex", "exec", "--model", "gpt-5.6-terra", "-c",
             'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY.",
         )
         runner = _Runner({
-            docker_info: _completed(docker_info), image: _completed(image, "sha256:image\n"),
+            docker_info: _completed(docker_info, "24.0.7\n"), image: _completed(image, IMAGE_DIGEST + "\n"),
             version: _completed(version, "0.147.0\n"), probe: _completed(probe, '{"type":"message"}\n'),
         })
         report = inspect_test_setup(
             self.config, runner, environment={"CODEX_API_KEY": "credential-sentinel"},
+            expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST),
         )
 
         self.assertEqual(report.status, "READY")
@@ -77,21 +83,22 @@ class TestTestSetup(unittest.TestCase):
         self.assertNotIn("credential-sentinel", "\n".join(item.detail for item in report.checks))
 
     def test_failed_availability_probe_blocks_setup(self) -> None:
-        from hwskill.test_setup import inspect_test_setup
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
 
         docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
-        image = ("docker", "image", "inspect", "--format", "{{.Id}}", "hwskill/test:latest")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
         version = ("codex", "--version")
         probe = (
             "codex", "exec", "--model", "gpt-5.6-terra", "-c",
             'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY.",
         )
         runner = _Runner({
-            docker_info: _completed(docker_info), image: _completed(image, "sha256:image\n"),
+            docker_info: _completed(docker_info, "24.0.7\n"), image: _completed(image, IMAGE_DIGEST + "\n"),
             version: _completed(version), probe: _completed(probe, returncode=1),
         })
         report = inspect_test_setup(
             self.config, runner, environment={"CODEX_API_KEY": "credential-sentinel"},
+            expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST),
         )
 
         self.assertEqual(report.status, "BLOCKED")
@@ -122,6 +129,99 @@ class TestTestSetup(unittest.TestCase):
                 self.config, check=False, inspect=lambda *_args, **_kwargs: current,
                 runner=object(), write=lambda _config: None, prompt=lambda _message: "",
             )
+
+    def test_blocked_replacement_is_not_persisted_and_preserves_current_file(self) -> None:
+        from hwskill.test_configuration import HostModel, write_test_configuration
+        from hwskill.test_setup import configure_test_setup, SetupCheck, SetupReport
+
+        replacement = type(self.config)(
+            runner="docker", default_host="codex",
+            hosts={"codex": HostModel("replacement-model", "high")},
+        )
+        current_report = SetupReport("BLOCKED", (SetupCheck("model-availability", "BLOCKED", "unavailable"),))
+        replacement_report = SetupReport("BLOCKED", (SetupCheck("model-availability", "BLOCKED", "unavailable"),))
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test.yaml"
+            write_test_configuration(self.config, path=path)
+            before = path.read_text(encoding="utf-8")
+            report = configure_test_setup(
+                self.config, replacement=replacement, runner=object(),
+                inspect=lambda config, _runner: current_report if config == self.config else replacement_report,
+                write=lambda config: write_test_configuration(config, path=path),
+            )
+            self.assertIs(report, replacement_report)
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    def test_image_requires_injected_exact_expected_digest(self) -> None:
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
+
+        docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        version = ("codex", "--version")
+        runner = _Runner({
+            docker_info: _completed(docker_info, "24.0.7\n"),
+            image: _completed(image, IMAGE_DIGEST + "\n"),
+            version: _completed(version, "0.147.0\n"),
+        })
+        missing = inspect_test_setup(self.config, runner, environment={"CODEX_API_KEY": "set"})
+        mismatch = inspect_test_setup(
+            self.config, runner, environment={"CODEX_API_KEY": "set"},
+            expected_image=ExpectedImage(IMAGE_NAME, "sha256:" + "0" * 64),
+        )
+        self.assertEqual(next(item for item in missing.checks if item.name == "standard-image").status, "BLOCKED")
+        self.assertEqual(next(item for item in mismatch.checks if item.name == "standard-image").status, "BLOCKED")
+
+    def test_hostile_subprocess_output_never_enters_report(self) -> None:
+        from hwskill.test_configuration import HostModel, TestConfiguration
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
+
+        sentinel = "credential-sentinel"
+        docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        for host, executable, version in (
+            ("codex", "codex", "0.147.0"),
+            ("claude-code", "claude", "2.1.141 (Claude Code)"),
+            ("opencode", "opencode", "1.14.48"),
+        ):
+            with self.subTest(host=host):
+                config = TestConfiguration("docker", host, {host: HostModel("safe-model", "high")})
+                runner = _Runner({
+                    docker_info: _completed(docker_info, f"24.0.7 {sentinel}\n"),
+                    image: _completed(image, f"{IMAGE_DIGEST} {sentinel}\n"),
+                    (executable, "--version"): _completed((executable, "--version"), f"{version} {sentinel}\n"),
+                })
+                report = inspect_test_setup(
+                    config, runner, environment={"CODEX_API_KEY": sentinel},
+                    expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST),
+                )
+                self.assertNotIn(sentinel, "\n".join(item.detail for item in report.checks))
+                self.assertEqual(next(item for item in report.checks if item.name == "docker-daemon").status, "BLOCKED")
+                self.assertEqual(next(item for item in report.checks if item.name == "host-cli").status, "BLOCKED")
+
+    def test_host_versions_must_match_the_verified_grammar_and_version(self) -> None:
+        from hwskill.test_configuration import HostModel, TestConfiguration
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
+
+        docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        for host, executable, malformed, incompatible in (
+            ("codex", "codex", "not a version", "0.0.1"),
+            ("claude-code", "claude", "2.1.141", "2.1.140 (Claude Code)"),
+            ("opencode", "opencode", "version=1.14.48", "1.14.47"),
+        ):
+            for output in (malformed, incompatible):
+                with self.subTest(host=host, output=output):
+                    config = TestConfiguration("docker", host, {host: HostModel("safe-model", "high")})
+                    runner = _Runner({
+                        docker_info: _completed(docker_info, "24.0.7\n"),
+                        image: _completed(image, IMAGE_DIGEST + "\n"),
+                        (executable, "--version"): _completed((executable, "--version"), output + "\n"),
+                    })
+                    report = inspect_test_setup(
+                        config, runner, environment={"CODEX_API_KEY": "set"},
+                        expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST),
+                    )
+                    self.assertEqual(next(item for item in report.checks if item.name == "host-cli").status, "BLOCKED")
 
 
 if __name__ == "__main__":
