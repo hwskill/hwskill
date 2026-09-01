@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -217,6 +219,53 @@ class TestManifestTest(unittest.TestCase):
         (fixtures / "nested" / "outside").symlink_to(external, target_is_directory=True)
         with self.assertRaisesRegex(TestManifestError, "fixtures.*symlink"):
             load_test_collection(path, self.repo)
+
+    def test_nested_fixtures_allow_only_regular_files_and_real_directories(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+
+        path = self.skill_manifest([])
+        fixtures = path.parent / "fixtures"
+        nested = fixtures / "nested" / "deeper"
+        nested.mkdir(parents=True)
+        (fixtures / "top-level.txt").write_text("top level\n", encoding="utf-8")
+        (nested / "payload.txt").write_text("nested\n", encoding="utf-8")
+
+        collection = load_test_collection(path, self.repo)
+
+        self.assertEqual(collection.fixtures_dir, fixtures)
+
+    def test_rejects_a_nested_fixture_fifo_with_relative_path_and_type(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        path = self.skill_manifest([])
+        fixtures = path.parent / "fixtures"
+        fixtures.mkdir()
+        fifo = fixtures / "nested" / "input.fifo"
+        fifo.parent.mkdir()
+        os.mkfifo(fifo)
+
+        with self.assertRaisesRegex(TestManifestError, r"nested/input\.fifo.*FIFO"):
+            load_test_collection(path, self.repo)
+
+    def test_rejects_a_nested_socket_fixture_mode_deterministically(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        path = self.skill_manifest([])
+        fixtures = path.parent / "fixtures"
+        fixtures.mkdir()
+        socket_path = fixtures / "nested" / "service.sock"
+        socket_path.parent.mkdir()
+        socket_path.write_text("placeholder", encoding="utf-8")
+        real_lstat = os.lstat
+
+        def socket_lstat(candidate: Path | str) -> os.stat_result:
+            if Path(candidate) == socket_path:
+                return os.stat_result((stat.S_IFSOCK | 0o600,) * 10)
+            return real_lstat(candidate)
+
+        with patch("hwskill.test_manifest.os.lstat", side_effect=socket_lstat):
+            with self.assertRaisesRegex(TestManifestError, r"nested/service\.sock.*socket"):
+                load_test_collection(path, self.repo)
 
     def test_scalar_schema_fields_reject_list_mapping_and_null_as_manifest_errors(self) -> None:
         from hwskill.test_manifest import TestManifestError, load_test_collection

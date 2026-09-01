@@ -322,12 +322,34 @@ def _validate_fixtures_dir(fixtures_dir: Path, root: Path) -> None:
         except OSError as exc:
             raise TestManifestError(f"cannot scan fixtures directory {directory}: {exc}") from exc
         for entry in entries:
-            if entry.is_symlink():
-                raise TestManifestError(f"fixtures must not contain a symlink: {entry.path}")
-            if entry.is_dir(follow_symlinks=False):
-                visit(Path(entry.path))
+            entry_path = Path(entry.path)
+            relative = entry_path.relative_to(fixtures_dir).as_posix()
+            try:
+                mode = os.lstat(entry_path).st_mode
+            except OSError as exc:
+                raise TestManifestError(f"cannot inspect fixture {relative}: {exc}") from exc
+            if stat.S_ISLNK(mode):
+                raise TestManifestError(f"fixtures must not contain a symlink: {relative}")
+            if stat.S_ISDIR(mode):
+                visit(entry_path)
+            elif not stat.S_ISREG(mode):
+                raise TestManifestError(
+                    f"fixtures contains unsupported fixture {relative} ({_fixture_entry_type(mode)})"
+                )
 
     visit(fixtures_dir)
+
+
+def _fixture_entry_type(mode: int) -> str:
+    if stat.S_ISFIFO(mode):
+        return "FIFO"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    if stat.S_ISCHR(mode):
+        return "character device"
+    if stat.S_ISBLK(mode):
+        return "block device"
+    return "special file"
 
 
 def _mapping(value: Any, location: str) -> dict[str, Any]:
