@@ -1,9 +1,4 @@
-"""CLI-facing routing and rendering for declarative test collections.
-
-The standard Docker executor intentionally lives behind this module's execution
-boundary.  Task 8 provides that implementation; until then Docker requests are
-reported as BLOCKED instead of being silently run on the host.
-"""
+"""CLI-facing routing and rendering for local-debug and standard Docker tests."""
 
 from __future__ import annotations
 
@@ -20,6 +15,13 @@ import tempfile
 import threading
 from typing import Literal, Protocol, TextIO
 
+from .docker_test_runner import (
+    CoreCollectionResult,
+    CredentialFile,
+    DockerRunnerUnavailable,
+    DockerTestRunner,
+    TestRunResult,
+)
 from .hosts import HOST_SPECS, canonical_host
 from .pending_verification import VerificationResult, clear_pending_verification
 from .test_artifacts import ActionResult, CaseResult, CollectionResult, write_json, write_text
@@ -98,32 +100,13 @@ class TestCliUsageError(ValueError):
 
 
 @dataclass(frozen=True)
-class CoreCollectionResult:
-    target: TestTarget
-    status: RunStatus
-    cases: tuple[CaseResult, ...]
-
-
-@dataclass(frozen=True)
-class TestRunResult:
-    status: RunStatus
-    artifact_root: Path
-    collections: tuple[CollectionResult | CoreCollectionResult, ...]
-    runner: str
-    host: str
-    model: str
-    host_version: str
-    pending_cleared: bool = False
-    blocked_reason: str | None = None
-
-
-@dataclass(frozen=True)
 class CredentialMaterial:
     """The only credential data allowed into a local disposable test workspace."""
 
     host: str
     environment_variables: tuple[tuple[str, str], ...] = ()
     source: Literal["environment", "host-store", "none"] = "none"
+    credential_files: tuple[CredentialFile, ...] = ()
 
     @property
     def secret_values(self) -> tuple[str, ...]:
@@ -196,23 +179,6 @@ class LocalTestExecutionBoundary:
         )
 
 
-class UnavailableDockerExecutionBoundary:
-    """Task-7 placeholder that refuses to represent host-local work as Docker work."""
-
-    def run(
-        self,
-        collections: Sequence[object],
-        environment: TestEnvironment,
-        artifact_root: Path,
-    ) -> TestRunResult:
-        del collections
-        return TestRunResult(
-            "BLOCKED", artifact_root, (), environment.runner, environment.host, environment.model,
-            "unavailable",
-            blocked_reason="standard Docker test runner is unavailable; Task 8 has not provided an implementation",
-        )
-
-
 def run_test_command(
     args,
     repo_root: Path,
@@ -231,7 +197,7 @@ def run_test_command(
     try:
         if args.test_target == "setup":
             return _run_setup_check(
-                args, stdout, stderr, prompt=setup_prompt,
+                args, root, stdout, stderr, prompt=setup_prompt,
                 configurator=setup_configurator or configure_test_setup,
                 writer=setup_writer or write_test_configuration,
             )
@@ -270,7 +236,11 @@ def run_test_command(
         secret_values=material.secret_values, environment_variables=material.environment_variables,
     )
     boundary = execution_boundary or (
-        LocalTestExecutionBoundary(material, host_version=actual_host_version) if configuration.runner == "local" else UnavailableDockerExecutionBoundary()
+        LocalTestExecutionBoundary(material, host_version=actual_host_version)
+        if configuration.runner == "local"
+        else DockerTestRunner(
+            root, replace(configuration, default_host=host), credential_files=material.credential_files,
+        )
     )
     result = boundary.run(selections, environment, artifact_root)
     if actual_host_version is not None:
@@ -301,6 +271,7 @@ def _configured_test_configuration(args) -> TestConfiguration:
 
 def _run_setup_check(
     args,
+    repo_root: Path,
     stdout: TextIO,
     stderr: TextIO,
     *,
@@ -344,10 +315,18 @@ def _run_setup_check(
             created_replacement.append(candidate)
             return candidate
 
+        image_identity = None
+        if configuration.runner == "docker":
+            docker_runner = DockerTestRunner(repo_root, configuration)
+            try:
+                image_identity = docker_runner.inspect_image() if args.check else docker_runner.build()
+            except DockerRunnerUnavailable:
+                image_identity = None
         report = configurator(
             configuration, runner=_setup_subprocess_runner, check=bool(args.check),
             replacement=replacement, prompt=prompt, write=writer,
             replacement_factory=(None if args.check or bootstrap else replacement_factory),
+            image_identity=image_identity,
         )
     except (TestConfigurationError, ValueError, OSError) as exc:
         print(f"hwskill test setup: {exc}", file=stderr)
@@ -435,7 +414,12 @@ def _environment_credential_material(
     store = (Path.home() if home is None else Path(home)) / _CREDENTIAL_STORE_RELATIVE_PATHS[host]
     try:
         if store.is_file() and not store.is_symlink():
-            return CredentialMaterial(host, (), "host-store")
+            destination = {
+                "codex": "/credentials/codex/auth.json",
+                "claude-code": "/credentials/claude-code/.credentials.json",
+                "opencode": "/credentials/opencode/auth.json",
+            }[host]
+            return CredentialMaterial(host, (), "host-store", (CredentialFile(store, destination),))
     except OSError:
         pass
     return CredentialMaterial(host)
@@ -579,7 +563,8 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
                 if selected and not (staged_core / selected).is_file():
                     raise ValueError("selected core test disappeared before staging")
                 process = subprocess.Popen(
-                    (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_core), selected),
+                    environment.command_prefix
+                    + (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_core), selected),
                     cwd=root_path, env=_core_environment(root_path), stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                     start_new_session=True, pass_fds=(root_fd, core_fd),

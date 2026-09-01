@@ -6,3 +6,11 @@ build
 *.egg-info
 __pycache__
 *.py[cod]
+.codex
+.claude
+.config
+.local
+credentials
+*.pem
+*.key
+*.iid

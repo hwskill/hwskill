@@ -36,6 +36,8 @@ class TestEnvironment:
     timeout_seconds: float = 30.0
     fixtures_dir: Path | None = None
     fixture_source: FixtureSource | None = None
+    workspace_root: Path | None = None
+    command_prefix: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,10 @@ def run_case(
     """Run one case in a fresh workspace and retain normalized evidence."""
     case_dir = Path(artifact_root).absolute() / safe_artifact_id(case.case_id)
     case_dir.mkdir(parents=True, exist_ok=False)
-    workspace = Path(tempfile.mkdtemp(prefix="hwskill-test-workspace-"))
+    workspace_parent = environment.workspace_root
+    if workspace_parent is not None:
+        workspace_parent.mkdir(parents=True, exist_ok=True)
+    workspace = Path(tempfile.mkdtemp(prefix="hwskill-test-workspace-", dir=workspace_parent))
     actions: list[ActionResult] = []
     try:
         try:
@@ -293,7 +298,7 @@ def _run_command(
         try:
             _after_workdir_opened(context.workspace, action.workdir)
             process = subprocess.Popen(
-                ("/bin/bash", "-lc", action.command),
+                context.environment.command_prefix + ("/bin/bash", "-lc", action.command),
                 cwd=cwd,
                 env=command_environment,
                 stdout=subprocess.PIPE,
