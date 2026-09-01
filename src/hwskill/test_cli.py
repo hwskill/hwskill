@@ -49,6 +49,8 @@ _CREDENTIAL_STORE_RELATIVE_PATHS = {
     "claude-code": Path(".claude/.credentials.json"),
     "opencode": Path(".local/share/opencode/auth.json"),
 }
+_MINIMAX_AUTH_ENVIRONMENT = "HWSKILL_MINIMAX_AUTH_FILE"
+_MINIMAX_PROVIDER = "minimax-cn-coding-plan"
 _CORE_UNITTEST_RUNNER = r'''
 import importlib
 import importlib.util
@@ -105,7 +107,7 @@ class CredentialMaterial:
 
     host: str
     environment_variables: tuple[tuple[str, str], ...] = ()
-    source: Literal["environment", "host-store", "none"] = "none"
+    source: Literal["environment", "host-store", "minimax-store", "none"] = "none"
     credential_files: tuple[CredentialFile, ...] = ()
 
     @property
@@ -411,6 +413,14 @@ def _environment_credential_material(
     )
     if values:
         return CredentialMaterial(host, values, "environment")
+    if host in {"claude-code", "opencode"} and _MINIMAX_AUTH_ENVIRONMENT in environment:
+        source = _filtered_minimax_auth_file(environment[_MINIMAX_AUTH_ENVIRONMENT])
+        destination = (
+            "/credentials/minimax-auth.json"
+            if host == "claude-code"
+            else "/credentials/opencode/auth.json"
+        )
+        return CredentialMaterial(host, (), "minimax-store", (CredentialFile(source, destination),))
     store = (Path.home() if home is None else Path(home)) / _CREDENTIAL_STORE_RELATIVE_PATHS[host]
     try:
         if store.is_file() and not store.is_symlink():
@@ -423,6 +433,68 @@ def _environment_credential_material(
     except OSError:
         pass
     return CredentialMaterial(host)
+
+
+def _filtered_minimax_auth_file(value: object) -> Path:
+    """Accept only the mode-safe, already-filtered temporary file made by a legacy wrapper."""
+    if not isinstance(value, str) or not value:
+        raise TestCliUsageError(f"{_MINIMAX_AUTH_ENVIRONMENT} must name a credential file")
+    path = Path(value)
+    if not path.is_absolute():
+        raise TestCliUsageError(f"{_MINIMAX_AUTH_ENVIRONMENT} must be an absolute path")
+    try:
+        if path.is_symlink():
+            raise TestCliUsageError("filtered MiniMax credential must be a regular non-symlink file")
+    except OSError as exc:
+        raise TestCliUsageError("cannot validate filtered MiniMax credential") from exc
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise TestCliUsageError("filtered MiniMax credential must be a regular non-symlink file")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise TestCliUsageError("filtered MiniMax credential must not be group/world accessible")
+        if metadata.st_size > 64 * 1024:
+            raise TestCliUsageError("filtered MiniMax credential exceeds maximum size")
+        raw = os.read(descriptor, 64 * 1024 + 1)
+        if len(raw) > 64 * 1024 or os.read(descriptor, 1):
+            raise TestCliUsageError("filtered MiniMax credential exceeds maximum size")
+        current = path.lstat()
+        if (current.st_dev, current.st_ino, stat.S_IFMT(current.st_mode), current.st_size) != (
+            metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode), metadata.st_size,
+        ):
+            raise TestCliUsageError("filtered MiniMax credential changed while validating")
+        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    except TestCliUsageError:
+        raise
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise TestCliUsageError("cannot validate filtered MiniMax credential") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    provider = payload.get(_MINIMAX_PROVIDER) if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {_MINIMAX_PROVIDER}
+        or not isinstance(provider, dict)
+        or set(provider) != {"type", "key"}
+        or provider.get("type") != "api"
+        or not isinstance(provider.get("key"), str)
+        or not provider["key"]
+    ):
+        raise TestCliUsageError("filtered MiniMax credential is malformed")
+    return path.absolute()
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate credential keys rather than silently selecting one."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 def _probe_local_host_version(host: str) -> str | None:

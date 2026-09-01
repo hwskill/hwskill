@@ -80,6 +80,12 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             self.assertTrue(resolution["execution_succeeded"])
             self.assertEqual(resolution["patch_diagnostic"]["files"], 1)
             self.assertEqual(resolution["patch_path"], str(workspace / "pr-587.patch"))
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(" --output pr-587.patch", ""), encoding="utf-8")
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(
+                f"{PR_URL}", f"{PR_URL} --output unexpected.patch",
+            ), encoding="utf-8")
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
             (workspace / "pr-587.patch").unlink()
             self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
 
@@ -90,12 +96,16 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             (workspace / "order_pricing.py").write_text(
-                "if subtotal >= discount_threshold:\n    return subtotal\n", encoding="utf-8",
+                "from decimal import Decimal\n\n\ndef calculate_total(subtotal, discount_threshold, discount_rate):\n"
+                "    if subtotal >= discount_threshold:\n"
+                "        return subtotal * (Decimal('1') - discount_rate)\n"
+                "    return subtotal\n",
+                encoding="utf-8",
             )
             artifacts = root / "artifacts"
             artifacts.mkdir()
             (artifacts / "workspace.diff").write_text(
-                "+    if subtotal >= discount_threshold:\n", encoding="utf-8",
+                "M order_pricing.py\n", encoding="utf-8",
             )
             context_path = artifacts / "context.json"
             context_path.write_text(json.dumps({
@@ -109,7 +119,23 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             result = self._post_check(script, context_path, artifacts, workspace)
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            (artifacts / "workspace.diff").write_text("", encoding="utf-8")
+            (workspace / "tests").mkdir()
+            (workspace / "tests/test_order_pricing.py").write_text("oracle was changed\n", encoding="utf-8")
+            (artifacts / "workspace.diff").write_text(
+                "M order_pricing.py\nM tests/test_order_pricing.py\n", encoding="utf-8",
+            )
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            (workspace / "tests/test_order_pricing.py").unlink()
+            (workspace / "order_pricing.py").write_text(
+                "from decimal import Decimal\n\n\ndef calculate_total(subtotal, discount_threshold, discount_rate):\n"
+                "    if subtotal > discount_threshold:\n"
+                "        return subtotal\n"
+                "    if subtotal >= discount_threshold:\n"
+                "        return subtotal\n"
+                "    return subtotal\n",
+                encoding="utf-8",
+            )
+            (artifacts / "workspace.diff").write_text("M order_pricing.py\n", encoding="utf-8")
             self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
 
     def test_legacy_wrappers_forward_exact_collection_path_and_preserve_blocked_exit(self) -> None:
@@ -126,10 +152,18 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             venv = root / ".venv/bin"
             venv.mkdir(parents=True)
             fake = venv / "hwskill"
-            fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\"\nexit 3\n", encoding="utf-8")
+            fake.write_text(
+                "#!/bin/sh\n"
+                "if [ -n \"${HWSKILL_MINIMAX_AUTH_FILE:-}\" ]; then\n"
+                "  test -r \"$HWSKILL_MINIMAX_AUTH_FILE\"\n"
+                "  jq -e '.\"minimax-cn-coding-plan\".key == \"minimax-test-key\"' \"$HWSKILL_MINIMAX_AUTH_FILE\" >/dev/null\n"
+                "fi\nprintf '%s\\n' \"$*\"\nexit 3\n",
+                encoding="utf-8",
+            )
             fake.chmod(0o755)
             login = root / "opencode-auth.json"
-            login.write_text("{}\n", encoding="utf-8")
+            login.write_text('{"minimax-cn-coding-plan":{"type":"api","key":"minimax-test-key"}}\n', encoding="utf-8")
+            shutil.copy2(ROOT / "scripts/filter_minimax_auth.sh", scripts / "filter_minimax_auth.sh")
             for name, (path, host, extra) in wrappers.items():
                 shutil.copy2(ROOT / "scripts" / name, scripts / name)
                 environment = {
@@ -149,17 +183,70 @@ class MigratedEvalCollectionTest(unittest.TestCase):
                     )
                     self.assertTrue(completed.stdout.rstrip().endswith("--json"))
 
+    def test_collections_pass_locally_with_a_successful_agent_and_bound_profile(self) -> None:
+        from hwskill.profiles import resolve_profiles
+        from hwskill.test_artifacts import ActionResult
+        from hwskill.test_manifest import discover_test_collections
+        from hwskill.test_runner import TestEnvironment, run_collection
+
+        class SuccessfulAgent:
+            def __init__(self) -> None:
+                self.bound_profiles: list[tuple[str, ...]] = []
+
+            def run(self, action, context):
+                self.bound_profiles.append(resolve_profiles(context.workspace, ROOT).profile_ids)
+                if action.action_id == "run-agent" and context.workspace.name:
+                    if "gitcode" in action.prompt:
+                        (context.workspace / "pr-587.patch").write_text("diff --git a/a.py b/a.py\n", encoding="utf-8")
+                        skill_file = ROOT / "skills-src/l2/local/gitcode-pr-review-fetch/SKILL.md"
+                        events = (
+                            _completed({"type": "mcp_tool_call", "tool": "hwskill_search", "status": "completed", "result": {"structured_content": {"results": [{"skill_id": "local/gitcode-pr-review-fetch"}]}}}),
+                            _completed({"type": "mcp_tool_call", "tool": "hwskill_load", "status": "completed", "arguments": {"skill_id": "local/gitcode-pr-review-fetch"}, "result": {"structured_content": {"skill_file": str(skill_file)}}}),
+                            _completed({"type": "command_execution", "exit_code": 0, "command": f"python3 {skill_file.parent / 'scripts/fetch_gitcode_pr_patch.py'} {PR_URL} --output pr-587.patch", "aggregated_output": "patch: state=open api_base=api head=abc123 files=1\n"}),
+                        )
+                        (context.artifact_dir / "events.jsonl").write_text(
+                            "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8",
+                        )
+                    else:
+                        (context.workspace / "order_pricing.py").write_text(
+                            "from decimal import Decimal\n\n\ndef calculate_total(subtotal, discount_threshold, discount_rate):\n"
+                            "    if subtotal >= discount_threshold:\n"
+                            "        return subtotal * (Decimal('1') - discount_rate)\n"
+                            "    return subtotal\n",
+                            encoding="utf-8",
+                        )
+                return ActionResult(action.action_id, "completed", 0, context.artifact_dir)
+
+        collections = {(item.target.kind, item.target.target_id): item for item in discover_test_collections(ROOT)}
+        agent = SuccessfulAgent()
+        with TemporaryDirectory() as directory:
+            environment = TestEnvironment(
+                ROOT, "local", "codex", "fake-model", "high", workspace_root=Path(directory) / "workspaces",
+            )
+            gitcode = run_collection(
+                collections[("skill", "local/gitcode-pr-review-fetch")], environment, Path(directory) / "gitcode", agent_executor=agent,
+            )
+            profile = run_collection(
+                collections[("profile", "codex-demo")], environment, Path(directory) / "profile", agent_executor=agent,
+            )
+
+        self.assertEqual(gitcode.status, "PASS")
+        self.assertEqual(profile.status, "PASS")
+        self.assertTrue(agent.bound_profiles)
+        self.assertTrue(all(item == ("codex-demo",) for item in agent.bound_profiles))
+
     @staticmethod
     def _post_check(script: Path, context: Path, artifacts: Path, workspace: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ("python3", str(script)), text=True, capture_output=True, check=False,
             env={
                 "PATH": os.environ.get("PATH", ""),
-                "PYTHONPATH": str(ROOT / "src"),
                 "HWSKILL_TEST_CONTEXT": str(context),
                 "HWSKILL_TEST_ARTIFACTS": str(artifacts),
                 "HWSKILL_TEST_WORKSPACE": str(workspace),
                 "HWSKILL_TEST_REPO_ROOT": str(ROOT),
+                "HWSKILL_TEST_PYTHON": os.sys.executable,
+                "HWSKILL_TEST_PYTHONPATH": str(ROOT / "src"),
             },
         )
 

@@ -36,7 +36,16 @@ _FIXED_CREDENTIAL_DESTINATIONS = frozenset({
     "/credentials/codex/auth.json",
     "/credentials/claude-code/.credentials.json",
     "/credentials/opencode/auth.json",
+    "/credentials/minimax-auth.json",
 })
+_HOST_CREDENTIAL_DESTINATIONS = {
+    "codex": frozenset({"/credentials/codex/auth.json"}),
+    "claude-code": frozenset({
+        "/credentials/claude-code/.credentials.json",
+        "/credentials/minimax-auth.json",
+    }),
+    "opencode": frozenset({"/credentials/opencode/auth.json"}),
+}
 _DOCKER_CLIENT_ENVIRONMENT_NAMES = (
     "DOCKER_CONFIG",
     "DOCKER_HOST",
@@ -205,7 +214,11 @@ class DockerTestRunner:
         seen_destinations: set[str] = set()
         for credential in request.credential_files:
             source = _regular_file(credential.source, "credential file")
-            if credential.destination not in _FIXED_CREDENTIAL_DESTINATIONS or credential.destination in seen_destinations:
+            if (
+                credential.destination not in _FIXED_CREDENTIAL_DESTINATIONS
+                or credential.destination not in _HOST_CREDENTIAL_DESTINATIONS[self.config.default_host]
+                or credential.destination in seen_destinations
+            ):
                 raise DockerRunnerUnavailable("unsupported credential file destination")
             seen_destinations.add(credential.destination)
             argv.extend(("--mount", _mount(source, credential.destination, readonly=True)))

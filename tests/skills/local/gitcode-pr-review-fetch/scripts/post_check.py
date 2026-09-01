@@ -8,6 +8,10 @@ import os
 from pathlib import Path
 import sys
 
+pythonpath = os.environ.get("HWSKILL_TEST_PYTHONPATH")
+if pythonpath and Path(pythonpath).is_absolute():
+    sys.path.insert(0, pythonpath)
+
 from hwskill.eval_observer import observe_script_resolution
 
 
@@ -30,6 +34,7 @@ def main() -> int:
             SKILL_ID,
             SCRIPT_NAME,
             expected_url=PR_URL,
+            expected_output="pr-587.patch",
         )
         _require_resolution(resolution, patch)
         resolution["patch_path"] = str(patch)

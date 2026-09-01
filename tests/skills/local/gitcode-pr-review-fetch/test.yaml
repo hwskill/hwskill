@@ -8,11 +8,11 @@ cases:
     description: Agent loads the GitCode PR Skill and writes the known PR patch into its isolated workspace.
     prepare:
       type: command
-      command: if [ -d /registry ]; then python3 -m hwskill profile bind codex-demo --project . --repo-root /registry --yes; fi; mkdir -p artifacts
+      command: PYTHONPATH="$HWSKILL_TEST_PYTHONPATH" "$HWSKILL_TEST_PYTHON" -m hwskill profile bind codex-demo --project . --repo-root "$HWSKILL_TEST_REPO_ROOT" --yes; mkdir -p artifacts
     steps:
       - id: run-agent
         type: agent
         prompt: 请先使用 hwskill_search 搜索 local/gitcode-pr-review-fetch，随后仅使用 hwskill_load 加载该技能。获取 https://gitcode.com/openeuler/OmniStream/pull/587 的完整代码 patch，保存为当前工作目录中的 pr-587.patch。最后报告 PR state、head SHA 和变更文件数。
     post_check:
       type: command
-      command: exec python3 "$HWSKILL_TEST_REPO_ROOT/tests/skills/local/gitcode-pr-review-fetch/scripts/post_check.py"
+      command: exec "$HWSKILL_TEST_PYTHON" "$HWSKILL_TEST_REPO_ROOT/tests/skills/local/gitcode-pr-review-fetch/scripts/post_check.py"

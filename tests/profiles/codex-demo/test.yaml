@@ -8,7 +8,7 @@ cases:
     description: The codex-demo Skill set diagnoses and repairs the inclusive discount threshold defect.
     prepare:
       type: command
-      command: if [ -d /registry ]; then python3 -m hwskill profile bind codex-demo --project . --repo-root /registry --yes; fi
+      command: PYTHONPATH="$HWSKILL_TEST_PYTHONPATH" "$HWSKILL_TEST_PYTHON" -m hwskill profile bind codex-demo --project . --repo-root "$HWSKILL_TEST_REPO_ROOT" --yes
     steps:
       - id: run-agent
         type: agent
@@ -18,4 +18,4 @@ cases:
         command: python3 -m unittest discover -s tests -t . -v
     post_check:
       type: command
-      command: exec python3 "$HWSKILL_TEST_REPO_ROOT/tests/profiles/codex-demo/scripts/post_check.py"
+      command: exec "$HWSKILL_TEST_PYTHON" "$HWSKILL_TEST_REPO_ROOT/tests/profiles/codex-demo/scripts/post_check.py"

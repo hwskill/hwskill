@@ -556,6 +556,19 @@ def _credential_material(
         (name, os.environ[name]) for name in request.credential_environment
         if isinstance(os.environ.get(name), str) and os.environ[name]
     )
+    if values:
+        return values, True, tuple(dict.fromkeys(value for _name, value in values))
+    if request.host == "claude-code":
+        token = _minimax_auth_token()
+        if token is not None:
+            return (
+                (
+                    ("ANTHROPIC_AUTH_TOKEN", token),
+                    ("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
+                ),
+                True,
+                (token,),
+            )
     store, runtime = {
         "codex": (Path("/credentials/codex/auth.json"), (("CODEX_HOME", "/credentials/codex"),)),
         "claude-code": (Path("/credentials/claude-code/.credentials.json"), (("CLAUDE_CONFIG_DIR", "/credentials/claude-code"),)),
@@ -563,7 +576,47 @@ def _credential_material(
     }[request.host]
     store_secrets = _credential_file_secrets(store)
     store_available = store_secrets is not None
-    return values + (runtime if store_available else ()), store_available, (() if store_secrets is None else store_secrets)
+    return (runtime if store_available else ()), store_available, (() if store_secrets is None else store_secrets)
+
+
+def _minimax_auth_token(path: Path | None = None) -> str | None:
+    """Read only the one filtered provider token at its fixed Docker mount."""
+    credential_path = Path("/credentials/minimax-auth.json") if path is None else Path(path)
+    descriptor: int | None = None
+    try:
+        initial = credential_path.lstat()
+        if stat.S_ISLNK(initial.st_mode):
+            return None
+        descriptor = os.open(credential_path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
+            return None
+        raw = os.read(descriptor, 64 * 1024 + 1)
+        if len(raw) > 64 * 1024 or os.read(descriptor, 1):
+            return None
+        current = credential_path.lstat()
+        if (current.st_dev, current.st_ino, stat.S_IFMT(current.st_mode), current.st_size) != (
+            metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode), metadata.st_size,
+        ):
+            return None
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
+        provider = value.get("minimax-cn-coding-plan") if isinstance(value, dict) else None
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"minimax-cn-coding-plan"}
+            or not isinstance(provider, dict)
+            or set(provider) != {"type", "key"}
+            or provider.get("type") != "api"
+            or not isinstance(provider.get("key"), str)
+            or not provider["key"]
+        ):
+            return None
+        return provider["key"]
+    except (OSError, UnicodeError, json.JSONDecodeError, WorkerRequestError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _credential_file_secrets(path: Path) -> tuple[str, ...] | None:

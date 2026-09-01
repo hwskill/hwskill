@@ -121,6 +121,56 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             self.assertNotIn("secret file", joined)
             self.assertNotIn("--privileged", argv)
 
+    def test_claude_minimax_adapter_uses_only_its_fixed_credential_destination(self) -> None:
+        from hwskill.docker_test_runner import CredentialFile, DockerTestRunner, DockerTestRequest, ImageInfo
+        from hwskill.test_configuration import HostModel, TestConfiguration
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repo"
+            for path in (repository / "tests", root / "artifacts", root / "workspace"):
+                path.mkdir(parents=True)
+            request_path = root / "request.json"
+            request_path.write_text("{}", encoding="utf-8")
+            credential = root / "minimax.json"
+            credential.write_text('{"minimax-cn-coding-plan":{"type":"api","key":"secret"}}', encoding="utf-8")
+            runner = DockerTestRunner(
+                repository, TestConfiguration("docker", "claude-code", {"claude-code": HostModel("model", "high")}),
+                image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "d" * 64), uid=123, gid=456,
+            )
+            argv = runner.build_run_command(DockerTestRequest(
+                request_path, root / "artifacts", root / "workspace", "agent", (),
+                (CredentialFile(credential, "/credentials/minimax-auth.json"),),
+            ))
+
+        self.assertIn("dst=/credentials/minimax-auth.json,readonly", " ".join(argv))
+
+    def test_minimax_credential_destination_is_rejected_for_non_claude_hosts(self) -> None:
+        """The special adapter mount cannot be repurposed by another host request."""
+        from hwskill.docker_test_runner import CredentialFile, DockerRunnerUnavailable, DockerTestRunner, DockerTestRequest, ImageInfo
+        from hwskill.test_configuration import HostModel, TestConfiguration
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repo"
+            for path in (repository / "tests", root / "artifacts", root / "workspace"):
+                path.mkdir(parents=True)
+            request_path = root / "request.json"
+            request_path.write_text("{}", encoding="utf-8")
+            credential = root / "minimax.json"
+            credential.write_text('{"minimax-cn-coding-plan":{"type":"api","key":"secret"}}', encoding="utf-8")
+            runner = DockerTestRunner(
+                repository, TestConfiguration("docker", "opencode", {"opencode": HostModel("model", "high")}),
+                image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "e" * 64), uid=123, gid=456,
+            )
+            request = DockerTestRequest(
+                request_path, root / "artifacts", root / "workspace", "agent", (),
+                (CredentialFile(credential, "/credentials/minimax-auth.json"),),
+            )
+
+            with self.assertRaisesRegex(DockerRunnerUnavailable, "unsupported credential"):
+                runner.build_run_command(request)
+
     def test_preflight_uses_same_digest_without_credentials_or_business_mounts(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
         from hwskill.test_configuration import HostModel, TestConfiguration
@@ -1137,6 +1187,41 @@ cases:
         self.assertEqual(environment, (("CLAUDE_CONFIG_DIR", "/credentials/claude-code"),))
         self.assertTrue(available)
         self.assertEqual(secrets, ("secret",))
+
+    def test_claude_worker_adapts_filtered_minimax_credentials_without_exposing_the_file(self) -> None:
+        from hwskill.test_worker import WorkerRequest, _credential_material
+
+        request = WorkerRequest((), "claude-code", "2.1.141", "model", "high", 30, ())
+        with patch("hwskill.test_worker._minimax_auth_token", return_value="minimax-secret") as adapter:
+            environment, available, secrets = _credential_material(request)
+
+        adapter.assert_called_once()
+        self.assertEqual(environment, (
+            ("ANTHROPIC_AUTH_TOKEN", "minimax-secret"),
+            ("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
+        ))
+        self.assertTrue(available)
+        self.assertEqual(secrets, ("minimax-secret",))
+
+    def test_minimax_worker_adapter_requires_the_filtered_file_schema_and_mode(self) -> None:
+        """The container-side adapter refuses a bypassed wrapper file before any Agent can read it."""
+        from hwskill.test_worker import _minimax_auth_token
+
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "minimax-auth.json"
+            source.write_text(
+                '{"minimax-cn-coding-plan":{"type":"api","key":"minimax-secret"},'
+                '"other":{"type":"api","key":"must-not-mount"}}', encoding="utf-8",
+            )
+            source.chmod(0o600)
+            self.assertIsNone(_minimax_auth_token(source))
+
+            source.write_text(
+                '{"minimax-cn-coding-plan":{"type":"api","key":"minimax-secret"}}', encoding="utf-8",
+            )
+            self.assertEqual(_minimax_auth_token(source), "minimax-secret")
+            source.chmod(0o644)
+            self.assertIsNone(_minimax_auth_token(source))
 
     def test_credential_store_short_raw_values_are_still_export_guarded(self) -> None:
         from hwskill.test_worker import _credential_file_secrets

@@ -576,9 +576,11 @@ HWSKILL_TEST_CONTEXT=<absolute-path>/context.json
 HWSKILL_TEST_ARTIFACTS=<absolute-path>/artifacts/<case-id>
 HWSKILL_TEST_WORKSPACE=<absolute-path>/workspace
 HWSKILL_TEST_REPO_ROOT=<absolute-path>/repository
+HWSKILL_TEST_PYTHON=<runner-python-absolute-path>
+HWSKILL_TEST_PYTHONPATH=<repository>/src
 ```
 
-Command post-check 可读取 Agent `events.jsonl`，检查工具顺序、参数、运行时路径、文件范围和业务结果。退出码 `0` 为 PASS、`1` 为 FAIL，其他退出码为 BLOCKED。
+Command post-check 可读取 Agent `events.jsonl`，检查工具顺序、参数、运行时路径、文件范围和业务结果。`HWSKILL_TEST_PYTHON*` 是 runner 提供的受控 import contract，使本地 source-tree 执行不依赖调用者偶然继承的 `PYTHONPATH`。退出码 `0` 为 PASS、`1` 为 FAIL，其他退出码为 BLOCKED。
 
 Agent post-check 获得只读 context 与 artifacts，最终必须返回符合 schema 的 JSON：
 

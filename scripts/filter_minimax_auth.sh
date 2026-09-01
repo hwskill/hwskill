@@ -25,5 +25,5 @@ if ! jq -e '
   exit 2
 fi
 
-jq '{"minimax-cn-coding-plan": ."minimax-cn-coding-plan"}' "$input" >"$output"
+jq '{"minimax-cn-coding-plan": {"type": ."minimax-cn-coding-plan".type, "key": ."minimax-cn-coding-plan".key}}' "$input" >"$output"
 chmod 600 "$output"

@@ -111,9 +111,24 @@ class TestLocalCaseRunner(unittest.TestCase):
         command = (
             'python3 -c "import os,pathlib; '
             'assert all(pathlib.Path(os.environ[name]).is_absolute() for name in '
-            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE','HWSKILL_TEST_REPO_ROOT'])\""
+            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE','HWSKILL_TEST_REPO_ROOT','HWSKILL_TEST_PYTHON','HWSKILL_TEST_PYTHONPATH'])\""
         )
         result = run_case(self.case(post_check=CommandAction("post-check", command)), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+
+    def test_every_command_action_receives_runner_owned_repository_and_python_paths(self) -> None:
+        from hwskill.test_runner import run_case
+
+        command = (
+            'python3 -c "import os,pathlib; '
+            "assert all(pathlib.Path(os.environ[name]).is_absolute() for name in "
+            "['HWSKILL_TEST_REPO_ROOT','HWSKILL_TEST_PYTHON','HWSKILL_TEST_PYTHONPATH'])\""
+        )
+        result = run_case(
+            self.case(steps=[CommandAction("step", command)], post_check=CommandAction("post-check", "true")),
+            self.environment(), self.artifacts,
+        )
 
         self.assertEqual(result.status, "PASS")
 

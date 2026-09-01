@@ -691,6 +691,91 @@ class TestCliTest(unittest.TestCase):
 
         self.assertEqual(material.source, "host-store")
 
+    def test_filtered_minimax_credential_file_is_accepted_only_for_compatible_docker_hosts(self) -> None:
+        from hwskill.test_cli import _environment_credential_material
+
+        source = Path(self.temporary.name) / "minimax.json"
+        source.write_text(json.dumps({
+            "minimax-cn-coding-plan": {"type": "api", "key": "minimax-sentinel"},
+        }), encoding="utf-8")
+        source.chmod(0o600)
+        environment = {"HWSKILL_MINIMAX_AUTH_FILE": str(source)}
+
+        home = Path(self.temporary.name) / "empty-home"
+        claude = _environment_credential_material("claude-code", environment, home=home)
+        opencode = _environment_credential_material("opencode", environment, home=home)
+
+        self.assertEqual(claude.source, "minimax-store")
+        self.assertEqual(claude.credential_files[0].source, source)
+        self.assertEqual(claude.credential_files[0].destination, "/credentials/minimax-auth.json")
+        self.assertEqual(opencode.credential_files[0].destination, "/credentials/opencode/auth.json")
+        self.assertFalse(_environment_credential_material("codex", environment, home=home).credential_files)
+
+        alias = Path(self.temporary.name) / "minimax-alias.json"
+        alias.symlink_to(source)
+        with self.assertRaisesRegex(Exception, "non-symlink"):
+            _environment_credential_material("claude-code", {"HWSKILL_MINIMAX_AUTH_FILE": str(alias)}, home=home)
+
+    def test_filtered_minimax_credential_rejects_unfiltered_extra_provider_data(self) -> None:
+        """A wrapper adapter must not mount unrelated credentials into the Agent container."""
+        from hwskill.test_cli import _environment_credential_material
+
+        source = Path(self.temporary.name) / "not-filtered.json"
+        source.write_text(json.dumps({
+            "minimax-cn-coding-plan": {"type": "api", "key": "minimax-sentinel"},
+            "unrelated-provider": {"type": "api", "key": "must-not-mount"},
+        }), encoding="utf-8")
+        source.chmod(0o600)
+
+        with self.assertRaisesRegex(Exception, "malformed"):
+            _environment_credential_material(
+                "claude-code", {"HWSKILL_MINIMAX_AUTH_FILE": str(source)}, home=self.repo,
+            )
+
+    def test_nondefault_minimax_path_is_wired_into_the_docker_runner_without_secret_output(self) -> None:
+        """The legacy wrapper marker becomes an approved fixed-destination Docker credential mount."""
+        from hwskill import test_cli
+
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        source = Path(self.temporary.name) / "non-default-minimax.json"
+        sentinel = "minimax-sentinel"
+        source.write_text(json.dumps({
+            "minimax-cn-coding-plan": {"type": "api", "key": sentinel},
+        }), encoding="utf-8")
+        source.chmod(0o600)
+        docker_config = TestConfiguration(
+            runner="docker", default_host="claude-code",
+            hosts={"claude-code": HostModel("test-model", "minimal")},
+        )
+        captured: list[object] = []
+
+        class Runner:
+            def __init__(self, _root, _configuration, *, credential_files=()):
+                captured.extend(credential_files)
+
+            def run(self, _collections, environment, artifact_root):
+                return test_cli.TestRunResult(
+                    "PASS", artifact_root, (), environment.runner, environment.host,
+                    environment.model, "2.1.141",
+                )
+
+        args = Namespace(
+            test_target=manifest.relative_to(self.repo).as_posix(), test_id=None,
+            runner="docker", host="claude-code", base=None, check=False, json=True,
+            model=None, reasoning=None,
+        )
+        stdout = StringIO()
+        with patch.dict(os.environ, {"HWSKILL_MINIMAX_AUTH_FILE": str(source)}, clear=True), patch(
+            "hwskill.test_cli.load_test_configuration", return_value=docker_config,
+        ), patch("hwskill.test_cli.DockerTestRunner", Runner):
+            code = test_cli.run_test_command(args, self.repo, stdout, StringIO())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0].source, source)
+        self.assertEqual(captured[0].destination, "/credentials/minimax-auth.json")
+        self.assertNotIn(sentinel, stdout.getvalue())
+
     def test_local_agent_uses_only_selected_environment_credentials_and_redacts_all_artifacts(self) -> None:
         from hwskill import test_cli
 

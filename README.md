@@ -281,7 +281,5 @@ observer 事后要求公开事件满足 Search→Load→运行时绝对脚本路
 | FastMCP 接口与测试            | 已运行 | 使用本机 uv 缓存的 MCP 1.28.1                                                         |
 | pip 可编辑安装                | 已运行 | Docker 全新 Python 3.11 环境成功构建 wheel 并安装                                     |
 | Docker smoke                  | 已运行 | 容器执行阶段 `--network none`，离线烟测通过                                           |
-| Codex Live Eval               | 已运行 | Codex 0.147.0 经 Hook/MCP 完成 Search、Load、修复和 3/3 测试，审计事件齐全            |
-| GitCode PR Agent Eval         | 已运行 | Agent 直接使用 Load 返回路径执行脚本，无目录搜索；PR #587 patch 获取成功              |
-| Claude Code GitCode PR Eval   | 已运行 | Claude Code 2.1.141 + MiniMax-M3 完成 Search、Load 和一次直接脚本执行；2 个 diff 文件 |
-| OpenCode GitCode PR Eval      | 已运行 | OpenCode 1.14.48 + MiniMax-M2.5 完成 Search、Load 和一次直接脚本执行；2 个 diff 文件  |
+| 旧版 Codex/GitCode Live Eval  | 历史结果 | 迁移前 2026-08-27/28 的独立脚本记录；不能验证当前 collection runner                 |
+| 当前 Agent collection         | BLOCKED | 本次 `test setup --check` 的模型最小可用性探测未通过；未运行真实 Agent 用例            |

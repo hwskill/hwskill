@@ -10,6 +10,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 from typing import Literal, Protocol
 
@@ -163,6 +164,9 @@ def run_case(
 
         pre_post_context = CaseContext(case.case_id, workspace, case_dir, environment, tuple(actions))
         pre_post_context.write(case_dir / "context.json")
+        # Deterministic post-checks need a snapshot of Agent and command effects;
+        # the final write below refreshes it after the post-check itself completes.
+        _write_workspace_diff(case_dir / "workspace.diff", baseline, workspace, environment.secret_values)
         post_result = _execute(
             _with_case_workdir(case.post_check, case.workdir),
             workspace,
@@ -281,6 +285,8 @@ def _run_post_check(action: CommandAction, context: ActionContext, context_path:
         "HWSKILL_TEST_ARTIFACTS": str(case_dir.absolute()),
         "HWSKILL_TEST_WORKSPACE": str(context.workspace.absolute()),
         "HWSKILL_TEST_REPO_ROOT": str(context.environment.repo_root.absolute()),
+        "HWSKILL_TEST_PYTHON": str(Path(sys.executable).absolute()),
+        "HWSKILL_TEST_PYTHONPATH": str((context.environment.repo_root / "src").absolute()),
     }
     return _run_command(action, context, additions)
 
@@ -402,7 +408,14 @@ def _command_environment(
     workspace: Path,
     extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    result = {"PATH": environment.command_path or os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace.absolute())}
+    result = {
+        "PATH": environment.command_path or os.defpath,
+        "LANG": "C.UTF-8",
+        "HOME": str(workspace.absolute()),
+        "HWSKILL_TEST_REPO_ROOT": str(environment.repo_root.absolute()),
+        "HWSKILL_TEST_PYTHON": str(Path(sys.executable).absolute()),
+        "HWSKILL_TEST_PYTHONPATH": str((environment.repo_root / "src").absolute()),
+    }
     declared = (
         environment.environment_variables
         if environment.command_environment_variables is None
