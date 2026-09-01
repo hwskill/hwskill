@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 
 class GitSourceClientTest(unittest.TestCase):
@@ -85,6 +87,18 @@ class GitSourceClientTest(unittest.TestCase):
         self.assertEqual(resolved.kind, "tag")
         self.assertEqual(resolved.commit, self.tag_commit)
 
+    def test_resolve_annotated_blob_tag_rejects_non_commit_target(self) -> None:
+        from hwskill.git_source import GitSourceClient, GitSourceError
+
+        blob_file = self.work / "tagged-blob"
+        blob_file.write_text("not a commit\n", encoding="utf-8")
+        blob = self._git_output("hash-object", "-w", blob_file.name, cwd=self.work)
+        self._git("tag", "-a", "blob-tag", blob, "-m", "a blob tag", cwd=self.work)
+        self._git("push", "origin", "refs/tags/blob-tag", cwd=self.work)
+
+        with self.assertRaisesRegex(GitSourceError, "commit"):
+            GitSourceClient().resolve(str(self.remote), "refs/tags/blob-tag")
+
     def test_resolve_full_commit_sha_verifies_the_exact_commit(self) -> None:
         from hwskill.git_source import GitSourceClient
 
@@ -102,6 +116,18 @@ class GitSourceClientTest(unittest.TestCase):
             client.resolve(str(self.remote), "refs/heads/missing")
         with self.assertRaisesRegex(GitSourceError, "fully qualified"):
             client.resolve(str(self.remote), "main")
+
+    def test_resolve_exact_tag_without_a_default_branch(self) -> None:
+        from hwskill.git_source import GitSourceClient
+
+        tag_only_remote = self.root / "tag-only.git"
+        self._git("init", "--bare", "--initial-branch=main", str(tag_only_remote))
+        self._git("push", str(tag_only_remote), "refs/tags/v1", cwd=self.work)
+
+        resolved = GitSourceClient().resolve(str(tag_only_remote), "refs/tags/v1")
+
+        self.assertEqual(resolved.kind, "tag")
+        self.assertEqual(resolved.commit, self.tag_commit)
 
     def test_fixed_tag_move_is_reported(self) -> None:
         from hwskill.git_source import GitSourceError, verify_existing_tag
@@ -143,6 +169,32 @@ class GitSourceClientTest(unittest.TestCase):
         with self.assertRaisesRegex(GitSourceError, "empty directory"):
             GitSourceClient().materialize(str(self.remote), "refs/heads/main", destination)
         self.assertEqual(destination.joinpath("keep").read_text(encoding="utf-8"), "do not overwrite")
+
+    def test_materialize_ignores_an_inherited_git_dir(self) -> None:
+        from hwskill.git_source import GitSourceClient
+
+        unrelated = self.root / "unrelated"
+        self._git("init", "--initial-branch=main", str(unrelated))
+        self._git("config", "user.name", "Test User", cwd=unrelated)
+        self._git("config", "user.email", "test@example.invalid", cwd=unrelated)
+        unrelated.joinpath("keep").write_text("unrelated\n", encoding="utf-8")
+        self._git("add", ".", cwd=unrelated)
+        self._git("commit", "-m", "unrelated", cwd=unrelated)
+        unrelated_head = self._git_output("rev-parse", "HEAD", cwd=unrelated)
+        destination = self.root / "isolated-checkout"
+        destination.mkdir()
+
+        with patch.dict(os.environ, {"GIT_DIR": str(unrelated / ".git")}, clear=False):
+            resolved = GitSourceClient().materialize(
+                str(self.remote), "refs/heads/main", destination
+            )
+
+        self.assertEqual(self._git_output("rev-parse", "HEAD", cwd=unrelated), unrelated_head)
+        self.assertTrue(destination.joinpath(".git").is_dir())
+        self.assertEqual(
+            self._git_output("rev-parse", "HEAD^{commit}", cwd=destination),
+            resolved.commit,
+        )
 
 
 class DiscoverSkillsTest(unittest.TestCase):

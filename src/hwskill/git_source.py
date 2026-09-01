@@ -46,28 +46,7 @@ class GitSourceClient:
         self._runner = runner
 
     def list_remote(self, repository: str) -> RemoteRefs:
-        completed = self._run(
-            ["ls-remote", "--symref", repository, "HEAD", "refs/heads/*", "refs/tags/*"]
-        )
-        default_branch: str | None = None
-        refs: dict[str, str] = {}
-        peeled: dict[str, str] = {}
-
-        for line in completed.stdout.splitlines():
-            if line.startswith("ref: "):
-                target, separator, name = line[5:].partition("\t")
-                if separator and name == "HEAD" and target.startswith("refs/heads/"):
-                    default_branch = target
-                continue
-            commit, separator, ref = line.partition("\t")
-            if not separator or not _COMMIT_RE.fullmatch(commit):
-                continue
-            if ref.endswith("^{}") and ref.startswith("refs/tags/"):
-                peeled[ref[:-3]] = commit
-            elif ref.startswith(("refs/heads/", "refs/tags/")):
-                refs[ref] = commit
-
-        refs.update(peeled)
+        default_branch, refs = self._read_remote_refs(repository)
         if default_branch is None:
             raise GitSourceError("remote did not advertise a default branch")
         if default_branch not in refs:
@@ -80,11 +59,14 @@ class GitSourceClient:
             actual = self._verify_commit_track(repository, track)
             return ResolvedTrack(track=track, kind=kind, commit=actual)
 
-        refs = self.list_remote(repository)
-        commit = refs.refs.get(track)
-        if commit is None:
+        _, refs = self._read_remote_refs(repository)
+        if track not in refs:
             raise GitSourceError(f"remote ref not found: {track}")
-        return ResolvedTrack(track=track, kind=kind, commit=commit)
+        return ResolvedTrack(
+            track=track,
+            kind=kind,
+            commit=self._verify_commit_track(repository, track),
+        )
 
     def materialize(self, repository: str, track: str, destination: Path) -> ResolvedTrack:
         _validate_empty_destination(destination)
@@ -98,16 +80,23 @@ class GitSourceClient:
 
     def _verify_commit_track(self, repository: str, track: str) -> str:
         with TemporaryDirectory(prefix="hwskill-git-source-") as temporary:
-            actual = self._fetch_and_checkout(repository, track, Path(temporary))
-        if actual != track:
+            destination = Path(temporary)
+            self._initialize_and_fetch(repository, track, destination)
+            try:
+                completed = self._run(["rev-parse", "FETCH_HEAD^{commit}"], cwd=destination)
+            except GitSourceError as error:
+                raise GitSourceError(f"track does not resolve to a commit: {track}") from error
+            actual = completed.stdout.strip()
+        if not _COMMIT_RE.fullmatch(actual):
+            raise GitSourceError(f"track did not resolve to a full commit SHA: {actual!r}")
+        if _COMMIT_RE.fullmatch(track) and actual != track:
             raise GitSourceError(
                 f"commit track did not resolve to the requested commit: expected {track}, got {actual}"
             )
         return actual
 
     def _fetch_and_checkout(self, repository: str, track: str, destination: Path) -> str:
-        self._run(["init", "--quiet"], cwd=destination)
-        self._run(["fetch", "--quiet", "--depth=1", repository, track], cwd=destination)
+        self._initialize_and_fetch(repository, track, destination)
         self._run(["checkout", "--quiet", "--detach", "FETCH_HEAD"], cwd=destination)
         completed = self._run(["rev-parse", "HEAD^{commit}"], cwd=destination)
         commit = completed.stdout.strip()
@@ -115,8 +104,46 @@ class GitSourceClient:
             raise GitSourceError(f"checkout did not resolve to a full commit SHA: {commit!r}")
         return commit
 
+    def _initialize_and_fetch(self, repository: str, track: str, destination: Path) -> None:
+        self._run(["init", "--quiet"], cwd=destination)
+        self._run(["fetch", "--quiet", "--depth=1", repository, track], cwd=destination)
+
+    def _read_remote_refs(self, repository: str) -> tuple[str | None, Mapping[str, str]]:
+        completed = self._run(
+            ["ls-remote", "--symref", repository, "HEAD", "refs/heads/*", "refs/tags/*"]
+        )
+        default_branch: str | None = None
+        refs: dict[str, str] = {}
+        peeled: dict[str, str] = {}
+
+        for line in completed.stdout.splitlines():
+            if line.startswith("ref: "):
+                target, separator, name = line[5:].partition("\t")
+                if separator and name == "HEAD" and target.startswith("refs/heads/"):
+                    default_branch = target
+                continue
+            object_id, separator, ref = line.partition("\t")
+            if not separator or not _COMMIT_RE.fullmatch(object_id):
+                continue
+            if ref.endswith("^{}") and ref.startswith("refs/tags/"):
+                peeled[ref[:-3]] = object_id
+            elif ref.startswith(("refs/heads/", "refs/tags/")):
+                refs[ref] = object_id
+
+        refs.update(peeled)
+        return default_branch, MappingProxyType(dict(refs))
+
     def _run(self, args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
+        for name in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ):
+            environment.pop(name, None)
         environment.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"})
         with TemporaryDirectory(prefix="hwskill-git-hooks-") as hooks_path:
             command = [
