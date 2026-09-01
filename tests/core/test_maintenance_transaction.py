@@ -4,6 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import os
 import shutil
+import subprocess
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +20,7 @@ from hwskill.maintenance_transaction import (
 )
 from hwskill.pending_verification import (
     VerificationResult,
+    clear_pending_verification,
     load_pending_verification,
     prepare_pending_verification,
     verification_identity,
@@ -49,6 +52,9 @@ class RepositoryTransactionTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return path
+
+    def _init_git(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
 
     def test_candidate_contains_only_managed_roots(self) -> None:
         self._write("notes/unmanaged.txt", "keep out\n")
@@ -234,9 +240,7 @@ class RepositoryTransactionTest(unittest.TestCase):
                     )
 
     def test_skip_tests_publishes_pending_state_only_after_candidate_apply(self) -> None:
-        import subprocess
-
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self._init_git()
         tx = RepositoryTransaction(self.repo)
         tx.write_text(Path("sources/a.yaml"), "candidate source\n")
         selection = TestSelection(skill_ids=("local/example",), changed_paths=("sources/a.yaml",))
@@ -251,6 +255,143 @@ class RepositoryTransactionTest(unittest.TestCase):
         pending = load_pending_verification(self.repo)
         self.assertIsNotNone(pending)
         self.assertEqual(pending.identity, verification_identity(selection, plan.candidate_digests))
+
+    def test_normal_plan_waits_for_clear_inventory_check_before_repository_mutation(self) -> None:
+        """A verified apply cannot slip between clear's inventory check and unlink."""
+        self._init_git()
+        digest_a = "sha256:" + "a" * 64
+        digest_b = "sha256:" + "b" * 64
+        self._write(
+            "registry/catalog.json",
+            '{"skills":[{"id":"team/review","path":"skills-src/l1/team/review","content_digest":"' + digest_a + '"}]}',
+        )
+        self._write("profiles/example.yaml", "id: example\nskills: []\n")
+        pending_selection = TestSelection(skill_ids=("team/review",))
+        write_pending_verification(self.repo, pending_selection, {"team/review": digest_a})
+        evidence = VerificationResult(
+            pending_selection, {"team/review": digest_a}, (("skill:team/review", "PASS"),),
+        )
+
+        clear_at_unlink = threading.Event()
+        permit_clear = threading.Event()
+        mutation_started = threading.Event()
+        clear_result: list[bool] = []
+        apply_errors: list[BaseException] = []
+
+        def pause_clear() -> None:
+            clear_at_unlink.set()
+            if not permit_clear.wait(timeout=3):
+                raise RuntimeError("test did not release clear")
+
+        tx = RepositoryTransaction(
+            self.repo,
+            before_operation=lambda _index, _operation: mutation_started.set(),
+        )
+        tx.write_text(
+            Path("registry/catalog.json"),
+            '{"skills":[{"id":"team/review","path":"skills-src/l1/team/review","content_digest":"' + digest_b + '"}]}',
+        )
+        selection = TestSelection(core=True)
+        verified = VerificationResult(selection, {}, (("core", "PASS"),))
+        plan = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={},
+            verify_affected=lambda _: verified,
+        )
+
+        with patch("hwskill.pending_verification._before_clear_unlink", side_effect=pause_clear):
+            clearer = threading.Thread(
+                target=lambda: clear_result.append(clear_pending_verification(self.repo, evidence)),
+            )
+            clearer.start()
+            self.assertTrue(clear_at_unlink.wait(timeout=3))
+
+            def apply_verified_plan() -> None:
+                try:
+                    plan.apply()
+                except BaseException as exc:
+                    apply_errors.append(exc)
+
+            applier = threading.Thread(target=apply_verified_plan)
+            applier.start()
+            self.assertFalse(mutation_started.wait(timeout=0.3))
+            permit_clear.set()
+            clearer.join(timeout=3)
+            applier.join(timeout=3)
+
+        self.assertFalse(clearer.is_alive())
+        self.assertFalse(applier.is_alive())
+        self.assertEqual(apply_errors, [])
+        self.assertEqual(clear_result, [True])
+        self.assertEqual(
+            (self.repo / "registry/catalog.json").read_text(encoding="utf-8"),
+            '{"skills":[{"id":"team/review","path":"skills-src/l1/team/review","content_digest":"' + digest_b + '"}]}'
+        )
+        self.assertIsNone(load_pending_verification(self.repo))
+
+    def test_plan_releases_repository_lock_after_transaction_failure(self) -> None:
+        self._init_git()
+        selection = TestSelection(core=True)
+        evidence = VerificationResult(selection, {}, (("core", "PASS"),))
+        tx = RepositoryTransaction(
+            self.repo,
+            before_operation=lambda _index, _operation: (_ for _ in ()).throw(OSError("injected failure")),
+        )
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        plan = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={},
+            verify_affected=lambda _: evidence,
+        )
+
+        original_acquire = pending.acquire_repository_mutation_guard
+        captured_guards: list[pending.RepositoryMutationGuard] = []
+
+        def capture_guard(repo_root: Path) -> pending.RepositoryMutationGuard:
+            guard = original_acquire(repo_root)
+            captured_guards.append(guard)
+            return guard
+
+        with patch("hwskill.pending_verification.acquire_repository_mutation_guard", side_effect=capture_guard):
+            with self.assertRaisesRegex(OSError, "injected failure"):
+                plan.apply()
+
+        self.assertEqual(len(captured_guards), 1)
+        released = captured_guards[0]
+        self.assertTrue(released.closed)
+        self.assertIsNotNone(released.directory_fd)
+        self.assertIsNotNone(released.lock_fd)
+        with self.assertRaises(OSError):
+            os.fstat(released.directory_fd)
+        with self.assertRaises(OSError):
+            os.fstat(released.lock_fd)
+
+        pending_selection = TestSelection(skill_ids=("local/example",))
+        path = write_pending_verification(
+            self.repo, pending_selection, {"local/example": "sha256:" + "a" * 64},
+        )
+        self.assertTrue(path.exists())
+
+    def test_skip_plan_releases_repository_lock_after_finalizer_failure(self) -> None:
+        self._init_git()
+        selection = TestSelection(skill_ids=("local/example",))
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        plan = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection,
+            candidate_digests={"local/example": "sha256:" + "a" * 64},
+        )
+
+        with patch("hwskill.pending_verification.os.replace", side_effect=OSError("publish failure")):
+            with self.assertRaisesRegex(pending.PendingVerificationError, "cannot publish"):
+                plan.apply(skip_tests=True)
+
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+        path = write_pending_verification(
+            self.repo, selection, {"local/example": "sha256:" + "b" * 64},
+        )
+        self.assertTrue(path.exists())
 
     def test_finalize_failure_rolls_back_applied_candidate(self) -> None:
         tx = RepositoryTransaction(self.repo)

@@ -35,14 +35,46 @@ class VerificationResult:
 
 
 @dataclass
+class RepositoryMutationGuard:
+    """The gitdir-local lock shared by pending state and repository applies."""
+
+    directory_path: Path | None
+    directory_fd: int | None
+    lock_fd: int | None
+    closed: bool = False
+
+    def require_pending_directory(self) -> tuple[Path, int]:
+        if self.closed or self.directory_path is None or self.directory_fd is None:
+            raise PendingVerificationError("pending verification state requires a Git repository")
+        return self.directory_path, self.directory_fd
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if self.directory_fd is not None and self.lock_fd is not None:
+            _close_pending_state(self.directory_fd, self.lock_fd)
+
+
+@dataclass
 class PreparedPendingVerification:
     path: Path
-    directory_fd: int
-    lock_fd: int
+    guard: RepositoryMutationGuard
     temporary_name: str
     previous: bytes | None
+    owns_guard: bool = True
     published: bool = False
     closed: bool = False
+
+    @property
+    def directory_fd(self) -> int:
+        return self.guard.require_pending_directory()[1]
+
+    @property
+    def lock_fd(self) -> int:
+        if self.guard.lock_fd is None:
+            raise PendingVerificationError("pending verification state requires a Git repository")
+        return self.guard.lock_fd
 
     def publish(self) -> None:
         self._require_open()
@@ -74,7 +106,8 @@ class PreparedPendingVerification:
     def _close(self) -> None:
         if not self.closed:
             self.closed = True
-            _close_pending_state(self.directory_fd, self.lock_fd)
+            if self.owns_guard:
+                self.guard.close()
 
 
 _PENDING_NAME = "pending-verification.json"
@@ -100,18 +133,27 @@ def verification_identity(selection: TestSelection, digests: Mapping[str, str]) 
     return _verification_identity(selection, digests)
 
 
-def prepare_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> PreparedPendingVerification:
-    data = _pending_data(selection, digests)
-    directory_fd, directory_path = _open_pending_directory(repo_root, create=True)
+def acquire_repository_mutation_guard(repo_root: Path) -> RepositoryMutationGuard:
+    """Acquire the one gitdir-local mutation lock, or a no-op non-Git guard.
+
+    A real Git repository always uses the descriptor-anchored pending directory
+    lock. A repository without a ``.git`` entry cannot contain gitdir-local
+    pending state and is retained as a supported transaction-test boundary.
+    """
+    try:
+        return _acquire_repository_guard(repo_root, create=True)
+    except PendingVerificationError:
+        if not (Path(repo_root) / ".git").exists():
+            return RepositoryMutationGuard(None, None, None)
+        raise
+
+
+def _acquire_repository_guard(repo_root: Path, *, create: bool) -> RepositoryMutationGuard:
+    directory_fd, directory_path = _open_pending_directory(repo_root, create=create)
     lock_fd: int | None = None
     try:
         lock_fd = _acquire_pending_lock(directory_fd)
-        previous = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
-        encoded = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-        return PreparedPendingVerification(
-            directory_path / _PENDING_NAME, directory_fd, lock_fd,
-            _write_temporary_at(directory_fd, encoded), previous,
-        )
+        return RepositoryMutationGuard(directory_path, directory_fd, lock_fd)
     except BaseException:
         if lock_fd is None:
             os.close(directory_fd)
@@ -120,23 +162,44 @@ def prepare_pending_verification(repo_root: Path, selection: TestSelection, dige
         raise
 
 
+def prepare_pending_verification(
+    repo_root: Path,
+    selection: TestSelection,
+    digests: Mapping[str, str],
+    *,
+    guard: RepositoryMutationGuard | None = None,
+) -> PreparedPendingVerification:
+    data = _pending_data(selection, digests)
+    owns_guard = guard is None
+    if guard is None:
+        guard = acquire_repository_mutation_guard(repo_root)
+    try:
+        directory_path, directory_fd = guard.require_pending_directory()
+        previous = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
+        encoded = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        return PreparedPendingVerification(
+            directory_path / _PENDING_NAME, guard,
+            _write_temporary_at(directory_fd, encoded), previous, owns_guard,
+        )
+    except BaseException:
+        if owns_guard:
+            guard.close()
+        raise
+
+
 def load_pending_verification(repo_root: Path) -> PendingVerification | None:
     try:
-        directory_fd, _ = _open_pending_directory(repo_root, create=False)
+        guard = _acquire_repository_guard(repo_root, create=False)
     except PendingVerificationError:
         return None
-    lock_fd: int | None = None
     try:
-        lock_fd = _acquire_pending_lock(directory_fd)
+        _, directory_fd = guard.require_pending_directory()
         raw = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
         return None if raw is None else _parse_pending(raw)
     except (PendingVerificationError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         return None
     finally:
-        if lock_fd is None:
-            os.close(directory_fd)
-        else:
-            _close_pending_state(directory_fd, lock_fd)
+        guard.close()
 
 
 def clear_pending_verification(repo_root: Path, passed: VerificationResult) -> bool:
@@ -145,12 +208,11 @@ def clear_pending_verification(repo_root: Path, passed: VerificationResult) -> b
     except PendingVerificationError:
         return False
     try:
-        directory_fd, _ = _open_pending_directory(repo_root, create=False)
+        guard = _acquire_repository_guard(repo_root, create=False)
     except PendingVerificationError:
         return False
-    lock_fd: int | None = None
     try:
-        lock_fd = _acquire_pending_lock(directory_fd)
+        _, directory_fd = guard.require_pending_directory()
         raw = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
         record = None if raw is None else _parse_pending(raw)
         if record is None or record.identity != expected_identity:
@@ -173,10 +235,7 @@ def clear_pending_verification(repo_root: Path, passed: VerificationResult) -> b
     except (PendingVerificationError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         return False
     finally:
-        if lock_fd is None:
-            os.close(directory_fd)
-        else:
-            _close_pending_state(directory_fd, lock_fd)
+        guard.close()
 
 
 def _open_pending_directory(repo_root: Path, *, create: bool) -> tuple[int, Path]:

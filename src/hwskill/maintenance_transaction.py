@@ -60,25 +60,30 @@ class MaintenancePlan:
         never silently present applied changes as verified.
         """
         prepared = None
-        if self.selection is not None and self.selection.required_case_ids:
-            if skip_tests:
-                from .pending_verification import prepare_pending_verification
-                prepared = prepare_pending_verification(
-                    self.transaction.repo_root, self.selection, dict(self.candidate_digests),
-                )
-            else:
+        guard = None
+        try:
+            if self.selection is not None and self.selection.required_case_ids and not skip_tests:
                 effective_verifier = verifier or self.verify_affected
                 if effective_verifier is None:
                     raise TransactionError("affected tests must be verified before applying")
                 result = effective_verifier(self.selection)
                 if not _verification_passes(self.selection, self.candidate_digests, result):
                     raise TransactionError("affected tests did not provide exact PASS evidence")
-        try:
+
+            from .pending_verification import acquire_repository_mutation_guard, prepare_pending_verification
+            guard = acquire_repository_mutation_guard(self.transaction.repo_root)
+            if self.selection is not None and self.selection.required_case_ids and skip_tests:
+                prepared = prepare_pending_verification(
+                    self.transaction.repo_root, self.selection, dict(self.candidate_digests), guard=guard,
+                )
             self.transaction.apply(finalize=prepared.publish if prepared is not None else None)
         except BaseException:
             if prepared is not None:
                 prepared.discard()
             raise
+        finally:
+            if guard is not None:
+                guard.close()
 
 
 @dataclass(frozen=True)
