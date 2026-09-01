@@ -11,6 +11,9 @@ from typing import Any, Literal, TypeAlias
 import yaml
 
 
+_MAX_MANIFEST_BYTES = 64 * 1024
+
+
 class TestManifestError(ValueError):
     """Raised when a declarative test collection is not schema-safe."""
 
@@ -92,10 +95,8 @@ def load_test_collection(path: Path, repo_root: Path) -> TestCollection:
     """Load one repository-contained collection without following symlinks."""
     root = _repository_root(repo_root)
     manifest_path = _safe_repo_path(path, root, "test manifest")
-    if not manifest_path.is_file():
-        raise TestManifestError(f"test manifest must be a regular file: {manifest_path}")
     try:
-        data = yaml.load(manifest_path.read_text(encoding="utf-8"), Loader=_ManifestLoader)
+        data = yaml.load(_read_anchored_manifest(root, manifest_path), Loader=_ManifestLoader)
     except _YamlMappingKeyError as exc:
         raise TestManifestError(f"{manifest_path}: {exc}") from exc
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
@@ -120,6 +121,75 @@ def load_test_collection(path: Path, repo_root: Path) -> TestCollection:
         cases=cases,
         fixtures_dir=fixtures_dir,
     )
+
+
+def _read_anchored_manifest(root: Path, manifest_path: Path) -> str:
+    """Read one manifest from a stable no-follow descriptor chain rooted at ``root``."""
+    try:
+        relative = manifest_path.relative_to(root)
+    except ValueError as exc:
+        raise TestManifestError(f"test manifest must be inside repository: {manifest_path}") from exc
+    if not relative.parts:
+        raise TestManifestError(f"test manifest must be a regular file: {manifest_path}")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise TestManifestError("test manifest requires O_NOFOLLOW support")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open(root, directory_flags)
+    descriptors = [root_fd]
+    identities: list[tuple[int, str, int]] = []
+    try:
+        parent_fd = root_fd
+        for component in relative.parts[:-1]:
+            child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            descriptors.append(child_fd)
+            identities.append((parent_fd, component, child_fd))
+            parent_fd = child_fd
+        file_name = relative.parts[-1]
+        file_fd = os.open(file_name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent_fd)
+        descriptors.append(file_fd)
+        identities.append((parent_fd, file_name, file_fd))
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise TestManifestError(f"test manifest must be a regular file: {manifest_path}")
+        _after_manifest_opened(root, manifest_path)
+        _assert_manifest_identities(identities, manifest_path)
+        raw = _read_manifest_bytes(file_fd, manifest_path)
+        return raw.decode("utf-8")
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _after_manifest_opened(_root: Path, _manifest_path: Path) -> None:
+    """Deterministic race-test seam after descriptor anchoring and before parsing."""
+
+
+def _assert_manifest_identities(
+    identities: list[tuple[int, str, int]],
+    manifest_path: Path,
+) -> None:
+    for parent_fd, name, anchored_fd in identities:
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise TestManifestError(f"test manifest changed before read: {manifest_path}") from exc
+        anchored = os.fstat(anchored_fd)
+        if (current.st_dev, current.st_ino) != (anchored.st_dev, anchored.st_ino):
+            raise TestManifestError(f"test manifest changed before read: {manifest_path}")
+        if stat.S_ISDIR(anchored.st_mode) != stat.S_ISDIR(current.st_mode):
+            raise TestManifestError(f"test manifest changed before read: {manifest_path}")
+        if stat.S_ISREG(anchored.st_mode) != stat.S_ISREG(current.st_mode):
+            raise TestManifestError(f"test manifest changed before read: {manifest_path}")
+
+
+def _read_manifest_bytes(file_fd: int, manifest_path: Path) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := os.read(file_fd, 64 * 1024):
+        size += len(chunk)
+        if size > _MAX_MANIFEST_BYTES:
+            raise TestManifestError(f"test manifest exceeds maximum size: {manifest_path}")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def discover_test_collections(repo_root: Path) -> tuple[TestCollection, ...]:

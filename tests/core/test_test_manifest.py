@@ -343,6 +343,50 @@ class TestManifestTest(unittest.TestCase):
         with self.assertRaisesRegex(TestManifestError, "inside repository"):
             load_test_collection(outside, self.repo)
 
+    def test_manifest_file_swap_after_descriptor_anchor_is_rejected(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        path = self.skill_manifest([])
+        outside = Path(self.temp.name) / "outside.yaml"
+        outside.write_text(yaml.safe_dump({
+            "schema_version": 1, "target": {"kind": "skill", "id": "team/review"}, "cases": [],
+        }), encoding="utf-8")
+
+        def swap_after_anchor(_root: Path, _manifest: Path) -> None:
+            path.unlink()
+            path.symlink_to(outside)
+
+        with patch("hwskill.test_manifest._after_manifest_opened", side_effect=swap_after_anchor):
+            with self.assertRaisesRegex(TestManifestError, "changed before read"):
+                load_test_collection(path, self.repo)
+
+    def test_manifest_parent_directory_swap_after_descriptor_anchor_is_rejected(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        path = self.skill_manifest([])
+        team = path.parents[1]
+        outside = Path(self.temp.name) / "outside-team"
+        outside.mkdir()
+
+        def swap_after_anchor(_root: Path, _manifest: Path) -> None:
+            team.rename(team.with_name("team-original"))
+            team.symlink_to(outside, target_is_directory=True)
+
+        with patch("hwskill.test_manifest._after_manifest_opened", side_effect=swap_after_anchor):
+            with self.assertRaisesRegex(TestManifestError, "changed before read"):
+                load_test_collection(path, self.repo)
+
+    def test_repeated_discovery_closes_manifest_descriptors(self) -> None:
+        from hwskill.test_manifest import discover_test_collections
+
+        self.skill_manifest([])
+        before = len(list(Path("/proc/self/fd").iterdir()))
+        for _ in range(12):
+            collections = discover_test_collections(self.repo)
+            self.assertEqual(len(collections), 1)
+        after = len(list(Path("/proc/self/fd").iterdir()))
+        self.assertLessEqual(after, before + 1)
+
     def test_load_rejects_a_repository_root_below_a_symlinked_ancestor(self) -> None:
         from hwskill.test_manifest import TestManifestError, load_test_collection
 

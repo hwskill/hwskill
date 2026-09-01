@@ -375,6 +375,33 @@ class TestCliTest(unittest.TestCase):
         self.assertIn("Collection", output)
         self.assertNotIn("STATUS", output)
 
+    def test_manifest_swap_after_anchor_returns_usage_without_executing_external_command(self) -> None:
+        path = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        marker = Path(self.temporary.name) / "external-manifest-executed"
+        outside = Path(self.temporary.name) / "outside.yaml"
+        outside.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "outside",
+                "steps": [{"type": "command", "command": f"touch {marker}"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+
+        def swap_after_anchor(_root: Path, _manifest: Path) -> None:
+            path.unlink()
+            path.symlink_to(outside)
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_manifest._after_manifest_opened", side_effect=swap_after_anchor,
+        ):
+            code, _, error = self.run_cli(*self.command(path.relative_to(self.repo).as_posix(), "--runner", "local"))
+
+        self.assertEqual(code, 2)
+        self.assertIn("changed before read", error)
+        self.assertFalse(marker.exists())
+
     def test_repeated_core_runs_close_the_anchored_descriptors(self) -> None:
         core = self.repo / "tests/core"
         core.mkdir(parents=True)
