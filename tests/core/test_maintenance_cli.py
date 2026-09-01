@@ -18,6 +18,7 @@ from hwskill.source_manifest import ResolvedSourceSkill, SourceDefaults, Upstrea
 class FakeGitSourceClient:
     def __init__(self, checkout: Path): self.checkout, self.calls = checkout, []
     def list_remote(self, repository):
+        self.calls.append(("list_remote", repository))
         return RemoteRefs("refs/heads/main", {"refs/heads/main": "b" * 40, "refs/tags/v1": "c" * 40})
     def materialize(self, repository, track, destination):
         self.calls.append(track)
@@ -215,7 +216,53 @@ class MaintenanceCliTest(unittest.TestCase):
     def test_human_output_has_aligned_source_skills_profiles_tests_and_no_ansi(self):
         self.test_plan_output_is_stable_sectioned_and_non_ansi()
 
-    def _add_args(self): return SimpleNamespace(command="source", source_command="add", repository=None, source_id=None, track=None, skills_path=None, namespace=None, layer=None, license_name=None, include=None, repo_root=str(self.repo), yes=False, json=True)
+    def _add_args(self, **changes):
+        values = dict(command="source", source_command="add", repository=None, source_id=None, track=None, skills_path=None, namespace=None, layer=None, license_name=None, include=None, repo_root=str(self.repo), yes=False, json=True)
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def test_source_add_rejects_invalid_explicit_track_before_git_work(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        explicit = self._add_args(
+            repository="https://x/team.git", track="D" * 40, skills_path="library",
+            include=["one"], yes=True,
+        )
+        stdin, stdout, stderr = self._streams(tty=False)
+        self.assertEqual(run_maintenance_command(explicit, self.repo, stdin, stdout, stderr, self.git), 2)
+        self.assertEqual(self.git.calls, [])
+
+    def test_source_add_rejects_invalid_prompted_track_after_loading_preselected_default(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        prompted = self._add_args(repository="https://x/prompted.git", yes=True)
+        stdin, stdout, stderr = self._streams("D" * 40 + "\n", tty=True)
+        self.assertEqual(run_maintenance_command(prompted, self.repo, stdin, stdout, stderr, self.git), 2)
+        self.assertEqual(self.git.calls, [("list_remote", "https://x/prompted.git")])
+        self.assertIn("Track [refs/heads/main]", stderr.getvalue())
+
+    def test_source_add_and_update_help_describe_the_lowercase_track_grammar(self):
+        for command in (("source", "add", "--help"), ("source", "update", "--help")):
+            with self.subTest(command=command), redirect_stdout(StringIO()) as output, self.assertRaises(SystemExit) as raised:
+                main(list(command))
+            self.assertEqual(raised.exception.code, 0)
+            self.assertIn("full ref or lowercase 40-hex commit", " ".join(output.getvalue().split()))
+        out = StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            main(["source", "update", "--help"])
+        self.assertIn("enter a lowercase 40-hex commit", " ".join(out.getvalue().split()))
+
+    def test_source_add_rejects_an_invalid_remote_default_track_before_materialization(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        def invalid_default(repository):
+            self.git.calls.append(("list_remote", repository))
+            return RemoteRefs("main", {})
+        self.git.list_remote = invalid_default
+        args = self._add_args(repository="https://x/default.git", include=["one"], yes=True)
+        stdin, stdout, stderr = self._streams(tty=False)
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 2)
+        self.assertEqual(self.git.calls, [("list_remote", "https://x/default.git")])
 
     def test_source_add_wizard_defaults_to_repo_name_default_branch_detected_skills_path_and_all_skills(self):
         from hwskill.maintenance_cli import run_maintenance_command
@@ -223,6 +270,7 @@ class MaintenanceCliTest(unittest.TestCase):
         self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0, stderr.getvalue() + stdout.getvalue())
         source = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual((source.source_id, source.upstream.track, source.upstream.skills_path), ("team", "refs/heads/main", "library")); self.assertEqual(len(source.skills), 2)
+        self.assertIn("Track [refs/heads/main]", stderr.getvalue())
 
     def test_invalid_numeric_selections_raise_usage_error(self):
         from hwskill.maintenance_cli import UsageError, _select_indices

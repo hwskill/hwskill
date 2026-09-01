@@ -26,14 +26,14 @@ def register_maintenance_commands(commands) -> None:
     source_commands = source.add_subparsers(dest="source_command", metavar="<COMMAND>")
     add = source_commands.add_parser("add", help="Add an upstream source")
     add.add_argument("--repo-root"); add.add_argument("--repository"); add.add_argument("--source-id")
-    add.add_argument("--track"); add.add_argument("--skills-path"); add.add_argument("--namespace")
+    add.add_argument("--track", help="Track at a full ref or lowercase 40-hex commit"); add.add_argument("--skills-path"); add.add_argument("--namespace")
     add.add_argument("--layer"); add.add_argument("--license", dest="license_name")
     add.add_argument("--include", action="append"); add.add_argument("--yes", action="store_true"); add.add_argument("--json", action="store_true")
     check = source_commands.add_parser("check", help="Check upstream revisions and local source drift")
     check.add_argument("source_id", nargs="?"); check.add_argument("--all", action="store_true"); check.add_argument("--repo-root"); check.add_argument("--json", action="store_true")
     update = source_commands.add_parser("update", help="Update upstream snapshots (interactive per-Skill decisions)")
     update.add_argument("source_id", nargs="?"); update.add_argument("--all", action="store_true"); update.add_argument("--repo-root")
-    update.add_argument("--on-added", choices=("include", "ignore", "fail"), help="Non-interactive policy for every added Skill"); update.add_argument("--on-removed", choices=("remove", "manualize", "fail"), help="Non-interactive policy for every removed Skill"); update.add_argument("--track", help="Track one source at a full ref or 40-hex commit"); update.add_argument("--select-track", action="store_true", help="Interactively choose a remote ref or enter a 40-hex commit"); update.add_argument("--yes", action="store_true"); update.add_argument("--json", action="store_true")
+    update.add_argument("--on-added", choices=("include", "ignore", "fail"), help="Non-interactive policy for every added Skill"); update.add_argument("--on-removed", choices=("remove", "manualize", "fail"), help="Non-interactive policy for every removed Skill"); update.add_argument("--track", help="Track one source at a full ref or lowercase 40-hex commit"); update.add_argument("--select-track", action="store_true", help="Interactively choose a remote ref or enter a lowercase 40-hex commit"); update.add_argument("--yes", action="store_true"); update.add_argument("--json", action="store_true")
     adopt = source_commands.add_parser("adopt", help="Adopt an upstream Skill")
     adopt.add_argument("source_id"); adopt.add_argument("skill_id"); adopt.add_argument("--path", required=True); adopt.add_argument("--replace", action="store_true"); adopt.add_argument("--repo-root"); adopt.add_argument("--yes", action="store_true"); adopt.add_argument("--json", action="store_true")
     ignore = source_commands.add_parser("ignore", help="Manage source ignores")
@@ -127,13 +127,20 @@ def _root(args, repo_root: Path) -> Path:
 def _wizard_add(args, root: Path, git: GitSourceClient, stdin: TextIO, stdout: TextIO):
     if not _interactive(stdin) and not args.repository: raise UsageError("non-interactive source add requires --repository")
     repository = args.repository or _ask(stdin, stdout, "Git repository URL")
-    refs = git.list_remote(repository)
     source_id = args.source_id or _source_id_from_repository(repository)
     known = {item.source_id for item in load_all_sources(root)}
     while source_id in known:
         if not _interactive(stdin): raise UsageError(f"source already exists: {source_id}")
         source_id = _ask(stdin, stdout, "Source ID", source_id)
-    track = args.track or (refs.default_branch if not _interactive(stdin) else _ask(stdin, stdout, "Track", refs.default_branch))
+    if args.track is not None:
+        track = args.track
+        if not is_valid_track(track):
+            raise UsageError("track must be a full ref or lowercase 40-character commit SHA")
+    else:
+        refs = git.list_remote(repository)
+        track = refs.default_branch if not _interactive(stdin) else _ask(stdin, stdout, "Track", refs.default_branch)
+        if not is_valid_track(track):
+            raise UsageError("track must be a full ref or lowercase 40-character commit SHA")
     detected_path = _detect_skills_path(repository, track, git)
     skills_path = args.skills_path or (detected_path if not _interactive(stdin) else _ask(stdin, stdout, "Skills path", detected_path))
     if args.include:
