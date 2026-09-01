@@ -25,18 +25,20 @@ def main() -> int:
         context_path = _environment_path("HWSKILL_TEST_CONTEXT")
         artifacts = _environment_path("HWSKILL_TEST_ARTIFACTS")
         workspace = _real_directory(_environment_path("HWSKILL_TEST_WORKSPACE"), "workspace")
+        agent_workspace = _environment_path("HWSKILL_TEST_AGENT_WORKSPACE")
         context = _load_context(context_path)
         _require_successful_agent(context)
         patch = workspace / "pr-587.patch"
+        expected_output = str(agent_workspace / "pr-587.patch")
         _require_patch(patch)
         resolution = observe_script_resolution(
             artifacts / "actions" / "run-agent" / "events.jsonl",
             SKILL_ID,
             SCRIPT_NAME,
             expected_url=PR_URL,
-            expected_output=str(patch),
+            expected_output=expected_output,
         )
-        _require_resolution(resolution, patch)
+        _require_resolution(resolution, patch, expected_output)
         resolution["patch_path"] = str(patch)
         (artifacts / "script-resolution.json").write_text(
             json.dumps(resolution, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
@@ -90,12 +92,12 @@ def _require_patch(path: Path) -> None:
         raise ValueError("pr-587.patch is not a non-empty unified Git patch")
 
 
-def _require_resolution(resolution: dict[str, object], patch: Path) -> None:
+def _require_resolution(resolution: dict[str, object], patch: Path, expected_output: str) -> None:
     if not resolution.get("direct_resolution"):
         raise ValueError("Agent searched for the Skill location after loading it")
     if not resolution.get("execution_succeeded"):
         raise ValueError("Agent did not successfully run the Skill script")
-    if resolution.get("script_output_argument") != str(patch):
+    if resolution.get("script_output_argument") != expected_output:
         raise ValueError("script output argument is not the canonical workspace patch path")
     diagnostic = resolution.get("patch_diagnostic")
     if not isinstance(diagnostic, dict) or not isinstance(diagnostic.get("files"), int):

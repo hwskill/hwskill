@@ -11,6 +11,7 @@ from .eval_events import normalize_events
 _DISCOVERY_TOOLS = {"fd", "find", "grep", "ls", "rg", "tree"}
 _SHELLS = {"bash", "dash", "sh", "zsh"}
 _SEPARATORS = {"&&", "||", ";", "|"}
+_UNSAFE_AUDIT_TOKENS = _SEPARATORS | {"&", ">", ">>", "<", "<<"}
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _NATIVE_SKILL_ROOT = re.compile(
     r"(?:^|/|\s)\.(?:agents|codex|claude|opencode)/skills(?:/|\s|$)"
@@ -48,6 +49,43 @@ def _tokens(command: str) -> list[str]:
     return outer
 
 
+def _lex(command: str) -> list[str]:
+    """Return shell-like tokens without treating a compound command as one action."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        return list(lexer)
+    except ValueError:
+        return []
+
+
+def _single_auditable_tokens(command: str) -> list[str] | None:
+    """Accept only one shell execution whose event result belongs to that command.
+
+    Agent hosts commonly record a direct command behind ``sh -c``.  That form is
+    retained, but shell lists, redirects, and an additional outer argument are
+    rejected instead of assigning the event's aggregate status/output to one
+    selected segment.
+    """
+    if "\n" in command or "\r" in command:
+        return None
+    outer = _lex(command)
+    if not outer or any(token in _UNSAFE_AUDIT_TOKENS for token in outer):
+        return None
+    if Path(outer[0]).name not in _SHELLS:
+        return outer
+
+    command_index = next(
+        (index for index, option in enumerate(outer[1:], start=1)
+         if option.startswith("-") and "c" in option),
+        None,
+    )
+    if command_index is None or command_index + 2 != len(outer):
+        return None
+    return _single_auditable_tokens(outer[command_index + 1])
+
+
 def _segments(tokens: list[str]) -> list[list[str]]:
     segments: list[list[str]] = []
     current: list[str] = []
@@ -82,39 +120,47 @@ def _invocation_argv(
     expected_url: str | None,
     expected_output: str | None,
 ) -> tuple[list[str], str | None] | None:
-    for segment in _segments(_tokens(command)):
-        argv = _command_argv(segment)
-        if not argv:
-            continue
-        executable = Path(argv[0]).name
-        if executable.startswith("python"):
-            if len(argv) < 2 or argv[1] != expected_script:
-                continue
-            arguments = argv[2:]
-        elif argv[0] == expected_script:
-            arguments = argv[1:]
-        else:
-            continue
-        if expected_url is not None and expected_url not in arguments:
-            continue
-        output_argument = _output_argument(arguments)
-        if expected_output is not None and output_argument != expected_output:
-            continue
-        return argv, output_argument
-    return None
+    tokens = _single_auditable_tokens(command)
+    if tokens is None:
+        return None
+    argv = _command_argv(tokens)
+    if not argv:
+        return None
+    executable = Path(argv[0]).name
+    if executable.startswith("python"):
+        if len(argv) < 2 or argv[1] != expected_script:
+            return None
+        arguments = argv[2:]
+    elif argv[0] == expected_script:
+        arguments = argv[1:]
+    else:
+        return None
+    if expected_url is not None and expected_url not in arguments:
+        return None
+    valid_output, output_argument = _output_argument(arguments)
+    if not valid_output:
+        return None
+    if expected_output is not None and output_argument != expected_output:
+        return None
+    return argv, output_argument
 
 
-def _output_argument(arguments: list[str]) -> str | None:
-    """Return the single parsed output value, rejecting ambiguous repeated flags."""
+def _output_argument(arguments: list[str]) -> tuple[bool, str | None]:
+    """Parse exactly one valid ``--output`` occurrence when one is supplied."""
     values: list[str] = []
     for index, argument in enumerate(arguments):
         if argument.startswith("--output="):
-            values.append(argument.removeprefix("--output="))
-        elif argument == "--output" and index + 1 < len(arguments):
+            value = argument.removeprefix("--output=")
+            if not value or value.startswith("-"):
+                return False, None
+            values.append(value)
+        elif argument == "--output":
+            if index + 1 >= len(arguments) or arguments[index + 1].startswith("-"):
+                return False, None
             values.append(arguments[index + 1])
     if len(values) != 1:
-        return None
-    return values[0]
+        return (not values), None
+    return True, values[0]
 
 
 def _is_discovery(command: str, skill_file: str, expected_script: str) -> bool:

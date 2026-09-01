@@ -18,10 +18,12 @@ from .test_runner import (
     ActionContext,
     _after_workdir_opened,
     _agent_environment,
+    _agent_command_prefix,
     _blocked_result,
     _command_environment,
     _open_anchored_workdir,
     _terminate_process_group,
+    _terminate_residual_process_group,
 )
 
 
@@ -208,13 +210,14 @@ class AgentExecutor:
                 reason, context.environment,
             )
         capture = _AgentStreamCapture(host.host_id, context.environment.secret_values)
+        process: subprocess.Popen[str] | None = None
         try:
             self._setup(host.host_id, context)
             workdir_fd, cwd = _open_anchored_workdir(context.workspace, action.workdir)
             try:
                 _after_workdir_opened(context.workspace, action.workdir)
                 process = subprocess.Popen(
-                    context.environment.agent_command_prefix + host.build_command(
+                    _agent_command_prefix(context.environment, context.workspace) + host.build_command(
                         context, action,
                         model=context.environment.model,
                         reasoning=context.environment.reasoning,
@@ -234,7 +237,10 @@ class AgentExecutor:
                 # Codex inherits this descriptor for its own --cd resolution.
                 os.close(workdir_fd)
             timed_out = _capture_process_output(process, capture, context.environment.timeout_seconds)
+            residual_process_group = _terminate_residual_process_group(process)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            if process is not None:
+                _terminate_residual_process_group(process)
             return _blocked_result(action.action_id, context.artifact_dir, str(exc), context.environment)
 
         try:
@@ -243,6 +249,8 @@ class AgentExecutor:
             return _blocked_result(action.action_id, context.artifact_dir, str(exc), context.environment)
         if timed_out:
             return self._blocked(action, context, host, "timeout")
+        if residual_process_group:
+            return self._blocked(action, context, host, "agent left a descendant process group")
         status: Literal["completed", "failed"] = "completed" if process.returncode == 0 else "failed"
         payload = {
             "action_id": action.action_id,
@@ -312,6 +320,11 @@ def _capture_process_output(
     finally:
         for reader in readers:
             reader.join()
+        # Test doubles intentionally reuse their StringIO streams; real Popen
+        # pipe wrappers must be closed once both drain threads are finished.
+        if type(process).__module__ == "subprocess":
+            process.stdout.close()
+            process.stderr.close()
     return timed_out
 
 

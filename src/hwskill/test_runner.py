@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Literal, Protocol
 
 from .test_artifacts import (
@@ -58,6 +59,7 @@ class CaseContext:
     artifact_dir: Path
     environment: TestEnvironment
     actions: tuple[ActionResult, ...]
+    agent_workspace: Path | None = None
 
     def write(self, path: Path) -> None:
         """Write only normalized action metadata, never action output or secrets."""
@@ -72,6 +74,7 @@ class CaseContext:
         write_json(path, {
             "case_id": self.case_id,
             "workspace": str(self.workspace),
+            "agent_workspace": str(self.agent_workspace) if self.agent_workspace is not None else None,
             "runner": self.environment.runner,
             "host": self.environment.host,
             "model": self.environment.model,
@@ -120,6 +123,9 @@ def run_case(
     if workspace_parent is not None:
         workspace_parent.mkdir(parents=True, exist_ok=True)
     workspace = Path(tempfile.mkdtemp(prefix="hwskill-test-workspace-", dir=workspace_parent))
+    evidence_workspace: Path | None = None
+    evidence_after: dict[str, tuple[int, str]] | None = None
+    sealed_evidence_after: dict[str, tuple[int, str]] | None = None
     actions: list[ActionResult] = []
     try:
         try:
@@ -162,21 +168,36 @@ def run_case(
                 None,
             ))
 
-        pre_post_context = CaseContext(case.case_id, workspace, case_dir, environment, tuple(actions))
+        try:
+            evidence_workspace = _materialize_workspace_snapshot(workspace)
+            evidence_after = _workspace_snapshot(evidence_workspace)
+            _seal_workspace_snapshot(evidence_workspace)
+            sealed_evidence_after = _workspace_snapshot(evidence_workspace)
+        except (OSError, ValueError):
+            return _finish_case(case, case_dir, workspace, baseline, environment, tuple(actions), "BLOCKED")
+        pre_post_context = CaseContext(
+            case.case_id, evidence_workspace, case_dir, environment, tuple(actions), workspace,
+        )
         pre_post_context.write(case_dir / "context.json")
-        # Deterministic post-checks need a snapshot of Agent and command effects;
-        # the final write below refreshes it after the post-check itself completes.
-        _write_workspace_diff(case_dir / "workspace.diff", baseline, workspace, environment.secret_values)
+        _write_workspace_diff_from_states(
+            case_dir / "workspace.diff", baseline, evidence_after, environment.secret_values,
+        )
         post_result = _execute(
             _with_case_workdir(case.post_check, case.workdir),
-            workspace,
+            evidence_workspace,
             case_dir,
             environment,
             command_executor,
             agent_executor,
             case_dir / "context.json",
+            workspace,
         )
         actions.append(post_result)
+        if sealed_evidence_after != _workspace_snapshot(evidence_workspace):
+            return _finish_case(
+                case, case_dir, evidence_workspace, baseline, environment, tuple(actions), "BLOCKED",
+                agent_workspace=workspace, after=evidence_after,
+            )
         if any(item.status == "blocked" for item in actions):
             status: Literal["PASS", "FAIL", "BLOCKED"] = "BLOCKED"
         elif isinstance(case.post_check, CommandAction):
@@ -192,10 +213,15 @@ def run_case(
                     status = "BLOCKED"
                 else:
                     status = parse_agent_post_check(response)
-        return _finish_case(case, case_dir, workspace, baseline, environment, tuple(actions), status)
+        return _finish_case(
+            case, case_dir, evidence_workspace, baseline, environment, tuple(actions), status,
+            agent_workspace=workspace, after=evidence_after,
+        )
     except (OSError, ValueError):
         return _finish_case(case, case_dir, workspace, {}, environment, tuple(actions), "BLOCKED")
     finally:
+        if evidence_workspace is not None:
+            _remove_workspace_snapshot(evidence_workspace)
         shutil.rmtree(workspace, ignore_errors=True)
 
 
@@ -261,13 +287,14 @@ def _execute(
     command_executor: ActionExecutor,
     agent_executor: ActionExecutor,
     post_check_context: Path | None,
+    agent_workspace: Path | None = None,
 ) -> ActionResult:
     action_dir = case_dir / "actions" / safe_artifact_id(action.action_id)
     action_dir.mkdir(parents=True, exist_ok=False)
     context = ActionContext(workspace, action_dir, environment)
     if post_check_context is not None:
         if isinstance(action, CommandAction):
-            return _run_post_check(action, context, post_check_context, case_dir)
+            return _run_post_check(action, context, post_check_context, case_dir, agent_workspace)
         from .test_agent import append_agent_post_check_metadata
         action = replace(
             action,
@@ -286,11 +313,18 @@ def _execute(
     return executor.run(action, context)
 
 
-def _run_post_check(action: CommandAction, context: ActionContext, context_path: Path, case_dir: Path) -> ActionResult:
+def _run_post_check(
+    action: CommandAction,
+    context: ActionContext,
+    context_path: Path,
+    case_dir: Path,
+    agent_workspace: Path | None,
+) -> ActionResult:
     additions = {
         "HWSKILL_TEST_CONTEXT": str(context_path.absolute()),
         "HWSKILL_TEST_ARTIFACTS": str(case_dir.absolute()),
         "HWSKILL_TEST_WORKSPACE": str(context.workspace.absolute()),
+        "HWSKILL_TEST_AGENT_WORKSPACE": str((agent_workspace or context.workspace).absolute()),
         "HWSKILL_TEST_REPO_ROOT": str(context.environment.repo_root.absolute()),
         "HWSKILL_TEST_PYTHON": str(Path(sys.executable).absolute()),
         "HWSKILL_TEST_PYTHONPATH": str((context.environment.repo_root / "src").absolute()),
@@ -382,9 +416,15 @@ def _finish_case(
     environment: TestEnvironment,
     actions: tuple[ActionResult, ...],
     status: Literal["PASS", "FAIL", "BLOCKED"],
+    *,
+    agent_workspace: Path | None = None,
+    after: dict[str, tuple[int, str]] | None = None,
 ) -> CaseResult:
-    _write_workspace_diff(case_dir / "workspace.diff", baseline, workspace, environment.secret_values)
-    CaseContext(case.case_id, workspace, case_dir, environment, actions).write(case_dir / "context.json")
+    if after is None:
+        _write_workspace_diff(case_dir / "workspace.diff", baseline, workspace, environment.secret_values)
+    else:
+        _write_workspace_diff_from_states(case_dir / "workspace.diff", baseline, after, environment.secret_values)
+    CaseContext(case.case_id, workspace, case_dir, environment, actions, agent_workspace).write(case_dir / "context.json")
     return CaseResult(case.case_id, status, case_dir, actions)
 
 
@@ -452,6 +492,16 @@ def _agent_environment(
     return result
 
 
+def _agent_command_prefix(environment: TestEnvironment, workspace: Path) -> tuple[str, ...]:
+    """Narrow a runner-owned filesystem guard from the pool to one workspace."""
+    prefix = environment.agent_command_prefix
+    if environment.workspace_root is None:
+        return prefix
+    pool = str(environment.workspace_root.absolute())
+    isolated = str(workspace.absolute())
+    return tuple(isolated if value == pool else value for value in prefix)
+
+
 def _open_anchored_workdir(workspace: Path, configured: str | None) -> tuple[int, str]:
     """Open every workdir component without following a mutable pathname link."""
     if not Path("/proc/self/fd").is_dir():
@@ -500,12 +550,49 @@ def _after_workdir_opened(_workspace: Path, _configured: str | None) -> None:
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.01)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    try:
         process.wait(timeout=1)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def _terminate_residual_process_group(process: subprocess.Popen[str]) -> bool:
+    """Best-effort terminate descendants left in an Agent action's session.
+
+    This detects the ordinary inherited-session case.  It deliberately is not
+    treated as the sole workspace safety boundary: a descendant can call
+    ``setsid`` and escape the group, which is why post-checks consume a sealed
+    snapshot rather than the original workspace.
+    """
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    _terminate_process_group(process)
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.01)
+    return True
 
 
 def _copy_snapshot_fixtures(source: FixtureSource, repo_root: Path, destination: Path) -> None:
@@ -752,6 +839,183 @@ def _copy_regular_fixture(
         os.close(source_fd)
 
 
+_MAX_WORKSPACE_SNAPSHOT_FILES = 4_096
+_MAX_WORKSPACE_SNAPSHOT_FILE_BYTES = 16 * 1024 * 1024
+_MAX_WORKSPACE_SNAPSHOT_TOTAL_BYTES = 64 * 1024 * 1024
+_MAX_WORKSPACE_SNAPSHOT_DEPTH = 64
+
+
+@dataclass
+class _WorkspaceSnapshotBudget:
+    files: int = 0
+    bytes: int = 0
+
+
+def _materialize_workspace_snapshot(workspace: Path) -> Path:
+    """Copy the completed workspace into a no-follow, bounded evidence view.
+
+    The Agent receives only its original workspace.  The snapshot is a sibling
+    created after every step has returned, so a post-check never opens an Agent
+    controlled pathname.  Every source directory and regular file is checked
+    before and after copying to reject swaps, added entries, and in-place edits.
+    """
+    snapshot = Path(tempfile.mkdtemp(prefix="hwskill-test-evidence-", dir=workspace.parent))
+    source_fd: int | None = None
+    destination_fd: int | None = None
+    try:
+        source_fd = _open_directory(workspace)
+        destination_fd = _open_directory(snapshot)
+        _copy_workspace_snapshot_directory(source_fd, destination_fd, (), _WorkspaceSnapshotBudget())
+        return snapshot
+    except Exception:
+        shutil.rmtree(snapshot, ignore_errors=True)
+        raise
+    finally:
+        if destination_fd is not None:
+            os.close(destination_fd)
+        if source_fd is not None:
+            os.close(source_fd)
+
+
+def _snapshot_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev, metadata.st_ino, metadata.st_mode,
+        metadata.st_size, metadata.st_mtime_ns,
+    )
+
+
+def _copy_workspace_snapshot_directory(
+    source_fd: int,
+    destination_fd: int,
+    relative: tuple[str, ...],
+    budget: _WorkspaceSnapshotBudget,
+) -> None:
+    if len(relative) > _MAX_WORKSPACE_SNAPSHOT_DEPTH:
+        raise ValueError("workspace snapshot exceeds directory depth limit")
+    before = os.fstat(source_fd)
+    if not stat.S_ISDIR(before.st_mode):
+        raise ValueError("workspace snapshot source is not a directory")
+    names = tuple(sorted(os.listdir(source_fd)))
+    for name in names:
+        entry = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        entry_relative = (*relative, name)
+        if stat.S_ISDIR(entry.st_mode):
+            child_source_fd = _open_directory(name, dir_fd=source_fd)
+            try:
+                if _snapshot_identity(os.fstat(child_source_fd)) != _snapshot_identity(entry):
+                    raise ValueError("workspace changed while snapshotting")
+                os.mkdir(name, stat.S_IMODE(entry.st_mode), dir_fd=destination_fd)
+                child_destination_fd = _open_directory(name, dir_fd=destination_fd)
+                try:
+                    _copy_workspace_snapshot_directory(
+                        child_source_fd, child_destination_fd, entry_relative, budget,
+                    )
+                finally:
+                    os.close(child_destination_fd)
+            finally:
+                os.close(child_source_fd)
+        elif stat.S_ISREG(entry.st_mode):
+            _copy_workspace_snapshot_regular(
+                source_fd, destination_fd, name, entry, entry_relative, budget,
+            )
+        else:
+            raise ValueError("workspace snapshot rejects symlinks and non-regular entries")
+    if _snapshot_identity(os.fstat(source_fd)) != _snapshot_identity(before):
+        raise ValueError("workspace changed while snapshotting")
+    if tuple(sorted(os.listdir(source_fd))) != names:
+        raise ValueError("workspace changed while snapshotting")
+
+
+def _copy_workspace_snapshot_regular(
+    source_directory_fd: int,
+    destination_directory_fd: int,
+    name: str,
+    expected: os.stat_result,
+    relative: tuple[str, ...],
+    budget: _WorkspaceSnapshotBudget,
+) -> None:
+    if expected.st_size > _MAX_WORKSPACE_SNAPSHOT_FILE_BYTES:
+        raise ValueError(f"workspace snapshot file exceeds limit: {'/'.join(relative)}")
+    if budget.files >= _MAX_WORKSPACE_SNAPSHOT_FILES or budget.bytes + expected.st_size > _MAX_WORKSPACE_SNAPSHOT_TOTAL_BYTES:
+        raise ValueError("workspace snapshot exceeds file or size limit")
+    source_fd = os.open(
+        name, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0), dir_fd=source_directory_fd,
+    )
+    try:
+        before = os.fstat(source_fd)
+        if not stat.S_ISREG(before.st_mode) or _snapshot_identity(before) != _snapshot_identity(expected):
+            raise ValueError("workspace changed while snapshotting")
+        destination_fd = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            stat.S_IMODE(before.st_mode),
+            dir_fd=destination_directory_fd,
+        )
+        try:
+            digest = hashlib.sha256()
+            copied = 0
+            while block := os.read(source_fd, 1024 * 1024):
+                copied += len(block)
+                if copied > _MAX_WORKSPACE_SNAPSHOT_FILE_BYTES:
+                    raise ValueError(f"workspace snapshot file exceeds limit: {'/'.join(relative)}")
+                digest.update(block)
+                _write_fixture_block(destination_fd, block)
+            after = os.fstat(source_fd)
+            if _snapshot_identity(after) != _snapshot_identity(before):
+                raise ValueError("workspace changed while snapshotting")
+            if copied != before.st_size:
+                raise ValueError("workspace changed while snapshotting")
+        finally:
+            os.close(destination_fd)
+        verify_fd = os.open(
+            name, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=destination_directory_fd,
+        )
+        try:
+            metadata = os.fstat(verify_fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != copied:
+                raise ValueError("workspace snapshot destination changed while copying")
+            destination_digest = hashlib.sha256()
+            while block := os.read(verify_fd, 1024 * 1024):
+                destination_digest.update(block)
+            if destination_digest.digest() != digest.digest():
+                raise ValueError("workspace snapshot destination changed while copying")
+        finally:
+            os.close(verify_fd)
+        budget.files += 1
+        budget.bytes += copied
+    finally:
+        os.close(source_fd)
+
+
+def _seal_workspace_snapshot(snapshot: Path) -> None:
+    """Make the evidence tree read-only before an untrusted post-check starts."""
+    for directory, directories, names in os.walk(snapshot, topdown=False, followlinks=False):
+        for name in names:
+            path = Path(directory) / name
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                raise ValueError("workspace snapshot contains a non-regular entry")
+            os.chmod(path, 0o444, follow_symlinks=False)
+        for name in directories:
+            path = Path(directory) / name
+            if not stat.S_ISDIR(os.lstat(path).st_mode):
+                raise ValueError("workspace snapshot contains an unsafe directory")
+            os.chmod(path, 0o555, follow_symlinks=False)
+    os.chmod(snapshot, 0o555, follow_symlinks=False)
+
+
+def _remove_workspace_snapshot(snapshot: Path) -> None:
+    """Restore directory removal permission only after post-check evidence is final."""
+    try:
+        for directory, directories, _names in os.walk(snapshot, topdown=False, followlinks=False):
+            for name in directories:
+                os.chmod(Path(directory) / name, 0o700, follow_symlinks=False)
+        os.chmod(snapshot, 0o700, follow_symlinks=False)
+    except OSError:
+        pass
+    shutil.rmtree(snapshot, ignore_errors=True)
+
+
 def _workspace_snapshot(workspace: Path) -> dict[str, tuple[int, str]]:
     snapshot: dict[str, tuple[int, str]] = {}
     for path in _workspace_files(workspace):
@@ -761,7 +1025,15 @@ def _workspace_snapshot(workspace: Path) -> dict[str, tuple[int, str]]:
 
 
 def _write_workspace_diff(path: Path, before: dict[str, tuple[int, str]], workspace: Path, secrets: tuple[str, ...]) -> None:
-    after = _workspace_snapshot(workspace)
+    _write_workspace_diff_from_states(path, before, _workspace_snapshot(workspace), secrets)
+
+
+def _write_workspace_diff_from_states(
+    path: Path,
+    before: dict[str, tuple[int, str]],
+    after: dict[str, tuple[int, str]],
+    secrets: tuple[str, ...],
+) -> None:
     lines: list[str] = []
     for relative in sorted(set(before) | set(after)):
         if relative not in before:

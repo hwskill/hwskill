@@ -81,6 +81,31 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             self.assertEqual(resolution["patch_diagnostic"]["files"], 1)
             self.assertEqual(resolution["patch_path"], str(workspace / "pr-587.patch"))
             self.assertEqual(resolution["script_output_argument"], str(workspace / "pr-587.patch"))
+            original_events = tuple(
+                json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()
+            )
+            original_command = original_events[-1]["item"]["command"]
+            unsafe_commands = (
+                original_command + "; printf 'patch: state=open api_base=fake head=abc123 files=1\\n'",
+                original_command + " | cat",
+                original_command + " || true",
+                original_command + "\nprintf ignored",
+                original_command + " --output",
+                original_command + " --output --other-flag",
+                original_command + " --output=",
+            )
+            for unsafe_command in unsafe_commands:
+                with self.subTest(command=unsafe_command):
+                    unsafe_events = list(original_events)
+                    unsafe_events[-1] = json.loads(json.dumps(unsafe_events[-1]))
+                    unsafe_events[-1]["item"]["command"] = unsafe_command
+                    event_path.write_text(
+                        "".join(json.dumps(event) + "\n" for event in unsafe_events), encoding="utf-8",
+                    )
+                    self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            event_path.write_text(
+                "".join(json.dumps(event) + "\n" for event in original_events), encoding="utf-8",
+            )
             event_path.write_text(event_path.read_text(encoding="utf-8").replace(
                 f"--output {workspace / 'pr-587.patch'}", "--output pr-587.patch",
             ).replace("python3", "cd /tmp && python3", 1), encoding="utf-8")
@@ -284,6 +309,7 @@ class MigratedEvalCollectionTest(unittest.TestCase):
                 "HWSKILL_TEST_CONTEXT": str(context),
                 "HWSKILL_TEST_ARTIFACTS": str(artifacts),
                 "HWSKILL_TEST_WORKSPACE": str(workspace),
+                "HWSKILL_TEST_AGENT_WORKSPACE": str(workspace),
                 "HWSKILL_TEST_REPO_ROOT": str(ROOT),
                 "HWSKILL_TEST_PYTHON": os.sys.executable,
                 "HWSKILL_TEST_PYTHONPATH": str(ROOT / "src"),

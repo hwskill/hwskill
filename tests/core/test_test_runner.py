@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 from tempfile import TemporaryDirectory
+import time
 import unittest
 from unittest.mock import patch
 
@@ -620,6 +622,53 @@ class TestLocalCaseRunner(unittest.TestCase):
         self.assertNotIn("{{HWSKILL_TEST_WORKSPACE}}", prompts[0])
         self.assertIn("/out.txt", prompts[0])
         self.assertIn("/hwskill-test-workspace-", prompts[0])
+
+    def test_agent_background_writer_is_reaped_and_cannot_pass_the_case(self) -> None:
+        """A returned Agent process may not leave an asynchronous workspace writer."""
+        from hwskill.test_agent import AgentExecutor
+        from hwskill.test_manifest import AgentAction
+        from hwskill.test_runner import run_case
+
+        pid_file = self.root / "background-agent.pid"
+
+        class BackgroundHost:
+            host_id = "codex"
+
+            def build_command(self, _context, _action, *, model, reasoning, anchored_cwd=None):
+                del model, reasoning, anchored_cwd
+                child = (
+                    "import os,time; "
+                    f"open({str(pid_file)!r}, 'w', encoding='utf-8').write(str(os.getpid())); "
+                    "time.sleep(10); open('late-workspace-write.txt', 'w', encoding='utf-8').write('late')"
+                )
+                parent = (
+                    "import subprocess,sys,time; "
+                    f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+                    "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(0.1)"
+                )
+                return (sys.executable, "-c", parent)
+
+        executor = AgentExecutor(
+            BackgroundHost(), credential_available=lambda _host: True,
+            setup_runner=lambda *_args, **_kwargs: type("Completed", (), {"returncode": 0})(),
+        )
+        result = run_case(self.case(
+            steps=[AgentAction("agent", "return while a child writes later")],
+            post_check=CommandAction("post-check", "test ! -e late-workspace-write.txt"),
+        ), self.environment(timeout_seconds=2), self.artifacts, agent_executor=executor)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertTrue(pid_file.is_file())
+        child_pid = int(pid_file.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("Agent child process leaked after case completion")
 
     def test_run_collection_is_case_isolated_and_converts_case_exceptions_to_blocked(self) -> None:
         from hwskill.test_runner import run_collection

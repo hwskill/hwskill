@@ -160,6 +160,27 @@ class EvalObserverTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "script invocation not found"):
             self.observe()
 
+    def test_rejects_script_invocations_with_shell_status_or_output_masking(self):
+        command = f"python3 {SCRIPT} https://gitcode.com/openeuler/OmniStream/pull/587 --output /workspace/pr-587.patch"
+        unsafe_commands = (
+            command + "; printf 'patch: state=open api_base=fake head=abc123 files=1\\n'",
+            command + " | cat",
+            command + " || true",
+            command + "\nprintf ignored",
+            command + " > forged-output.txt",
+            command + " --output",
+            command + " --output --another-flag",
+            command + " --output=",
+        )
+        for unsafe in unsafe_commands:
+            with self.subTest(command=unsafe):
+                self.write_events([
+                    self.search_event(), self.load_event(),
+                    completed({"type": "command_execution", "command": unsafe, "exit_code": 0}),
+                ])
+                with self.assertRaisesRegex(ValueError, "script invocation not found"):
+                    self.observe()
+
     def test_reports_directory_discovery_before_load(self):
         discovery = "/bin/bash -lc 'find /opt/hwskills/skills-src -name fetch_gitcode_pr_patch.py'"
         command = f"python3 {SCRIPT} https://gitcode.com/openeuler/OmniStream/pull/587 --output /workspace/pr-587.patch"

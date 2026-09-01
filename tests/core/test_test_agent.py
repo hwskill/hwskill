@@ -163,6 +163,29 @@ class TestAgentHostTest(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command[command.index("--cd") + 1], ".")
 
+    def test_agent_guard_is_narrowed_to_its_single_workspace_not_the_workspace_pool(self) -> None:
+        from hwskill.test_agent import AgentExecutor, CodexTestHost
+
+        pool = self.workspace.parent
+        environment = replace(
+            self.environment,
+            workspace_root=pool,
+            agent_command_prefix=("guard", "--read-write", str(pool), "--"),
+        )
+        context = replace(self.context, environment=environment)
+        executor = AgentExecutor(
+            CodexTestHost(), credential_available=lambda _host: True,
+            setup_runner=lambda *_args, **_kwargs: _CompletedProcess(),
+        )
+        process = _Process("")
+        with patch("hwskill.test_agent.subprocess.Popen", return_value=process) as popen:
+            result = executor.run(self.action, context)
+
+        self.assertEqual(result.status, "completed")
+        command = popen.call_args.args[0]
+        self.assertIn(str(self.workspace), command)
+        self.assertNotIn(str(pool), command)
+
     def test_codex_cd_uses_the_opened_workdir_fd_after_path_swap(self) -> None:
         from hwskill.test_agent import AgentExecutor
 
