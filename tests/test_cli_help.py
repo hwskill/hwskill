@@ -1,9 +1,13 @@
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 import re
 import unittest
 
 from hwskill.cli import main
+
+
+ROOT = Path(__file__).parents[1]
 
 
 class CliHelpTest(unittest.TestCase):
@@ -127,6 +131,15 @@ class CliHelpTest(unittest.TestCase):
                 output = self.render_help("profile", command)
                 self.assertIn("--user", output)
                 self.assertIn("--project [PROJECT]", output)
+
+    def test_readme_distinguishes_registry_integrity_and_behavior_checks(self):
+        """Maintainers need separate commands for focused, offline, and behavioral gates."""
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("hwskill registry validate", text)
+        self.assertIn("hwskill registry build --repo-root . --check", text)
+        self.assertIn("hwskill integrity-check", text)
+        self.assertIn("hwskill test affected", text)
 
 
 if __name__ == "__main__":

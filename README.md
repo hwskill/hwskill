@@ -181,14 +181,26 @@ hwskill source update superpowers --on-added ignore --on-removed fail --yes --re
 # 修改 manual Skill 的 payload 后，重算其治理信息
 hwskill skill update local/chinese-thinking --repo-root .
 
-# 离线验证 source、Skill、Catalog 与 Profile 的一致性
-hwskill integrity-check --repo-root .
+# Registry 的定向校验：逐个 Skill 与其 registry 治理信息
 hwskill registry validate --repo-root .
-hwskill registry build --repo-root .
+
+# 确认 Catalog 可由当前输入确定性重建，且无需改写已提交的 Catalog
 hwskill registry build --repo-root . --check
+
+# 完整的离线仓库组织门禁：source、Skill、Catalog 与 Profile 的一致性
+hwskill integrity-check --repo-root .
+
+# 对本次变更选出的行为验证
+hwskill test affected --base HEAD^ --runner docker
 ```
 
 `source update` 的新增、删除与覆盖策略必须显式选择；固定 tag 如果被移动会作为错误报告，不会静默更新。
+
+维护流程依次为 `source check` / `source update`、离线完整性检查、再执行受影响的行为验证。
+`registry validate` 是聚焦于逐个 Skill 及其 registry 治理信息的校验；它是
+`integrity-check` 的子集。`registry build --check` 只确认 Catalog 能够由当前输入确定性
+重建，而不改写文件。`integrity-check` 是完整的离线仓库组织门禁：不拉取上游，也不执行行为测试；
+行为测试由 `hwskill test affected` 单独负责。
 
 ## Agent 链路
 
