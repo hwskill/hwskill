@@ -70,6 +70,8 @@ class SourceManifestTest(unittest.TestCase):
             ".",
             "../superpowers",
             r"C:\skills",
+            "C:skills",
+            "D:relative/repo",
             r"\\server\share\skills",
         ):
             with self.subTest(repository=repository):

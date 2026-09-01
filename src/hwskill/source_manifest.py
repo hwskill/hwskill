@@ -247,7 +247,7 @@ def _is_remote_git_url(repository: str) -> bool:
 
 def _is_local_repository_path(repository: str) -> bool:
     return repository.startswith(("/", "\\")) or bool(
-        re.match(r"^[A-Za-z]:[\\/]", repository)
+        re.match(r"^[A-Za-z]:", repository)
     )
 
 
