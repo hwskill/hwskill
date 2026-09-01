@@ -13,7 +13,7 @@ from .skill_maintenance import (
     SkillMaintenanceError, plan_adopt_skill, plan_create_manual, plan_delete_skill,
     plan_manualize_skill, plan_move_skill, plan_rename_skill, plan_update_manual,
 )
-from .source_manifest import SourceDefaults, SourceManifestError, is_full_commit_track, is_valid_track, load_all_sources
+from .source_manifest import SourceDefaults, SourceManifestError, is_full_commit_track, is_remote_git_url, is_valid_track, load_all_sources
 from .source_maintenance import (
     SourceAddRequest, SourceMaintenanceError, SourceSelection, UpdatePolicies,
     inspect_source, inspect_source_deletion, inspect_sources, plan_add_source, plan_delete_source,
@@ -127,6 +127,8 @@ def _root(args, repo_root: Path) -> Path:
 def _wizard_add(args, root: Path, git: GitSourceClient, stdin: TextIO, stdout: TextIO):
     if not _interactive(stdin) and not args.repository: raise UsageError("non-interactive source add requires --repository")
     repository = args.repository or _ask(stdin, stdout, "Git repository URL")
+    if not is_remote_git_url(repository):
+        raise UsageError("repository must be a remote Git URL")
     source_id = args.source_id or _source_id_from_repository(repository)
     known = {item.source_id for item in load_all_sources(root)}
     while source_id in known:

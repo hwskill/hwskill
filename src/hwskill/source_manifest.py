@@ -126,7 +126,7 @@ def _parse_source(data: Any, path: Path) -> UpstreamSource:
     upstream_data = _mapping(root["upstream"], "upstream")
     _exact_keys(upstream_data, {"repository", "track", "skills_path", "ignore"}, "upstream")
     repository = _string(upstream_data["repository"], "upstream.repository")
-    if not _is_remote_git_url(repository):
+    if not is_remote_git_url(repository):
         raise SourceManifestError(f"{path}: upstream.repository must be a remote Git URL")
     track = _string(upstream_data["track"], "upstream.track")
     if not is_valid_track(track):
@@ -239,7 +239,7 @@ def _safe_relative_path(data: Any, label: str) -> str:
     return value
 
 
-def _is_remote_git_url(repository: str) -> bool:
+def is_remote_git_url(repository: str) -> bool:
     if _is_local_repository_path(repository):
         return False
     parsed = urlsplit(repository)

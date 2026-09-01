@@ -23,6 +23,7 @@ from .source_manifest import (
     SourceDefaults,
     UpstreamConfig,
     UpstreamSource,
+    is_remote_git_url,
     is_valid_track,
     load_source_manifest,
 )
@@ -133,6 +134,8 @@ def plan_add_source(
 ) -> MaintenancePlan:
     root = Path(repo_root)
     _validate_source_id(request.source_id)
+    if not is_remote_git_url(request.repository):
+        raise SourceMaintenanceError("repository must be a remote Git URL")
     if not is_valid_track(request.track):
         raise SourceMaintenanceError("track must be a full ref or lowercase 40-character commit SHA")
     known_sources = _load_sources_with_paths(root)

@@ -259,6 +259,19 @@ class SourceMaintenanceTest(unittest.TestCase):
                 {"team": "D" * 40},
             )
 
+    def test_plan_add_source_rejects_local_repository_before_materializing(self) -> None:
+        from hwskill.source_maintenance import SourceAddRequest, SourceMaintenanceError, SourceSelection, plan_add_source
+
+        for repository in ("/tmp/upstream", "../upstream", "file:///tmp/upstream"):
+            with self.subTest(repository=repository):
+                self.git.calls = 0
+                request = SourceAddRequest(
+                    "team", repository, "refs/heads/main", "skills", SourceDefaults("team", "l2", "MIT"),
+                )
+                with self.assertRaisesRegex(SourceMaintenanceError, "remote Git URL"):
+                    plan_add_source(self.repo, request, SourceSelection(("new-skill",), ()), self.git)
+                self.assertEqual(self.git.calls, 0)
+
     def test_ignore_allows_future_rejects_resolved_and_unignore_reports_manual_adopt(self) -> None:
         from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
 

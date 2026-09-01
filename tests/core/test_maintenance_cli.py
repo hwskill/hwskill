@@ -232,6 +232,31 @@ class MaintenanceCliTest(unittest.TestCase):
         self.assertEqual(run_maintenance_command(explicit, self.repo, stdin, stdout, stderr, self.git), 2)
         self.assertEqual(self.git.calls, [])
 
+    def test_source_add_rejects_local_repository_arguments_before_git_work(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        for repository in ("/tmp/upstream", "../upstream", "file:///tmp/upstream"):
+            with self.subTest(repository=repository):
+                self.git.calls.clear()
+                args = self._add_args(
+                    repository=repository, track="refs/heads/main", skills_path="library",
+                    include=["one"], yes=True,
+                )
+                stdin, stdout, stderr = self._streams(tty=False)
+                self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 2)
+                self.assertEqual(self.git.calls, [])
+
+    def test_source_add_rejects_prompted_local_repository_before_git_work(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        for repository in ("/tmp/upstream", "../upstream", "file:///tmp/upstream"):
+            with self.subTest(repository=repository):
+                self.git.calls.clear()
+                args = self._add_args(yes=True)
+                stdin, stdout, stderr = self._streams(repository + "\n", tty=True)
+                self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 2)
+                self.assertEqual(self.git.calls, [])
+
     def test_source_add_rejects_invalid_prompted_track_after_loading_preselected_default(self):
         from hwskill.maintenance_cli import run_maintenance_command
 
