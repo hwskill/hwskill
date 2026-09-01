@@ -50,6 +50,38 @@ def list_profiles(registry_root: Path) -> tuple[ProfileDefinition, ...]:
     return tuple(definitions)
 
 
+def replace_profile_skill_id(
+    data: dict[str, Any], old_skill_id: str, new_skill_id: str,
+) -> dict[str, Any]:
+    """Return one repository Profile definition with an ID migration applied.
+
+    This deliberately operates on parsed repository data rather than a user or
+    project scope.  Lifecycle planners use it in their transaction candidate,
+    so external profile locks are never rewritten as a side effect of a rename.
+    """
+    skills = data.get("skills")
+    if not isinstance(skills, list):
+        raise ProfileError("invalid profile skills")
+    updated = dict(data)
+    updated["skills"] = [
+        new_skill_id if skill_id == old_skill_id else skill_id
+        for skill_id in skills
+    ]
+    if len(updated["skills"]) != len(set(updated["skills"])):
+        raise ProfileError("profile rename would create duplicate skill id")
+    return updated
+
+
+def remove_profile_skill_id(data: dict[str, Any], skill_id: str) -> dict[str, Any]:
+    """Return one repository Profile definition without a Skill reference."""
+    skills = data.get("skills")
+    if not isinstance(skills, list):
+        raise ProfileError("invalid profile skills")
+    updated = dict(data)
+    updated["skills"] = [item for item in skills if item != skill_id]
+    return updated
+
+
 def read_profile_ids(target: ScopeTarget) -> tuple[str, ...] | None:
     path = profile_path(target)
     if not path.is_file():
