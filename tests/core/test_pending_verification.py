@@ -19,6 +19,10 @@ from hwskill.pending_verification import (
 from hwskill.test_impact import TestSelection
 
 
+_DIGEST_A = "sha256:" + "a" * 64
+_DIGEST_B = "sha256:" + "b" * 64
+
+
 class PendingVerificationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = TemporaryDirectory()
@@ -28,13 +32,13 @@ class PendingVerificationTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "test"], check=True)
         (self.repo / "registry").mkdir()
-        self._write_current_digest("sha256:abc")
+        self._write_current_digest(_DIGEST_A)
         self.selection = TestSelection(
             skill_ids=("team/review",), profile_ids=("review-workflow",),
             collection_paths=(Path("tests/skills/team/review/test.yaml"), Path("tests/profiles/review-workflow/test.yaml")),
             changed_paths=("skills-src/l1/team/review/SKILL.md",),
         )
-        self.digests = {"team/review": "sha256:abc"}
+        self.digests = {"team/review": _DIGEST_A}
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -51,19 +55,19 @@ class PendingVerificationTest(unittest.TestCase):
         self.assertTrue(path.is_relative_to(self.repo / ".git"))
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         record = load_pending_verification(self.repo)
-        self.assertEqual(record.digests, (("team/review", "sha256:abc"),))
+        self.assertEqual(record.digests, (("team/review", _DIGEST_A),))
         self.assertEqual(record.selection, self.selection)
 
     def test_only_exact_digests_and_all_required_passes_clear(self) -> None:
         write_pending_verification(self.repo, self.selection, self.digests)
         incomplete = VerificationResult(self.selection, self.digests, (("skill:team/review", "PASS"),))
         self.assertFalse(clear_pending_verification(self.repo, incomplete))
-        stale = VerificationResult(self.selection, {"team/review": "sha256:def"}, (("skill:team/review", "PASS"), ("profile:review-workflow", "PASS")))
+        stale = VerificationResult(self.selection, {"team/review": _DIGEST_B}, (("skill:team/review", "PASS"), ("profile:review-workflow", "PASS")))
         self.assertFalse(clear_pending_verification(self.repo, stale))
         passed = VerificationResult(self.selection, self.digests, (("skill:team/review", "PASS"), ("profile:review-workflow", "PASS")))
-        self._write_current_digest("sha256:def")
+        self._write_current_digest(_DIGEST_B)
         self.assertFalse(clear_pending_verification(self.repo, passed))
-        self._write_current_digest("sha256:abc")
+        self._write_current_digest(_DIGEST_A)
         self.assertTrue(clear_pending_verification(self.repo, passed))
         self.assertIsNone(load_pending_verification(self.repo))
 
@@ -73,6 +77,20 @@ class PendingVerificationTest(unittest.TestCase):
         path = write_pending_verification(self.repo, self.selection, self.digests)
         path.write_text("not json", encoding="utf-8")
         self.assertFalse(clear_pending_verification(self.repo, passed))
+
+    def test_core_pending_state_requires_an_exact_core_pass_to_clear(self) -> None:
+        selection = TestSelection(core=True)
+        path = write_pending_verification(self.repo, selection, {})
+        for statuses in ((), (("core", "FAIL"),)):
+            with self.subTest(statuses=statuses):
+                self.assertFalse(clear_pending_verification(
+                    self.repo, VerificationResult(selection, {}, statuses),
+                ))
+                self.assertTrue(path.exists())
+        self.assertTrue(clear_pending_verification(
+            self.repo, VerificationResult(selection, {}, (("core", "PASS"),)),
+        ))
+        self.assertFalse(path.exists())
 
     def test_parseable_schema_invalid_and_symlink_file_fail_closed(self) -> None:
         path = write_pending_verification(self.repo, self.selection, self.digests)
@@ -112,9 +130,32 @@ class PendingVerificationTest(unittest.TestCase):
                 target = "hwskill.pending_verification." + attribute
                 with patch(target, side_effect=fail_once):
                     with self.assertRaises(pending.PendingVerificationError):
-                        write_pending_verification(self.repo, self.selection, {"team/review": "sha256:def"})
+                        write_pending_verification(self.repo, self.selection, {"team/review": _DIGEST_B})
                 path = self.repo / ".git/hwskill/pending-verification.json"
                 self.assertEqual(path.read_bytes(), original)
+
+    def test_writer_rejects_secret_bearing_public_inputs_without_persisting(self) -> None:
+        sentinel = "PROMPT-OUTPUT-CREDENTIAL-SECRET"
+        initial = TestSelection(changed_paths=(f"sources/{sentinel}.yaml",))
+        with self.assertRaises(pending.PendingVerificationError):
+            write_pending_verification(self.repo, initial, {})
+        self.assertFalse((self.repo / ".git/hwskill").exists())
+
+        path = write_pending_verification(self.repo, self.selection, self.digests)
+        original = path.read_bytes()
+        invalid_inputs = (
+            (TestSelection(skill_ids=(sentinel,)), self.digests),
+            (TestSelection(profile_ids=(sentinel,)), self.digests),
+            (TestSelection(reasons=(sentinel,)), self.digests),
+            (TestSelection(digests=(("team/review", sentinel),)), self.digests),
+            (self.selection, {"team/review": sentinel}),
+        )
+        for selection, digests in invalid_inputs:
+            with self.subTest(selection=selection, digests=digests):
+                with self.assertRaises(pending.PendingVerificationError):
+                    write_pending_verification(self.repo, selection, digests)
+                self.assertEqual(path.read_bytes(), original)
+                self.assertNotIn(sentinel.encode("utf-8"), path.read_bytes())
 
     def test_existing_hwskill_symlink_is_rejected_without_external_write(self) -> None:
         gitdir = self.repo / ".git"

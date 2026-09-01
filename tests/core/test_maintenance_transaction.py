@@ -200,6 +200,38 @@ class RepositoryTransactionTest(unittest.TestCase):
 
         self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "candidate source\n")
 
+    def test_core_plan_requires_exact_core_pass_evidence_before_apply(self) -> None:
+        selection = TestSelection(core=True)
+        cases = (
+            ((), False),
+            ((("core", "FAIL"),), False),
+            ((("core", "PASS"),), True),
+        )
+        for statuses, should_apply in cases:
+            with self.subTest(statuses=statuses):
+                tx = RepositoryTransaction(self.repo)
+                tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+                evidence = VerificationResult(selection, {}, statuses)
+                plan = validated_plan(
+                    tx, MaintenanceSummary("test"), lambda root: None,
+                    selection=selection, candidate_digests={},
+                    verify_affected=lambda _, evidence=evidence: evidence,
+                )
+                if should_apply:
+                    plan.apply()
+                    self.assertEqual(
+                        (self.repo / "sources/a.yaml").read_text(encoding="utf-8"),
+                        "candidate source\n",
+                    )
+                    self._write("sources/a.yaml", "old source\n")
+                else:
+                    with self.assertRaisesRegex(TransactionError, "exact PASS"):
+                        plan.apply()
+                    self.assertEqual(
+                        (self.repo / "sources/a.yaml").read_text(encoding="utf-8"),
+                        "old source\n",
+                    )
+
     def test_skip_tests_publishes_pending_state_only_after_candidate_apply(self) -> None:
         import subprocess
 
@@ -209,7 +241,7 @@ class RepositoryTransactionTest(unittest.TestCase):
         selection = TestSelection(skill_ids=("local/example",), changed_paths=("sources/a.yaml",))
         plan = validated_plan(
             tx, MaintenanceSummary("test"), lambda root: None,
-            selection=selection, candidate_digests={"local/example": "sha256:new"},
+            selection=selection, candidate_digests={"local/example": "sha256:" + "a" * 64},
         )
 
         plan.apply(skip_tests=True)
@@ -234,7 +266,7 @@ class RepositoryTransactionTest(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         selection = TestSelection(skill_ids=("local/example",), changed_paths=("sources/a.yaml",))
         original = write_pending_verification(
-            self.repo, selection, {"local/example": "sha256:old"},
+            self.repo, selection, {"local/example": "sha256:" + "b" * 64},
         ).read_bytes()
         stages = (
             ("replace", "os.replace", pending.os.replace),
@@ -244,7 +276,7 @@ class RepositoryTransactionTest(unittest.TestCase):
         for stage, attribute, original_function in stages:
             with self.subTest(stage=stage):
                 prepared = prepare_pending_verification(
-                    self.repo, selection, {"local/example": "sha256:new"},
+                    self.repo, selection, {"local/example": "sha256:" + "c" * 64},
                 )
                 calls = {"count": 0}
 

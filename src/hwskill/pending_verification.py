@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import secrets
 import stat
 import subprocess
@@ -74,6 +75,9 @@ class PreparedPendingVerification:
 
 
 _PENDING_NAME = "pending-verification.json"
+_IDENTIFIER_COMPONENT = re.compile(r"[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?")
+_PATH_COMPONENT = re.compile(r"[a-z0-9][a-z0-9._-]*")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def write_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> Path:
@@ -87,15 +91,10 @@ def write_pending_verification(repo_root: Path, selection: TestSelection, digest
 
 
 def prepare_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> PreparedPendingVerification:
+    data = _pending_data(selection, digests)
     directory_fd, directory_path = _open_pending_directory(repo_root, create=True)
     try:
         previous = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
-        data = {
-            "schema_version": 1,
-            "changed_paths": list(selection.changed_paths),
-            "digests": dict(sorted((str(key), str(value)) for key, value in digests.items())),
-            "selection": _selection_data(selection),
-        }
         encoded = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         return PreparedPendingVerification(directory_path / _PENDING_NAME, directory_fd, _write_temporary_at(directory_fd, encoded), previous)
     except BaseException:
@@ -277,18 +276,121 @@ def _parse_pending(raw: bytes) -> PendingVerification | None:
     data = json.loads(raw.decode("utf-8"))
     if not isinstance(data, dict) or set(data) != {"schema_version", "changed_paths", "digests", "selection"} or data["schema_version"] != 1:
         return None
-    if not isinstance(data["changed_paths"], list) or not all(_safe_value(item) for item in data["changed_paths"]):
-        return None
-    if not isinstance(data["digests"], dict) or not all(_safe_value(key) and _safe_value(value) for key, value in data["digests"].items()):
+    if not isinstance(data["changed_paths"], list) or not isinstance(data["digests"], dict):
         return None
     selection = _selection_from_data(data["selection"])
-    if tuple(sorted(data["changed_paths"])) != selection.changed_paths:
+    if not _selection_is_safe(selection) or not _digest_mapping_is_safe(data["digests"]):
+        return None
+    if data["changed_paths"] != list(selection.changed_paths):
+        return None
+    if data["selection"] != _selection_data(selection):
         return None
     return PendingVerification(selection, tuple(sorted(data["digests"].items())))
 
 
-def _safe_value(value: object) -> bool:
-    return isinstance(value, str) and bool(value) and "\x00" not in value and "\n" not in value and len(value) <= 1024
+def _pending_data(selection: TestSelection, digests: Mapping[str, str]) -> dict[str, object]:
+    if not _selection_is_safe(selection) or not _digest_mapping_is_safe(digests):
+        raise PendingVerificationError("pending verification state contains unsafe metadata")
+    return {
+        "schema_version": 1,
+        "changed_paths": list(selection.changed_paths),
+        "digests": dict(sorted(digests.items())),
+        "selection": _selection_data(selection),
+    }
+
+
+def _selection_is_safe(selection: object) -> bool:
+    if not isinstance(selection, TestSelection) or not isinstance(selection.core, bool):
+        return False
+    if not all(_skill_id_is_safe(skill_id) for skill_id in selection.skill_ids):
+        return False
+    if not all(_profile_id_is_safe(profile_id) for profile_id in selection.profile_ids):
+        return False
+    if not all(_collection_path_is_safe(path) for path in selection.collection_paths):
+        return False
+    if not all(_reason_is_safe(reason) for reason in selection.reasons):
+        return False
+    if not all(_repo_path_is_safe(path) for path in selection.changed_paths):
+        return False
+    if not all(
+        isinstance(item, tuple) and len(item) == 2 and _skill_id_is_safe(item[0]) and _digest_is_safe(item[1])
+        for item in selection.digests
+    ):
+        return False
+    return all(_case_id_is_safe(case_id) for case_id in selection.required_case_ids)
+
+
+def _digest_mapping_is_safe(digests: object) -> bool:
+    return isinstance(digests, Mapping) and all(
+        _skill_id_is_safe(key) and _digest_is_safe(value) for key, value in digests.items()
+    )
+
+
+def _identifier_component_is_safe(value: object) -> bool:
+    return isinstance(value, str) and bool(_IDENTIFIER_COMPONENT.fullmatch(value))
+
+
+def _skill_id_is_safe(value: object) -> bool:
+    return isinstance(value, str) and len(value.split("/")) == 2 and all(
+        _identifier_component_is_safe(part) for part in value.split("/")
+    )
+
+
+def _profile_id_is_safe(value: object) -> bool:
+    return _identifier_component_is_safe(value)
+
+
+def _case_id_is_safe(value: object) -> bool:
+    if value == "core":
+        return True
+    if not isinstance(value, str) or ":" not in value:
+        return False
+    kind, identifier = value.split(":", 1)
+    return (kind == "skill" and _skill_id_is_safe(identifier)) or (
+        kind == "profile" and _profile_id_is_safe(identifier)
+    )
+
+
+def _digest_is_safe(value: object) -> bool:
+    return isinstance(value, str) and bool(_DIGEST.fullmatch(value))
+
+
+def _repo_path_is_safe(value: object) -> bool:
+    if not isinstance(value, str) or not value or value != value.strip() or "\\" in value:
+        return False
+    path = PurePosixPath(value)
+    if path.is_absolute() or path.as_posix() != value or any(part in {".", ".."} for part in path.parts):
+        return False
+    return all(part == "SKILL.md" or bool(_PATH_COMPONENT.fullmatch(part)) for part in path.parts)
+
+
+def _collection_path_is_safe(value: object) -> bool:
+    if not isinstance(value, Path) or not _repo_path_is_safe(value.as_posix()):
+        return False
+    parts = value.parts
+    return (
+        len(parts) == 5
+        and parts[:2] == ("tests", "skills")
+        and _skill_id_is_safe("/".join(parts[2:4]))
+        and parts[4] == "test.yaml"
+    ) or (
+        len(parts) == 4
+        and parts[:2] == ("tests", "profiles")
+        and _profile_id_is_safe(parts[2])
+        and parts[3] == "test.yaml"
+    )
+
+
+def _reason_is_safe(value: object) -> bool:
+    if value in {"runtime-all", "core-source", "core-test"}:
+        return True
+    if not isinstance(value, str) or ":" not in value:
+        return False
+    kind, identifier = value.split(":", 1)
+    return (kind in {"skill-added", "skill-content", "test-skill"} and _skill_id_is_safe(identifier)) or (
+        kind in {"profile-members", "profile-member-content", "test-profile"}
+        and _profile_id_is_safe(identifier)
+    )
 
 
 def _selection_data(selection: TestSelection) -> dict[str, object]:
@@ -299,9 +401,9 @@ def _selection_from_data(value: object) -> TestSelection:
     if not isinstance(value, dict) or set(value) != {"core", "skill_ids", "profile_ids", "collection_paths", "reasons", "changed_paths", "digests"}:
         raise ValueError("invalid pending selection")
     strings = ("skill_ids", "profile_ids", "collection_paths", "reasons", "changed_paths")
-    if not isinstance(value["core"], bool) or any(not isinstance(value[key], list) or not all(_safe_value(item) for item in value[key]) for key in strings):
+    if not isinstance(value["core"], bool) or any(not isinstance(value[key], list) or not all(isinstance(item, str) for item in value[key]) for key in strings):
         raise ValueError("invalid pending selection")
     digest_values = value["digests"]
-    if not isinstance(digest_values, list) or not all(isinstance(item, list) and len(item) == 2 and all(_safe_value(part) for part in item) for item in digest_values):
+    if not isinstance(digest_values, list) or not all(isinstance(item, list) and len(item) == 2 and all(isinstance(part, str) for part in item) for item in digest_values):
         raise ValueError("invalid pending selection")
     return TestSelection(core=value["core"], skill_ids=tuple(value["skill_ids"]), profile_ids=tuple(value["profile_ids"]), collection_paths=tuple(Path(item) for item in value["collection_paths"]), reasons=tuple(value["reasons"]), changed_paths=tuple(value["changed_paths"]), digests=tuple((item[0], item[1]) for item in digest_values))
