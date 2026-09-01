@@ -18,7 +18,7 @@ _TIMEOUT_SECONDS = 10.0
 _PROBE_PROMPT = "Reply with exactly READY."
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _DOCKER_VERSION = re.compile(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+][0-9A-Za-z.-]+)?\Z")
-_CODEX_VERSION = re.compile(r"(?:codex )?([0-9]+\.[0-9]+\.[0-9]+)\Z")
+_CODEX_VERSION = re.compile(r"codex-cli ([0-9]+\.[0-9]+\.[0-9]+)\Z")
 _CLAUDE_VERSION = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+) \(Claude Code\)\Z")
 _OPENCODE_VERSION = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+)\Z")
 
@@ -32,6 +32,9 @@ class ImageIdentity(Protocol):
 
     image: str
     digest: str
+
+
+ImageIdentityProvider = Callable[[], ImageIdentity | None]
 
 
 @dataclass(frozen=True)
@@ -108,7 +111,9 @@ def configure_test_setup(
     check: bool = False,
     replacement: TestConfiguration | None = None,
     prompt: Callable[[str], str] = input,
-    inspect: Callable[..., SetupReport] = inspect_test_setup,
+    image_identity: ImageIdentity | ImageIdentityProvider | None = None,
+    inspection_kwargs: Mapping[str, object] | None = None,
+    inspect: Callable[..., SetupReport] | None = None,
     write: Callable[[TestConfiguration], None] = write_test_configuration,
 ) -> SetupReport:
     """Keep a usable model by default; require a replacement when it is unusable.
@@ -116,7 +121,8 @@ def configure_test_setup(
     Check mode is intentionally an early return: it neither prompts nor writes
     and inspection never invokes Docker build commands.
     """
-    report = inspect(current, runner)
+    identity = _resolve_image_identity(image_identity)
+    report = _inspect_configuration(current, runner, identity, inspection_kwargs, inspect)
     if check:
         return report
     available = _check_status(report, "model-availability") == "READY"
@@ -128,7 +134,7 @@ def configure_test_setup(
             raise ValueError("choose keep or replace")
     if replacement is None:
         raise ValueError("a replacement configuration is required when the current model is unavailable")
-    replacement_report = inspect(replacement, runner)
+    replacement_report = _inspect_configuration(replacement, runner, identity, inspection_kwargs, inspect)
     if replacement_report.status != "READY":
         return replacement_report
     write(replacement)
@@ -234,6 +240,37 @@ def _expected_image(value: ImageIdentity | None) -> tuple[str, str] | None:
     if not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None:
         return None
     return image, digest
+
+
+def _resolve_image_identity(value: ImageIdentity | ImageIdentityProvider | None) -> ImageIdentity | None:
+    if value is None:
+        return None
+    if callable(value):
+        try:
+            return value()
+        except Exception:
+            return None
+    return value
+
+
+def _inspect_configuration(
+    config: TestConfiguration,
+    runner: SetupRunner,
+    identity: ImageIdentity | None,
+    inspection_kwargs: Mapping[str, object] | None,
+    inspect: Callable[..., SetupReport] | None,
+) -> SetupReport:
+    """Use the real inspector with the resolved identity, or an injected adapter.
+
+    Custom inspectors retain the original ``(config, runner)`` contract by
+    default.  Callers that want additional injected dependencies can pass them
+    through ``inspection_kwargs``.
+    """
+    options = dict(inspection_kwargs or {})
+    if inspect is None:
+        options["expected_image"] = identity
+        return inspect_test_setup(config, runner, **options)
+    return inspect(config, runner, **options)
 
 
 def _parse_docker_version(value: str | None) -> str | None:

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import secrets
 import stat
 from typing import Any, Callable, Literal
@@ -24,6 +25,7 @@ _MAX_CONFIG_BYTES = 64 * 1024
 SUPPORTED_REASONING_EFFORTS = frozenset({
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 })
+_MODEL_IDENTIFIER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._:/@+-]*[A-Za-z0-9])?\Z")
 
 
 class TestConfigurationError(ValueError):
@@ -178,7 +180,7 @@ def _parse_configuration(value: Any) -> TestConfiguration:
         item = _mapping(model_data, f"host {host}")
         _exact_keys(item, {"model", "reasoning"}, f"host {host}")
         hosts[host] = HostModel(
-            _nonempty_string(item["model"], f"host {host}.model"),
+            _model(item["model"], f"host {host}.model"),
             _reasoning(item["reasoning"], f"host {host}.reasoning"),
         )
     return _validate_configuration(TestConfiguration(
@@ -203,7 +205,7 @@ def _validate_configuration(value: TestConfiguration) -> TestConfiguration:
         if not isinstance(model, HostModel):
             raise TestConfigurationError(f"host {host} must contain a HostModel")
         hosts[host] = HostModel(
-            _nonempty_string(model.model, f"host {host}.model"),
+            _model(model.model, f"host {host}.model"),
             _reasoning(model.reasoning, f"host {host}.reasoning"),
         )
     if default_host not in hosts:
@@ -251,6 +253,13 @@ def _reasoning(value: Any, label: str) -> str:
     if reasoning not in SUPPORTED_REASONING_EFFORTS:
         raise TestConfigurationError(f"{label} must be a supported reasoning effort")
     return reasoning
+
+
+def _model(value: Any, label: str) -> str:
+    model = _nonempty_string(value, label)
+    if _MODEL_IDENTIFIER.fullmatch(model) is None:
+        raise TestConfigurationError(f"{label} must be a safe single CLI argument")
+    return model
 
 
 def _reject_yaml_references(text: str) -> None:

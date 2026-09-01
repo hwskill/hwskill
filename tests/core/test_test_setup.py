@@ -69,7 +69,7 @@ class TestTestSetup(unittest.TestCase):
         )
         runner = _Runner({
             docker_info: _completed(docker_info, "24.0.7\n"), image: _completed(image, IMAGE_DIGEST + "\n"),
-            version: _completed(version, "0.147.0\n"), probe: _completed(probe, '{"type":"message"}\n'),
+            version: _completed(version, "codex-cli 0.147.0\n"), probe: _completed(probe, '{"type":"message"}\n'),
         })
         report = inspect_test_setup(
             self.config, runner, environment={"CODEX_API_KEY": "credential-sentinel"},
@@ -94,7 +94,7 @@ class TestTestSetup(unittest.TestCase):
         )
         runner = _Runner({
             docker_info: _completed(docker_info, "24.0.7\n"), image: _completed(image, IMAGE_DIGEST + "\n"),
-            version: _completed(version), probe: _completed(probe, returncode=1),
+            version: _completed(version, "codex-cli 0.147.0\n"), probe: _completed(probe, returncode=1),
         })
         report = inspect_test_setup(
             self.config, runner, environment={"CODEX_API_KEY": "credential-sentinel"},
@@ -161,7 +161,7 @@ class TestTestSetup(unittest.TestCase):
         runner = _Runner({
             docker_info: _completed(docker_info, "24.0.7\n"),
             image: _completed(image, IMAGE_DIGEST + "\n"),
-            version: _completed(version, "0.147.0\n"),
+            version: _completed(version, "codex-cli 0.147.0\n"),
         })
         missing = inspect_test_setup(self.config, runner, environment={"CODEX_API_KEY": "set"})
         mismatch = inspect_test_setup(
@@ -179,7 +179,7 @@ class TestTestSetup(unittest.TestCase):
         docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
         image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
         for host, executable, version in (
-            ("codex", "codex", "0.147.0"),
+            ("codex", "codex", "codex-cli 0.147.0"),
             ("claude-code", "claude", "2.1.141 (Claude Code)"),
             ("opencode", "opencode", "1.14.48"),
         ):
@@ -205,7 +205,7 @@ class TestTestSetup(unittest.TestCase):
         docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
         image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
         for host, executable, malformed, incompatible in (
-            ("codex", "codex", "not a version", "0.0.1"),
+            ("codex", "codex", "codex 0.147.0", "codex-cli 0.0.1"),
             ("claude-code", "claude", "2.1.141", "2.1.140 (Claude Code)"),
             ("opencode", "opencode", "version=1.14.48", "1.14.47"),
         ):
@@ -222,6 +222,100 @@ class TestTestSetup(unittest.TestCase):
                         expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST),
                     )
                     self.assertEqual(next(item for item in report.checks if item.name == "host-cli").status, "BLOCKED")
+
+    def test_real_host_version_shapes_are_accepted(self) -> None:
+        from hwskill.test_configuration import HostModel, TestConfiguration
+        from hwskill.test_setup import ExpectedImage, inspect_test_setup
+
+        docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        for host, executable, version, environment in (
+            ("codex", "codex", "codex-cli 0.147.0", {"CODEX_API_KEY": "set"}),
+            ("claude-code", "claude", "2.1.141 (Claude Code)", {"ANTHROPIC_API_KEY": "set"}),
+            ("opencode", "opencode", "1.14.48", {"OPENCODE_API_KEY": "set"}),
+        ):
+            with self.subTest(host=host):
+                config = TestConfiguration("docker", host, {host: HostModel("safe-model", "high")})
+                probe = {
+                    "codex": ("codex", "exec", "--model", "safe-model", "-c", 'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY."),
+                    "claude-code": ("claude", "--print", "--output-format", "json", "--model", "safe-model", "Reply with exactly READY."),
+                    "opencode": ("opencode", "run", "--format", "json", "--model", "safe-model", "Reply with exactly READY."),
+                }[host]
+                runner = _Runner({
+                    docker_info: _completed(docker_info, "24.0.7\n"),
+                    image: _completed(image, IMAGE_DIGEST + "\n"),
+                    (executable, "--version"): _completed((executable, "--version"), version + "\n"),
+                    probe: _completed(probe, '{"type":"message"}\n'),
+                })
+                report = inspect_test_setup(
+                    config, runner, environment=environment,
+                    expected_image=ExpectedImage(IMAGE_NAME, IMAGE_DIGEST),
+                )
+                self.assertEqual(report.status, "READY")
+
+    def test_configure_uses_one_authoritative_identity_with_real_inspection(self) -> None:
+        from hwskill.test_configuration import HostModel, write_test_configuration
+        from hwskill.test_setup import ExpectedImage, configure_test_setup
+
+        current = type(self.config)("docker", "codex", {"codex": HostModel("old-model", "high")})
+        replacement = type(self.config)("docker", "codex", {"codex": HostModel("new-model", "high")})
+        docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        version = ("codex", "--version")
+        old_probe = ("codex", "exec", "--model", "old-model", "-c", 'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY.")
+        new_probe = ("codex", "exec", "--model", "new-model", "-c", 'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY.")
+        runner = _Runner({
+            docker_info: _completed(docker_info, "24.0.7\n"),
+            image: _completed(image, IMAGE_DIGEST + "\n"),
+            version: _completed(version, "codex-cli 0.147.0\n"),
+            old_probe: _completed(old_probe, returncode=1),
+            new_probe: _completed(new_probe, '{"type":"message"}\n'),
+        })
+        identity = ExpectedImage(IMAGE_NAME, IMAGE_DIGEST)
+        provider_calls = []
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test.yaml"
+            write_test_configuration(current, path=path)
+            report = configure_test_setup(
+                current, replacement=replacement, runner=runner,
+                image_identity=lambda: provider_calls.append(identity) or identity,
+                inspection_kwargs={"environment": {"CODEX_API_KEY": "set"}},
+                write=lambda config: write_test_configuration(config, path=path),
+            )
+            self.assertEqual(report.status, "READY")
+            self.assertEqual(provider_calls, [identity])
+            self.assertIn("new-model", path.read_text(encoding="utf-8"))
+
+    def test_configure_identity_mismatch_preserves_current_file(self) -> None:
+        from hwskill.test_configuration import HostModel, write_test_configuration
+        from hwskill.test_setup import ExpectedImage, configure_test_setup
+
+        current = type(self.config)("docker", "codex", {"codex": HostModel("old-model", "high")})
+        replacement = type(self.config)("docker", "codex", {"codex": HostModel("new-model", "high")})
+        docker_info = ("docker", "info", "--format", "{{.ServerVersion}}")
+        image = ("docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_NAME)
+        version = ("codex", "--version")
+        old_probe = ("codex", "exec", "--model", "old-model", "-c", 'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY.")
+        new_probe = ("codex", "exec", "--model", "new-model", "-c", 'model_reasoning_effort="high"', "--json", "--skip-git-repo-check", "Reply with exactly READY.")
+        runner = _Runner({
+            docker_info: _completed(docker_info, "24.0.7\n"),
+            image: _completed(image, IMAGE_DIGEST + "\n"),
+            version: _completed(version, "codex-cli 0.147.0\n"),
+            old_probe: _completed(old_probe, returncode=1),
+            new_probe: _completed(new_probe, '{"type":"message"}\n'),
+        })
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test.yaml"
+            write_test_configuration(current, path=path)
+            before = path.read_text(encoding="utf-8")
+            report = configure_test_setup(
+                current, replacement=replacement, runner=runner,
+                image_identity=ExpectedImage(IMAGE_NAME, "sha256:" + "0" * 64),
+                inspection_kwargs={"environment": {"CODEX_API_KEY": "set"}},
+                write=lambda config: write_test_configuration(config, path=path),
+            )
+            self.assertEqual(report.status, "BLOCKED")
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
 
 
 if __name__ == "__main__":

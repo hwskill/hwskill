@@ -120,6 +120,24 @@ class TestTestConfiguration(unittest.TestCase):
                     hosts={"codex": HostModel("gpt-5.6-terra", "unbounded")},
                 ), path=path)
 
+    def test_model_uses_a_safe_single_cli_argument_grammar(self) -> None:
+        from hwskill.test_configuration import HostModel, TestConfiguration, write_test_configuration
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test.yaml"
+            for model in ("gpt-5.6-terra", "minimax-cn-coding-plan/MiniMax-M2.5", "provider:model@2026.09"):
+                with self.subTest(valid=model):
+                    write_test_configuration(TestConfiguration(
+                        runner="docker", default_host="codex",
+                        hosts={"codex": HostModel(model, "high")},
+                    ), path=path)
+            for model in ("model name", "model\nnext", "model\tname", "model;command"):
+                with self.subTest(invalid=model), self.assertRaises(ValueError):
+                    write_test_configuration(TestConfiguration(
+                        runner="docker", default_host="codex",
+                        hosts={"codex": HostModel(model, "high")},
+                    ), path=path)
+
     def test_resolve_host_model_uses_default_unless_explicit_override(self) -> None:
         from hwskill.test_configuration import HostModel, TestConfiguration, resolve_host_model
 
