@@ -130,6 +130,30 @@ class MaintenanceCliTest(unittest.TestCase):
             with self.subTest(error=error), patch("hwskill.maintenance_cli.plan_update_sources", side_effect=error), patch("hwskill.maintenance_cli.GitSourceClient"):
                 self.assertEqual(run_maintenance_command(args, self.repo, *self._streams()), expected)
 
+    def test_integrity_rejection_returns_one_without_emitting_or_applying_a_plan(self):
+        """A structured candidate gate failure is a normal maintenance error, not a traceback."""
+        from hwskill.integrity import IntegrityError, IntegrityIssue, IntegrityReport
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        rejection = IntegrityError(IntegrityReport(
+            issues=(IntegrityIssue("sources/team.yaml", "source-skill-mismatch", "resolved Skill disagrees with Catalog"),),
+            skill_count=1,
+            source_count=1,
+            profile_count=0,
+        ))
+        args = self._update_args()
+        stdin, stdout, stderr = self._streams()
+
+        with patch("hwskill.maintenance_cli.plan_update_sources", side_effect=rejection) as planner, patch("hwskill.maintenance_cli._emit") as emit:
+            code = run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git)
+
+        self.assertEqual(code, 1)
+        planner.assert_called_once()
+        emit.assert_not_called()
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("error: repository integrity check failed (1 issue(s))", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_injected_streams_are_used_without_global_input_or_print(self):
         from hwskill.maintenance_cli import run_maintenance_command
         args = self._update_args(on_added=None, on_removed=None, yes=False)
