@@ -22,6 +22,7 @@ from .docker_test_runner import (
     DockerTestRunner,
     TestRunResult,
 )
+from .core_timeout import core_timeout_seconds
 from .hosts import HOST_SPECS, canonical_host
 from .pending_verification import VerificationResult, clear_pending_verification
 from .test_artifacts import ActionResult, CaseResult, CollectionResult, write_json, write_text
@@ -637,6 +638,7 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
                 staged_repository = _stage_core_repository(root_fd, Path(stage_directory), tracked_paths)
                 temporary_root = Path(stage_directory)
                 (temporary_root / "home").mkdir(mode=0o700)
+                core_timeout = core_timeout_seconds(relative, staged_repository, environment.timeout_seconds)
                 selected = "" if relative == Path("tests/core") else str(relative)
                 if selected and not (staged_repository / selected).is_file():
                     raise ValueError("selected core test disappeared before staging")
@@ -647,14 +649,14 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                     start_new_session=True, pass_fds=(root_fd, core_fd),
                 )
-                stdout, stderr, timed_out = _capture_core_output(process, environment.timeout_seconds)
+                stdout, stderr, timed_out = _capture_core_output(process, core_timeout)
         finally:
             os.close(core_fd)
             os.close(root_fd)
         if timed_out:
             action_status, status, exit_code = "blocked", "BLOCKED", None
             payload = {"action_id": "unittest", "kind": "core", "status": "blocked", "exit_code": None, "reason": "timeout"}
-            stderr += f"core test timed out after {environment.timeout_seconds} seconds\n"
+            stderr += f"core test timed out after {core_timeout} seconds\n"
         elif process.returncode == 125 and "hwskill isolation guard unavailable" in stderr:
             action_status, status, exit_code = "blocked", "BLOCKED", None
             payload = {

@@ -660,6 +660,24 @@ class DockerExecutionTests(unittest.TestCase):
         targeted = _result_expectations((Path("tests/core/test_models.py"),), Path.cwd())
         self.assertEqual(targeted[0].cases[0].case_id, "tests/core/test_models.py")
 
+    def test_core_timeout_budget_matches_the_bounded_worker_suite_timeout(self) -> None:
+        from hwskill.core_timeout import core_timeout_seconds
+        from hwskill.docker_test_runner import _selection_timeout_budget
+
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            for index in range(4):
+                (core / f"test_{index}.py").write_text("", encoding="utf-8")
+
+            full = _selection_timeout_budget((Path("tests/core"),), 30, repo)
+            targeted = _selection_timeout_budget((Path("tests/core/test_0.py"),), 30, repo)
+
+        self.assertEqual(full, 140)
+        self.assertEqual(targeted, 50)
+        self.assertEqual(core_timeout_seconds(Path("tests/core/test_0.py"), repo, 600), 600)
+
     def test_forged_pass_for_unrelated_selection_is_blocked(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
         from hwskill.test_runner import TestEnvironment
@@ -1529,6 +1547,32 @@ cases:
         self.assertEqual(result.status, "PASS")
         self.assertEqual(popen.call_args.args[0][0], "guard")
         self.assertIn("/proc/self/fd", popen.call_args.args[0])
+
+    def test_full_core_timeout_scales_beyond_one_action_and_blocks_structurally(self) -> None:
+        from hwskill.test_cli import _run_core_path
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            for index in range(2):
+                (core / f"test_{index}.py").write_text(
+                    "import unittest\nclass Test(unittest.TestCase):\n def test_ok(self): pass\n",
+                    encoding="utf-8",
+                )
+            artifacts = Path(directory) / "artifacts"
+            artifacts.mkdir()
+            environment = TestEnvironment(repo, "docker", "codex", "model", "high")
+            process = Mock(returncode=0)
+            with patch("hwskill.test_cli.subprocess.Popen", return_value=process), patch(
+                "hwskill.test_cli._capture_core_output", return_value=("", "", True),
+            ) as capture:
+                result = _run_core_path(Path("tests/core"), repo, artifacts, environment)
+
+        self.assertEqual(capture.call_args.args[1], 60)
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions[0].status, "blocked")
 
     def test_command_executor_uses_worker_network_guard_prefix(self) -> None:
         from hwskill.test_artifacts import ActionResult

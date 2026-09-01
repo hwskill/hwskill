@@ -14,9 +14,16 @@ _PR_SET_SECCOMP = 22
 _SECCOMP_MODE_FILTER = 2
 _BPF_LD_W_ABS = 0x20
 _BPF_JMP_JEQ_K = 0x15
+_BPF_JMP_JSET_K = 0x45
 _BPF_RET_K = 0x06
+_SECCOMP_DATA_NR_OFFSET = 0
+_SECCOMP_DATA_ARCH_OFFSET = 4
 _SECCOMP_DATA_ARG0_OFFSET = 16
 _AF_UNIX = 1
+_AUDIT_ARCH_X86_64 = 0xC000003E
+_AUDIT_ARCH_AARCH64 = 0xC00000B7
+_AUDIT_ARCH_I386 = 0x40000003
+_X32_SYSCALL_BIT = 0x40000000
 _SECCOMP_RET_ALLOW = 0x7FFF0000
 _SECCOMP_RET_ERRNO = 0x00050000
 _LANDLOCK_CREATE_RULESET = 444
@@ -68,21 +75,43 @@ class _LandlockPathBeneathAttr(ctypes.Structure):
 
 def install_network_guard() -> None:
     """Deny internet socket creation while retaining AF_UNIX local process IPC."""
-    machine = platform.machine().lower()
-    syscalls = {
-        "x86_64": ((41, 53), (425, 426, 427)),
-        "amd64": ((41, 53), (425, 426, 427)),
-        "aarch64": ((198, 199), (425, 426, 427)),
-        "arm64": ((198, 199), (425, 426, 427)),
+    instructions = _network_guard_instructions(platform.machine().lower())
+    program_array = (_SockFilter * len(instructions))(*instructions)
+    program = _SockFprog(len(instructions), program_array)
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    if libc.prctl(_PR_SET_SECCOMP, _SECCOMP_MODE_FILTER, ctypes.byref(program)) != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+
+
+def _network_guard_instructions(machine: str) -> list[_SockFilter]:
+    architecture = {
+        "x86_64": (_AUDIT_ARCH_X86_64, (41, 53), (425, 426, 427), True),
+        "amd64": (_AUDIT_ARCH_X86_64, (41, 53), (425, 426, 427), True),
+        "aarch64": (_AUDIT_ARCH_AARCH64, (198, 199), (425, 426, 427), False),
+        "arm64": (_AUDIT_ARCH_AARCH64, (198, 199), (425, 426, 427), False),
         # socketcall's family argument lives behind a userspace pointer, which
         # classic BPF cannot inspect safely.  Keep its conservative deny rule.
-        "i386": ((), (102, 425, 426, 427)),
-        "i686": ((), (102, 425, 426, 427)),
+        "i386": (_AUDIT_ARCH_I386, (), (102, 425, 426, 427), False),
+        "i686": (_AUDIT_ARCH_I386, (), (102, 425, 426, 427), False),
     }.get(machine)
-    if syscalls is None:
+    if architecture is None:
         raise OSError(errno.ENOTSUP, "network guard does not support this architecture")
-    local_ipc_syscalls, denied_syscalls = syscalls
-    instructions = [_SockFilter(_BPF_LD_W_ABS, 0, 0, 0)]
+    audit_arch, local_ipc_syscalls, denied_syscalls, reject_x32 = architecture
+    instructions = [
+        _SockFilter(_BPF_LD_W_ABS, 0, 0, _SECCOMP_DATA_ARCH_OFFSET),
+        _SockFilter(_BPF_JMP_JEQ_K, 1, 0, audit_arch),
+        _SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ERRNO | errno.EPERM),
+        _SockFilter(_BPF_LD_W_ABS, 0, 0, _SECCOMP_DATA_NR_OFFSET),
+    ]
+    if reject_x32:
+        instructions.extend((
+            _SockFilter(_BPF_JMP_JSET_K, 0, 1, _X32_SYSCALL_BIT),
+            _SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ERRNO | errno.EPERM),
+        ))
     for number in local_ipc_syscalls:
         instructions.extend((
             # On a mismatch, skip this syscall's argument check and both returns.
@@ -98,15 +127,7 @@ def install_network_guard() -> None:
             _SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ERRNO | errno.EPERM),
         ))
     instructions.append(_SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ALLOW))
-    program_array = (_SockFilter * len(instructions))(*instructions)
-    program = _SockFprog(len(instructions), program_array)
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
-        code = ctypes.get_errno()
-        raise OSError(code, os.strerror(code))
-    if libc.prctl(_PR_SET_SECCOMP, _SECCOMP_MODE_FILTER, ctypes.byref(program)) != 0:
-        code = ctypes.get_errno()
-        raise OSError(code, os.strerror(code))
+    return instructions
 
 
 def install_filesystem_guard(read_only: tuple[str, ...], read_write: tuple[str, ...]) -> None:

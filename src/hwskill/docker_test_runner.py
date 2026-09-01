@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 from typing import Literal
 
+from .core_timeout import core_timeout_seconds
 from .hosts import HOST_SPECS
 from .test_artifacts import ActionResult, CaseResult, CollectionResult, safe_artifact_id
 from .test_configuration import TestConfiguration
@@ -276,7 +277,7 @@ class DockerTestRunner:
                 argv = self.build_run_command(request, container_name=container_name)
                 completed = self._run_container(
                     argv, environment.environment_variables,
-                    _selection_timeout_budget(collections, environment.timeout_seconds), container_name,
+                    _selection_timeout_budget(collections, environment.timeout_seconds, self.repo_root), container_name,
                 )
             result_path = artifacts / "result.json"
             if not result_path.is_file() or result_path.is_symlink():
@@ -440,18 +441,23 @@ def _copy_tracked_build_file(repository_fd: int, relative: str, destination_root
             os.close(descriptor)
 
 
-def _selection_timeout_budget(collections: Sequence[object], action_timeout: float) -> float:
-    units = 0
+def _selection_timeout_budget(
+    collections: Sequence[object], action_timeout: float, repo_root: Path | None = None,
+) -> float:
+    budget = 0.0
     for item in collections:
         if isinstance(item, Path):
-            units += 2  # one core case and its unittest action
+            budget += (
+                core_timeout_seconds(item, repo_root, action_timeout)
+                if repo_root is not None else float(action_timeout)
+            )
             continue
         if not isinstance(item, TestCollection):
             raise DockerRunnerUnavailable("unsupported Docker test selection")
         for case in item.cases:
             action_count = len(case.steps) + 1 + (1 if case.prepare is not None else 0)
-            units += 1 + action_count
-    return max(float(action_timeout) * max(units, 1) + 20.0, 30.0)
+            budget += float(action_timeout) * (1 + action_count)
+    return max(budget + 20.0, 30.0)
 
 
 def _docker_client_environment(
