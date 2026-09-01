@@ -30,6 +30,8 @@ class MaintenanceSummary:
     removed_skill_ids: tuple[str, ...] = ()
     manualized_skill_ids: tuple[str, ...] = ()
     affected_profile_ids: tuple[str, ...] = ()
+    affected_test_paths: tuple[str, ...] = ()
+    source_details: tuple[dict[str, object], ...] = ()
 
 
 @dataclass

@@ -10,7 +10,7 @@ def plan_data(plan: MaintenancePlan, *, status: str = "success") -> dict[str, ob
     return {
         "status": status,
         "operation": summary.operation,
-        "sources": list(summary.source_ids),
+        "sources": list(summary.source_details) or [{"source_id": source, "status": status, "repository": None, "track": None, "old_revision": None, "new_revision": None, "deltas": {}} for source in summary.source_ids],
         "skills": {
             "added": list(summary.added_skill_ids),
             "updated": list(summary.updated_skill_ids),
@@ -18,7 +18,7 @@ def plan_data(plan: MaintenancePlan, *, status: str = "success") -> dict[str, ob
             "manualized": list(summary.manualized_skill_ids),
         },
         "affected_profiles": list(summary.affected_profile_ids),
-        "affected_tests": [],
+        "affected_tests": list(summary.affected_test_paths),
     }
 
 
@@ -30,11 +30,15 @@ def format_maintenance_plan(plan: MaintenancePlan, color: bool = False) -> str:
     lines = [f"{title}"]
     if summary.source_ids:
         lines.extend(["", "Source"])
-        lines.extend(f"  Source       {source}" for source in summary.source_ids)
+        for source in data["sources"]:
+            lines.append(f"  Source       {source['source_id']}")
+            if source.get("repository"): lines.append(f"  Repository   {source['repository']}")
+            if source.get("track"): lines.append(f"  Track        {source['track']}")
+            if source.get("new_revision") is not None: lines.append(f"  Revision     {source.get('old_revision')} → {source['new_revision']}")
     lines.extend(["", "Skills"])
     for label, values in data["skills"].items():
         lines.append(f"  {label.capitalize():<12} {len(values)}")
-    lines.extend(["", "Profiles", f"  Affected     {len(summary.affected_profile_ids)}", "", "Tests", "  Affected     0"])
+    lines.extend(["", "Profiles", f"  Affected     {len(summary.affected_profile_ids)}", "", "Tests", f"  Affected     {len(summary.affected_test_paths)}"])
     return "\n".join(lines) + "\n"
 
 

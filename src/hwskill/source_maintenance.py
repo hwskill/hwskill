@@ -149,6 +149,7 @@ def plan_update_sources(
     source_ids: tuple[str, ...] | None,
     policies: UpdatePolicies,
     git_client: GitSourceClient,
+    track_overrides: dict[str, str] | None = None,
 ) -> MaintenancePlan:
     _validate_policies(policies)
     root = Path(repo_root)
@@ -169,6 +170,8 @@ def plan_update_sources(
     with ExitStack() as stack:
         snapshots: list[_MaterializedSource] = []
         for _, source in selected:
+            if track_overrides and source.source_id in track_overrides:
+                source = replace(source, upstream=replace(source.upstream, track=track_overrides[source.source_id]))
             checkout = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="hwskill-source-update-")))
             snapshots.append(_materialize_source(source, git_client, checkout))
 
