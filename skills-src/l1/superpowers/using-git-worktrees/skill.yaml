@@ -7,10 +7,9 @@ description: Use when starting feature work that needs isolation from current wo
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: using-git-worktrees
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:7f075ddc8b801393588275e37771aa2372bf0bed872cc2fe940ce39a87c413aa
+content_digest: sha256:98dc7da4ead1fe3c523c7ac314082f1f85114ad5e6ec39d4426b4a7f76ed9d0c

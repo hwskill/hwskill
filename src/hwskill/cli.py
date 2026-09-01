@@ -35,7 +35,7 @@ from .profiles import (
     unset_profiles,
 )
 from .projects import find_project
-from .registry import validate_registry, write_catalog
+from . import registry as registry_module
 from .search import search_skills
 from .skill_export import (
     export_skills,
@@ -47,6 +47,8 @@ from .maintenance_cli import register_maintenance_commands, run_maintenance_comm
 from .opencode_adapter import render_catalog as render_opencode_catalog
 from .paths import resolve_repo_root
 from .scopes import ScopeTarget, project_scope, user_scope
+from .source_manifest import SourceManifestError
+from .source_maintenance import SourceMaintenanceError, validate_integrity
 
 
 HOST_CHOICES = ("codex", "claude-code", "claude_code", "opencode")
@@ -179,6 +181,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     info_parser.add_argument("--project")
     info_parser.add_argument("--repo-root")
     info_parser.add_argument("--json", action="store_true")
+    integrity_parser = _command(
+        commands, "integrity-check", "Validate repository source integrity"
+    )
+    integrity_parser.add_argument("--repo-root")
     registry = _command(commands, "registry", "Manage the skill registry")
     registry_commands = _commands(registry, "registry_command")
     validate_parser = _command(registry_commands, "validate", "Validate registry contents")
@@ -371,13 +377,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(info, ensure_ascii=False, indent=2))
         else:
             print(format_info_summary(info), end="")
+    elif args.command == "integrity-check":
+        try:
+            validate_integrity(_repo_root(args.repo_root))
+        except (SourceManifestError, SourceMaintenanceError) as error:
+            print(f"integrity: {error}", file=sys.stderr)
+            return 1
+        print("Integrity check passed")
     elif args.command == "registry" and args.registry_command == "validate":
-        records = validate_registry(_repo_root(args.repo_root))
+        records = registry_module.validate_registry(_repo_root(args.repo_root))
         print("ID\tREVISION\tDIGEST")
         for record in records:
             print(f"{record.skill_id}\t{record.revision}\t{record.content_digest}")
     elif args.command == "registry" and args.registry_command == "build":
-        valid = write_catalog(_repo_root(args.repo_root), check=args.check)
+        valid = registry_module.write_catalog(_repo_root(args.repo_root), check=args.check)
         if args.check and not valid:
             return 1
     elif args.command == "profile" and args.profile_command == "set":
@@ -445,7 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         unbind_profile(project_path, _repo_root(args.repo_root), args.profile_id)
         print(f"UNBOUND\t{args.profile_id}")
     elif args.command == "skill" and args.skill_command == "list":
-        records = validate_registry(_repo_root(args.repo_root))
+        records = registry_module.validate_registry(_repo_root(args.repo_root))
         if args.json:
             print(
                 json.dumps(
@@ -476,7 +489,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{item.skill_id}\t{item.name}\t{item.layer}\t{item.revision}")
     elif args.command == "skill" and args.skill_command in {"dump", "dump-profile"}:
         registry_root = _repo_root(args.repo_root)
-        records = validate_registry(registry_root)
+        records = registry_module.validate_registry(registry_root)
         selected = (
             resolve_skill_selectors(args.selectors, records)
             if args.skill_command == "dump"

@@ -6,10 +6,9 @@ description: Use when creating new skills, editing existing skills, or verifying
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: writing-skills
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:92add4fd3d2d05d5ba55e123b1d6826962718fb5e314bff8fae00bb3e10a26d4
+content_digest: sha256:36da006f1b8402200fcae0f6c0edfac3220eb16fe015b75dc81d16caf6505d7e

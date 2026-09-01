@@ -6,10 +6,9 @@ description: Use when completing tasks, implementing major features, or before m
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: requesting-code-review
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:68b6bcf48e28cd571e0127cde5d49f656a51ea7d6392132b51b31e27d66e0995
+content_digest: sha256:f6b7bba1eac5267f0c317cf9e9bbfea3ab7ead130b1285cc79f66611232cd96f

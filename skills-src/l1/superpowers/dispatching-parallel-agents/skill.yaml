@@ -6,10 +6,9 @@ description: Use when facing 2+ independent tasks that can be worked on without 
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: dispatching-parallel-agents
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:12691ba9c624d5dc2460032016a770de1c7dd067c644278abca5f41bf892fd96
+content_digest: sha256:1acb899b23c2bdb5af5961e7b97ba43fb2a5593822db755747ef3d5db9f825a4

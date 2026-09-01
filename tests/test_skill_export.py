@@ -4,7 +4,7 @@ import unittest
 
 from hwskill.digest import content_digest
 from hwskill.models import SkillRecord
-from hwskill.registry import validate_registry
+from hwskill import registry as registry_module
 from hwskill.skill_export import (
     ExportError,
     export_skills,
@@ -43,14 +43,14 @@ class SkillExportTest(unittest.TestCase):
         )
 
     def select_two(self) -> tuple[SkillRecord, SkillRecord]:
-        by_id = {item.skill_id: item for item in validate_registry(ROOT)}
+        by_id = {item.skill_id: item for item in registry_module.validate_registry(ROOT)}
         return (
             by_id["local/chinese-thinking"],
             by_id["superpowers/systematic-debugging"],
         )
 
     def test_selectors_accept_ids_unique_names_mixed_and_multiple(self):
-        records = validate_registry(ROOT)
+        records = registry_module.validate_registry(ROOT)
 
         selected = resolve_skill_selectors(
             "local/chinese-thinking,systematic-debugging,chinese-thinking",
@@ -70,7 +70,7 @@ class SkillExportTest(unittest.TestCase):
 
     def test_profile_selection_unions_multiple_profiles_in_input_order(self):
         selected = skills_for_profiles(
-            "codex-demo,personal-baseline", ROOT, validate_registry(ROOT)
+            "codex-demo,personal-baseline", ROOT, registry_module.validate_registry(ROOT)
         )
 
         self.assertEqual(

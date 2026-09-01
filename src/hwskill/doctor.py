@@ -13,8 +13,13 @@ from .configuration import (
     codex_setup_is_current,
 )
 from .profiles import resolve_profiles
-from .registry import validate_registry
+from . import registry as registry_module
 from .scopes import ScopeTarget, project_scope, setup_state_path
+
+
+# Kept as a module attribute because information collection instruments this
+# validation boundary and asserts it is performed only once per host sweep.
+validate_registry = registry_module.validate_registry
 
 
 VERIFIED_OPENCODE_VERSION = "1.14.48"

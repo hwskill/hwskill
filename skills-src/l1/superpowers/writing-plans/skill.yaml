@@ -6,10 +6,9 @@ description: Use when you have a spec or requirements for a multi-step task, bef
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: writing-plans
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:0c55737121abd4452a0618816271762e9d6790edde4e28bb5404c1b32059143b
+content_digest: sha256:e0dd3fe342b24c3a0b4d8800f5b313e4e5b81d9eb1ee0e57adee7f90fb57a2fe

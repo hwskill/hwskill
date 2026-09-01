@@ -74,19 +74,6 @@ def _parse_provenance(source: object, skill_id: str) -> tuple[str, str | None, s
     if not isinstance(source, dict):
         raise RegistryValidationError(f"invalid source kind: {skill_id}")
     kind = source.get("kind")
-    if kind is None:
-        # Runtime readers preserve pre-schema-2 upstream records.  Source
-        # maintenance uses a stricter collector and never stages this form.
-        source_id = source.get("source_id")
-        revision = source.get("revision")
-        upstream_path = source.get("upstream_path")
-        if (
-            not isinstance(source_id, str) or not source_id.strip()
-            or not isinstance(revision, str) or not revision.strip() or revision == "manual"
-            or not isinstance(upstream_path, str) or not upstream_path.strip()
-        ):
-            raise RegistryValidationError(f"invalid legacy source kind: {skill_id}")
-        return "upstream", source_id, revision
     if kind == "manual":
         if set(source) != {"kind"}:
             raise RegistryValidationError(f"invalid manual source kind: {skill_id}")
@@ -110,7 +97,7 @@ def _parse_provenance(source: object, skill_id: str) -> tuple[str, str | None, s
 def build_catalog(repo_root: Path) -> dict[str, Any]:
     records = validate_registry(repo_root)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "skills": [
             {
                 "id": item.skill_id,

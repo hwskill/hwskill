@@ -4,8 +4,8 @@
 
 ## 当前内容
 
-- 3 个 `~/.agents/skills` 快照。
-- Superpowers 6.3.0 的 14 个 Skill 快照。
+- 3 个在本仓库直接维护的 manual Skill。
+- 固定跟踪 Superpowers `refs/tags/v6.3.0`（完整 resolved SHA）的 14 个 Skill 快照。
 - 每个快照都有来源、revision、许可证状态和 SHA-256 内容摘要。
 - `personal-baseline`、`superpowers`、`codex-demo` 三个 Profile。
 - Codex、Claude Code、OpenCode 的用户级与项目级 Catalog 注入，及共用的 STDIO MCP Search/Load 和 JSONL 审计。
@@ -167,17 +167,28 @@ hwskill skill dump <skill-id,skill-name,...> <skills-dir>
 
 ## 维护者流程
 
-> TODO: 待补充完善
+manual Skill 直接在 `skills-src/` 中维护；修改内容后更新其治理信息。upstream
+Skill 由 source manifest 记录远程 Git repository、track 和已解析 revision。仓库不支持
+从本地路径导入或同步 Skill。
 
 ```bash
-hwskill registry import --source sources/local-agents-skills.yaml --repo-root .
-hwskill registry import --source sources/superpowers.yaml --repo-root .
+# 检查上游固定 track 与当前快照的状态（只读）
+hwskill source check superpowers --repo-root .
+
+# 按已声明的策略更新上游 source；不会自动提交
+hwskill source update superpowers --on-added ignore --on-removed fail --yes --repo-root .
+
+# 修改 manual Skill 的 payload 后，重算其治理信息
+hwskill skill update local/chinese-thinking --repo-root .
+
+# 离线验证 source、Skill、Catalog 与 Profile 的一致性
+hwskill integrity-check --repo-root .
 hwskill registry validate --repo-root .
 hwskill registry build --repo-root .
 hwskill registry build --repo-root . --check
 ```
 
-导入默认不覆盖有差异的快照；审阅上游差异后才使用 `--update`。
+`source update` 的新增、删除与覆盖策略必须显式选择；固定 tag 如果被移动会作为错误报告，不会静默更新。
 
 ## Agent 链路
 
@@ -197,6 +208,13 @@ CLI 默认输出表格或 Markdown。传 `--json` 获取机器格式；`skill lo
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 -m hwskill registry validate --repo-root .
 PYTHONPATH=src python3 -m hwskill registry build --repo-root . --check
+```
+
+维护 source 或 Skill 后，先运行上述框架测试；单独运行 source-lifecycle 相关测试可使用：
+
+```bash
+PYTHONPATH=src python3 -m unittest tests.test_source_manifest tests.test_git_source \
+  tests.test_maintenance_transaction tests.test_source_maintenance tests.test_skill_maintenance -v
 ```
 
 Docker 离线运行验证：

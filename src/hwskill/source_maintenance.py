@@ -14,7 +14,7 @@ import yaml
 from .digest import content_digest
 from .git_source import DiscoveredSkill, GitSourceClient, GitSourceError, ResolvedTrack, discover_skills, verify_existing_tag
 from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction
-from .registry import RegistryValidationError, build_catalog
+from . import registry as registry_module
 from .source_manifest import (
     IgnoredSkill,
     ResolvedSourceSkill,
@@ -74,6 +74,11 @@ def inspect_source(repo_root: Path, source: UpstreamSource, git_client: GitSourc
     with tempfile.TemporaryDirectory(prefix="hwskill-source-inspection-") as temporary:
         snapshot = _materialize_source(source, git_client, Path(temporary))
         return snapshot.inspection
+
+
+def validate_integrity(repo_root: Path) -> None:
+    """Validate the offline source, Skill, Catalog, and Profile invariants."""
+    _validate_candidate(Path(repo_root))
 
 
 def plan_add_source(
@@ -462,8 +467,8 @@ def _catalog_content(root: Path) -> str:
     if not _has_governance(root):
         return json.dumps({"schema_version": 1, "skills": []}, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     try:
-        catalog = build_catalog(root)
-    except RegistryValidationError as error:
+        catalog = registry_module.build_catalog(root)
+    except registry_module.RegistryValidationError as error:
         raise SourceMaintenanceError(str(error)) from error
     return json.dumps(catalog, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
@@ -521,8 +526,8 @@ def _collect_catalog_records(root: Path) -> list[dict[str, object]]:
     if not _has_governance(root):
         return []
     try:
-        return [dict(item) for item in build_catalog(root)["skills"]]
-    except RegistryValidationError as error:
+        return [dict(item) for item in registry_module.build_catalog(root)["skills"]]
+    except registry_module.RegistryValidationError as error:
         raise SourceMaintenanceError(str(error)) from error
 
 

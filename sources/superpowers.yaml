@@ -1,36 +1,71 @@
+schema_version: 2
 source_id: superpowers
-kind: local
-root: /home/linkeo/.codex/plugins/cache/openai-curated-remote/superpowers/6.3.0/skills
-namespace: superpowers
-revision: 6.3.0
-license: MIT
-upstream_url: https://github.com/obra/superpowers
-skills:
-  - name: brainstorming
+kind: upstream
+upstream:
+  repository: https://github.com/obra/superpowers.git
+  track: refs/tags/v6.3.0
+  skills_path: skills
+  ignore: []
+defaults:
+  namespace: superpowers
+  layer: l1
+  license: MIT
+resolved:
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
+  skills:
+  - path: brainstorming
+    id: superpowers/brainstorming
     layer: l1
-  - name: dispatching-parallel-agents
+    content_digest: sha256:b29f0c4068279fb924ef3a467682d23be68700f90ca59990bba35c24088fd55e
+  - path: dispatching-parallel-agents
+    id: superpowers/dispatching-parallel-agents
     layer: l1
-  - name: executing-plans
+    content_digest: sha256:1acb899b23c2bdb5af5961e7b97ba43fb2a5593822db755747ef3d5db9f825a4
+  - path: executing-plans
+    id: superpowers/executing-plans
     layer: l1
-  - name: finishing-a-development-branch
+    content_digest: sha256:5036191743cbb55b8665ddf0d6b89daad668525adf28291fe1054e86e01972d9
+  - path: finishing-a-development-branch
+    id: superpowers/finishing-a-development-branch
     layer: l1
-  - name: receiving-code-review
+    content_digest: sha256:1da9182001d887c0fb8c62aeee35c8f65b438b32a30b79104baedcca9e0ebef6
+  - path: receiving-code-review
+    id: superpowers/receiving-code-review
     layer: l1
-  - name: requesting-code-review
+    content_digest: sha256:e5dd23be2d93f751c8b28d647c4b139754aedfe75648cd8e1100e47f5da0c3c5
+  - path: requesting-code-review
+    id: superpowers/requesting-code-review
     layer: l1
-  - name: subagent-driven-development
+    content_digest: sha256:f6b7bba1eac5267f0c317cf9e9bbfea3ab7ead130b1285cc79f66611232cd96f
+  - path: subagent-driven-development
+    id: superpowers/subagent-driven-development
     layer: l1
-  - name: systematic-debugging
+    content_digest: sha256:bf8c42f7b88b3a595f6b2384d82ab5be3e3e658df474f95012556af0c60dacac
+  - path: systematic-debugging
+    id: superpowers/systematic-debugging
     layer: l1
-  - name: test-driven-development
+    content_digest: sha256:e4263f70f52de0286442ea874f8d10c874b65e8e08af20595b6b241d996915f5
+  - path: test-driven-development
+    id: superpowers/test-driven-development
     layer: l1
-  - name: using-git-worktrees
+    content_digest: sha256:0ff8639af929add22342c8fbd7accfd26529c64c9998e2b65e78dfe73e19b48c
+  - path: using-git-worktrees
+    id: superpowers/using-git-worktrees
     layer: l1
-  - name: using-superpowers
+    content_digest: sha256:98dc7da4ead1fe3c523c7ac314082f1f85114ad5e6ec39d4426b4a7f76ed9d0c
+  - path: using-superpowers
+    id: superpowers/using-superpowers
     layer: l1
-  - name: verification-before-completion
+    content_digest: sha256:8e951150631a6709d37eb9fffbbaa5b4d6b4ecb4867e105367790d64ec8082eb
+  - path: verification-before-completion
+    id: superpowers/verification-before-completion
     layer: l1
-  - name: writing-plans
+    content_digest: sha256:d8a53168f152b6163bd3447f7d4c20b6b4cddf6bd907f9aa5856b514c032db0e
+  - path: writing-plans
+    id: superpowers/writing-plans
     layer: l1
-  - name: writing-skills
+    content_digest: sha256:e0dd3fe342b24c3a0b4d8800f5b313e4e5b81d9eb1ee0e57adee7f90fb57a2fe
+  - path: writing-skills
+    id: superpowers/writing-skills
     layer: l1
+    content_digest: sha256:36da006f1b8402200fcae0f6c0edfac3220eb16fe015b75dc81d16caf6505d7e

@@ -6,10 +6,9 @@ description: Use when implementing any feature or bugfix, before writing impleme
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: test-driven-development
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:2851ea6181731cbae61d343dc3956bfb326b3d397a12f2ca36b0f8b9f8ea7b7f
+content_digest: sha256:0ff8639af929add22342c8fbd7accfd26529c64c9998e2b65e78dfe73e19b48c

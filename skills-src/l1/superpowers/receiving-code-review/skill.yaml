@@ -7,10 +7,9 @@ description: Use when receiving code review feedback, before implementing sugges
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: receiving-code-review
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:160f29507d8798afccf4ff7197384da309fc2b826850cb7736c0cc4be5c0b38c
+content_digest: sha256:e5dd23be2d93f751c8b28d647c4b139754aedfe75648cd8e1100e47f5da0c3c5

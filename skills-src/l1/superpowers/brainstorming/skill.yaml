@@ -7,10 +7,9 @@ description: You MUST use this before any creative work - creating features, bui
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: brainstorming
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:8b2304dfb9006c173d921c50e859315dbcc76cde38d1edca0b175670ddc6b079
+content_digest: sha256:b29f0c4068279fb924ef3a467682d23be68700f90ca59990bba35c24088fd55e

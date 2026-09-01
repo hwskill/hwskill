@@ -6,10 +6,9 @@ description: Use when starting any conversation - establishes how to find and us
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: using-superpowers
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:ed7e1354ba7d32832cba67329d705516ae99a8541675c37c7de1403a8394fc73
+content_digest: sha256:8e951150631a6709d37eb9fffbbaa5b4d6b4ecb4867e105367790d64ec8082eb

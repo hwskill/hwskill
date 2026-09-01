@@ -6,10 +6,9 @@ description: Use when executing implementation plans with independent tasks in t
 layer: l1
 status: experimental
 source:
+  kind: upstream
   source_id: superpowers
-  revision: 6.3.0
+  revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
   upstream_path: subagent-driven-development
-  imported_at: '2026-08-27T06:10:28.883036Z'
-  upstream_url: https://github.com/obra/superpowers
 license: MIT
-content_digest: sha256:d829c250659ae9fe264abca5b827b844e61fe52545c359c9f4ff9fe4676255f0
+content_digest: sha256:bf8c42f7b88b3a595f6b2384d82ab5be3e3e658df474f95012556af0c60dacac

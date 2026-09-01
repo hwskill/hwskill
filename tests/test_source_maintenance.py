@@ -221,9 +221,9 @@ class SourceMaintenanceTest(unittest.TestCase):
             {"kind": "manual"},
         )
         self.assertEqual(yaml.safe_load((self.repo / "profiles/demo.yaml").read_text(encoding="utf-8"))["skills"], ["team/same-skill"])
-        from hwskill.registry import build_catalog, validate_registry
-        self.assertEqual(len(validate_registry(self.repo)), 3)
-        self.assertEqual(build_catalog(self.repo)["skills"][0]["source_kind"], "manual")
+        from hwskill import registry as registry_module
+        self.assertEqual(len(registry_module.validate_registry(self.repo)), 3)
+        self.assertEqual(registry_module.build_catalog(self.repo)["skills"][0]["source_kind"], "manual")
 
     def test_unrelated_ignore_rejects_invalid_or_unknown_provenance_kind(self) -> None:
         from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
