@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
+import sys
+from io import StringIO
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
@@ -203,7 +206,60 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
         build = calls[0]
         self.assertEqual(build[:2], ("docker", "build"))
         self.assertTrue(build[build.index("--file") + 1].endswith("/docker/test/Dockerfile"))
-        self.assertEqual(build[-1], str(Path.cwd().resolve()))
+        self.assertNotEqual(build[-1], str(Path.cwd().resolve()))
+        self.assertIn("hwskill-build-context-", Path(build[-1]).name)
+
+    def test_build_context_contains_only_tracked_allowlisted_files(self) -> None:
+        from hwskill.docker_test_runner import DockerRunnerUnavailable, DockerTestRunner
+        from hwskill.test_configuration import HostModel, TestConfiguration
+
+        observed = {}
+        with TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            subprocess.run(("git", "init", "-q"), cwd=repo, check=True)
+            for name in ("README.md", "install.sh", "pyproject.toml", ".gitignore", ".dockerignore"):
+                (repo / name).write_text(name, encoding="utf-8")
+            for name in ("examples", "profiles", "registry", "scripts", "skills-src", "sources", "src", "tests"):
+                path = repo / name / "tracked.txt"
+                path.parent.mkdir()
+                path.write_text(name, encoding="utf-8")
+            dockerfile = repo / "docker/test/Dockerfile"
+            dockerfile.parent.mkdir(parents=True)
+            dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+            (dockerfile.parent / "entrypoint.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            (dockerfile.parent / "requirements.lock").write_text("", encoding="utf-8")
+            subprocess.run(("git", "add", "."), cwd=repo, check=True)
+            (repo / ".env").write_text("root-sentinel", encoding="utf-8")
+            (repo / "src/untracked.token").write_text("nested-sentinel", encoding="utf-8")
+
+            def execute(argv, **kwargs):
+                if argv[:2] == ("docker", "build"):
+                    context = Path(argv[-1])
+                    observed["mode"] = stat.S_IMODE(context.stat().st_mode)
+                    observed["files"] = tuple(
+                        path.relative_to(context).as_posix() for path in context.rglob("*") if path.is_file()
+                    )
+                    observed["content"] = "\n".join(
+                        path.read_text(encoding="utf-8", errors="replace")
+                        for path in context.rglob("*") if path.is_file()
+                    )
+                    observed["dockerfile"] = argv[argv.index("--file") + 1]
+                    observed["docker_host"] = kwargs["env"].get("DOCKER_HOST")
+                    return subprocess.CompletedProcess(argv, 1, "", "build stopped by test")
+                raise AssertionError(argv)
+
+            config = TestConfiguration("docker", "codex", {"codex": HostModel("model", "high")})
+            with patch.dict(os.environ, {"DOCKER_HOST": "tcp://remote.example:2376"}, clear=False):
+                with self.assertRaises(DockerRunnerUnavailable):
+                    DockerTestRunner(repo, config, command_runner=execute).build()
+
+        self.assertEqual(observed["mode"], 0o700)
+        self.assertNotIn(".env", observed["files"])
+        self.assertNotIn("src/untracked.token", observed["files"])
+        self.assertNotIn("sentinel", observed["content"])
+        self.assertNotEqual(observed["dockerfile"], str(dockerfile))
+        self.assertEqual(observed["docker_host"], "tcp://remote.example:2376")
 
     def test_inspect_rejects_wrong_image_label_without_building(self) -> None:
         from hwskill.docker_test_runner import DockerRunnerUnavailable, DockerTestRunner
@@ -353,7 +409,7 @@ class DockerExecutionTests(unittest.TestCase):
                 "host_version": "0.147.0",
                 "blocked_reason": None,
                 "collections": [{
-                    "kind": "core", "target_id": "core", "status": "PASS",
+                    "kind": "core", "target_id": "core", "selection_path": "tests/core", "status": "PASS",
                     "cases": [{
                         "case_id": "core", "status": "PASS", "artifact_dir": "core/core",
                         "actions": [{
@@ -417,6 +473,101 @@ class DockerExecutionTests(unittest.TestCase):
         self.assertEqual(result.collections, ())
         self.assertIn("Docker", result.blocked_reason)
 
+    def test_timeout_cleans_only_the_unguessable_named_container_without_secrets(self) -> None:
+        from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
+        from hwskill.test_runner import TestEnvironment
+
+        calls = []
+        def execute(argv, **kwargs):
+            calls.append((tuple(argv), kwargs))
+            if argv[:2] == ("docker", "run"):
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            if argv[:3] == ("docker", "container", "ls"):
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            (repo / "tests/core").mkdir(parents=True)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            environment = TestEnvironment(
+                repo, "docker", "codex", "model", "high",
+                environment_variables=(("CODEX_API_KEY", "secret-sentinel"),), timeout_seconds=1,
+            )
+            runner = DockerTestRunner(
+                repo, self._config(), image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "f" * 64),
+                command_runner=execute,
+            )
+            result = runner.run((Path("tests/core"),), environment, artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        run = next(argv for argv, _kwargs in calls if argv[:2] == ("docker", "run"))
+        name = run[run.index("--name") + 1]
+        self.assertRegex(name, r"^hwskill-run-[0-9a-f]{32}$")
+        self.assertIn(("docker", "stop", "--time", "5", name), [argv for argv, _kwargs in calls])
+        self.assertIn(("docker", "rm", "--force", name), [argv for argv, _kwargs in calls])
+        self.assertIn(
+            ("docker", "container", "ls", "--all", "--quiet", "--filter", f"name=^/{name}$"),
+            [argv for argv, _kwargs in calls],
+        )
+        cleanup_calls = [item for item in calls if item[0][:2] != ("docker", "run")]
+        self.assertNotIn("secret-sentinel", repr(cleanup_calls))
+
+    def test_outer_timeout_budget_counts_every_case_and_action(self) -> None:
+        from hwskill.docker_test_runner import _result_expectations, _selection_timeout_budget
+        from hwskill.test_manifest import CommandAction, TestCase, TestCollection, TestTarget
+
+        action = CommandAction("step", "true")
+        post = CommandAction("check", "true")
+        cases = tuple(TestCase(f"case-{index}", None, None, None, (action,), post) for index in range(3))
+        collection = TestCollection(
+            Path("tests/skills/local/example/test.yaml"), TestTarget("skill", "local/example"),
+            cases, Path("tests/skills/local/example/fixtures"),
+        )
+
+        self.assertEqual(_selection_timeout_budget((collection,), 10), 110)
+        targeted = _result_expectations((Path("tests/core/test_models.py"),), Path.cwd())
+        self.assertEqual(targeted[0].cases[0].case_id, "tests/core/test_models.py")
+
+    def test_forged_pass_for_unrelated_selection_is_blocked(self) -> None:
+        from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
+        from hwskill.test_runner import TestEnvironment
+
+        def execute(argv, **kwargs):
+            mounts = [argv[index + 1] for index, value in enumerate(argv) if value == "--mount"]
+            artifact_mount = next(value for value in mounts if "dst=/artifacts" in value)
+            artifact_root = Path(artifact_mount.split("src=", 1)[1].split(",dst=", 1)[0])
+            (artifact_root / "result.json").write_text(json.dumps({
+                "schema_version": 1, "status": "PASS", "runner": "docker", "host": "codex",
+                "model": "model", "host_version": "0.147.0", "blocked_reason": None,
+                "collections": [{
+                    "kind": "profile", "target_id": "unrelated", "selection_path": "tests/core", "status": "PASS",
+                    "cases": [{"case_id": "fake", "status": "PASS", "artifact_dir": "fake",
+                               "actions": [{"action_id": "fake", "status": "completed", "exit_code": 0,
+                                            "artifact_dir": "fake/action"}]}],
+                }],
+            }), encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            (repo / "tests/core").mkdir(parents=True)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            runner = DockerTestRunner(
+                repo, self._config(), image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "f" * 64),
+                command_runner=execute,
+            )
+            result = runner.run(
+                (Path("tests/core"),), TestEnvironment(repo, "docker", "codex", "model", "high"), artifacts,
+            )
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.collections, ())
+
     def test_result_reader_rejects_a_symlink_instead_of_following_it(self) -> None:
         from hwskill.docker_test_runner import DockerRunnerUnavailable, _load_result
 
@@ -433,6 +584,81 @@ class DockerExecutionTests(unittest.TestCase):
 
             with self.assertRaises(DockerRunnerUnavailable):
                 _load_result(link, root)
+
+    def test_result_binding_rejects_missing_duplicate_extra_and_inconsistent_evidence(self) -> None:
+        from hwskill.docker_test_runner import (
+            DockerRunnerUnavailable, _ExpectedCase, _ExpectedCollection, _load_result,
+        )
+
+        valid = {
+            "schema_version": 1, "status": "PASS", "runner": "docker", "host": "codex",
+            "model": "model", "host_version": "0.147.0", "blocked_reason": None,
+            "collections": [{
+                "kind": "core", "target_id": "core", "selection_path": "tests/core", "status": "PASS",
+                "cases": [{"case_id": "core", "status": "PASS", "artifact_dir": "core",
+                           "actions": [{"action_id": "unittest", "status": "completed", "exit_code": 0,
+                                        "artifact_dir": "core/action"}]}],
+            }],
+        }
+        expected = (_ExpectedCollection("tests/core", "core", "core", (_ExpectedCase("core", ("unittest",), True),)),)
+        mutations = {}
+        mutations["missing"] = json.loads(json.dumps(valid))
+        mutations["missing"]["collections"][0]["cases"][0]["actions"] = []
+        mutations["duplicate"] = json.loads(json.dumps(valid))
+        mutations["duplicate"]["collections"][0]["cases"][0]["actions"] *= 2
+        mutations["extra"] = json.loads(json.dumps(valid))
+        mutations["extra"]["collections"] *= 2
+        mutations["wrong-path"] = json.loads(json.dumps(valid))
+        mutations["wrong-path"]["collections"][0]["selection_path"] = "tests/core/test_other.py"
+        mutations["inconsistent"] = json.loads(json.dumps(valid))
+        mutations["inconsistent"]["collections"][0]["cases"][0]["actions"][0]["exit_code"] = 7
+
+        for name, payload in mutations.items():
+            with self.subTest(name=name), TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / "result.json"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaises(DockerRunnerUnavailable):
+                    _load_result(path, root, expected)
+
+    def test_agent_post_check_result_is_recomputed_from_strict_final_response(self) -> None:
+        from hwskill.docker_test_runner import (
+            DockerRunnerUnavailable, _ExpectedCase, _ExpectedCollection, _load_result,
+        )
+
+        payload = {
+            "schema_version": 1, "status": "PASS", "runner": "docker", "host": "codex",
+            "model": "model", "host_version": "0.147.0", "blocked_reason": None,
+            "collections": [{
+                "kind": "skill", "target_id": "local/agent", "selection_path": "tests/skills/local/agent/test.yaml",
+                "status": "PASS", "cases": [{
+                    "case_id": "agent-case", "status": "PASS", "artifact_dir": "skill/case",
+                    "actions": [{"action_id": "judge", "status": "completed", "exit_code": 0,
+                                 "artifact_dir": "skill/case/actions/judge"}],
+                }],
+            }],
+        }
+        expected = (_ExpectedCollection(
+            "tests/skills/local/agent/test.yaml", "skill", "local/agent",
+            (_ExpectedCase("agent-case", ("judge",), False),),
+        ),)
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            result_path = root / "result.json"
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(DockerRunnerUnavailable):
+                _load_result(result_path, root, expected)
+
+            response = root / "skill/case/actions/judge/final-response.md"
+            response.parent.mkdir(parents=True)
+            response.write_text('{"result":"pass","evidence":["verified"]}', encoding="utf-8")
+            accepted = _load_result(result_path, root, expected)
+
+            response.write_text('{"result":"fail","evidence":["failed"]}', encoding="utf-8")
+            with self.assertRaises(DockerRunnerUnavailable):
+                _load_result(result_path, root, expected)
+
+        self.assertEqual(accepted.status, "PASS")
 
     def test_agent_selection_enables_network_while_command_only_selection_does_not(self) -> None:
         from hwskill.docker_test_runner import selection_network_mode
@@ -516,6 +742,189 @@ class DockerExecutionTests(unittest.TestCase):
 
 
 class WorkerExecutionTests(unittest.TestCase):
+    def test_guard_can_exec_the_active_python_runtime(self) -> None:
+        from hwskill import network_guard
+
+        with TemporaryDirectory() as directory:
+            completed = subprocess.run(
+                (sys.executable, str(Path(network_guard.__file__).resolve()),
+                 "--read-write", directory, "--", sys.executable, "-c", "print('runtime-ok')"),
+                text=True, capture_output=True, check=False,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "runtime-ok")
+
+    def test_real_guard_runs_targeted_core_with_stable_repository_pythonpath(self) -> None:
+        from hwskill import network_guard
+        from hwskill.test_cli import _run_core_path
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            repo = root / "registry"
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            (repo / "src/current_only").mkdir(parents=True)
+            (repo / "src/current_only/__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+            (core / "test_current.py").write_text(
+                "import unittest, current_only\n"
+                "class Current(unittest.TestCase):\n"
+                " def test_current(self): self.assertEqual(current_only.VALUE, 7)\n",
+                encoding="utf-8",
+            )
+            artifacts = root / "artifacts"
+            workspace = root / "workspace"
+            artifacts.mkdir()
+            workspace.mkdir()
+            environment = TestEnvironment(
+                repo, "docker", "codex", "model", "high", workspace_root=workspace,
+                command_path=f"{Path(sys.executable).parent}:{os.defpath}",
+                command_prefix=(
+                    sys.executable, str(Path(network_guard.__file__).resolve()),
+                    "--read-only", str(repo), "--read-only", str(repo / "tests"),
+                    "--read-write", str(artifacts), "--read-write", str(workspace), "--",
+                ),
+            )
+            result = _run_core_path(Path("tests/core/test_current.py"), repo, artifacts, environment)
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(result.cases[0].case_id, "tests/core/test_current.py")
+
+    def test_unavailable_filesystem_isolation_is_explicitly_blocked(self) -> None:
+        from contextlib import redirect_stderr
+        from hwskill import network_guard
+
+        error = StringIO()
+        with patch.object(network_guard, "install_filesystem_guard", side_effect=OSError("unavailable")), redirect_stderr(error):
+            code = network_guard.main(("--read-only", "/tmp", "--", "true"))
+
+        self.assertEqual(code, 125)
+        self.assertIn("isolation guard unavailable", error.getvalue())
+    def test_command_environment_excludes_agent_credentials(self) -> None:
+        from hwskill.test_runner import TestEnvironment, _agent_environment, _command_environment
+
+        with TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            environment = TestEnvironment(
+                workspace, "docker", "codex", "model", "high",
+                environment_variables=(("CODEX_API_KEY", "secret-sentinel"),),
+                command_environment_variables=(),
+                command_path="/fixed/venv/bin:/usr/local/bin:/usr/bin:/bin",
+            )
+
+            command = _command_environment(environment, workspace)
+            agent = _agent_environment(environment, workspace)
+
+        self.assertNotIn("CODEX_API_KEY", command)
+        self.assertEqual(command["PATH"], "/fixed/venv/bin:/usr/local/bin:/usr/bin:/bin")
+        self.assertEqual(agent["CODEX_API_KEY"], "secret-sentinel")
+
+    def test_command_guard_denies_parent_environment_and_credential_store(self) -> None:
+        from hwskill import network_guard
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            artifacts = root / "artifacts"
+            readonly = root / "readonly"
+            denied = root / "credentials/auth.json"
+            for path in (workspace, artifacts, readonly, denied.parent):
+                path.mkdir(parents=True, exist_ok=True)
+            denied.write_text("store-sentinel", encoding="utf-8")
+            probe = (
+                "import os,pathlib; out=pathlib.Path(os.environ['OUT']); values=[]; "
+                "values.append(os.environ.get('CODEX_API_KEY','absent')); "
+                "\ntry: values.append(open('/proc/%d/environ'%os.getppid(),'rb').read().decode(errors='ignore'))"
+                "\nexcept OSError: values.append('proc-denied'); "
+                f"\ntry: values.append(open({str(denied)!r}).read())"
+                "\nexcept OSError: values.append('store-denied'); out.write_text('\\n'.join(values))"
+            )
+            completed = subprocess.run(
+                (sys.executable, str(Path(network_guard.__file__).resolve()),
+                 "--read-only", str(readonly), "--read-write", str(workspace),
+                 "--read-write", str(artifacts), "--", "/usr/bin/python3", "-c", probe),
+                text=True, capture_output=True, check=False,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8", "OUT": str(artifacts / "probe.txt"),
+                     "CODEX_API_KEY": "env-sentinel"},
+            )
+
+            observed = (artifacts / "probe.txt").read_text(encoding="utf-8") if (artifacts / "probe.txt").exists() else ""
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(observed.splitlines(), ["env-sentinel", "proc-denied", "store-denied"])
+
+    def test_mixed_collection_gives_credentials_only_to_agent_and_commands_cannot_recover_them(self) -> None:
+        from hwskill import network_guard
+        from hwskill.test_artifacts import ActionResult
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import TestEnvironment, _agent_environment, run_collection
+
+        class Agent:
+            observed = None
+
+            def run(self, action, context):
+                self.observed = _agent_environment(context.environment, context.workspace)
+                return ActionResult(action.action_id, "completed", 0, context.artifact_dir)
+
+        manifest = """\
+schema_version: 1
+target: {kind: skill, id: local/isolation}
+cases:
+  - id: mixed
+    steps:
+      - {type: agent, id: agent, prompt: observe}
+      - type: command
+        id: attack
+        command: >-
+          test -z "${CODEX_API_KEY+x}" &&
+          ! grep -a 'secret-sentinel' /proc/$PPID/environ &&
+          ! cat CREDENTIAL_STORE > ARTIFACT_ROOT/leak
+    post_check: {type: command, id: post, command: test ! -s ARTIFACT_ROOT/leak}
+"""
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            repo = root / "registry"
+            target = repo / "tests/skills/local/isolation"
+            target.mkdir(parents=True)
+            artifacts = root / "artifacts"
+            workspace = root / "workspace"
+            store = root / "credentials/auth.json"
+            (target / "test.yaml").write_text(
+                manifest.replace("CREDENTIAL_STORE", str(store)).replace("ARTIFACT_ROOT", str(artifacts)),
+                encoding="utf-8",
+            )
+            artifacts.mkdir()
+            workspace.mkdir()
+            store.parent.mkdir()
+            store.write_text("store-sentinel", encoding="utf-8")
+            collection = load_test_collection(target / "test.yaml", repo)
+            environment = TestEnvironment(
+                repo, "docker", "codex", "model", "high",
+                secret_values=("secret-sentinel", "store-sentinel"),
+                environment_variables=(("CODEX_API_KEY", "secret-sentinel"),),
+                command_environment_variables=(),
+                workspace_root=workspace,
+                command_prefix=(
+                    sys.executable, str(Path(network_guard.__file__).resolve()),
+                    "--read-only", str(repo), "--read-only", str(repo / "tests"),
+                    "--read-write", str(artifacts), "--read-write", str(workspace), "--",
+                ),
+            )
+            agent = Agent()
+            with patch.dict(os.environ, {"CODEX_API_KEY": "secret-sentinel"}):
+                result = run_collection(collection, environment, artifacts, agent_executor=agent)
+
+            persisted = "\n".join(
+                path.read_text(encoding="utf-8", errors="replace")
+                for path in artifacts.rglob("*") if path.is_file()
+            )
+
+        self.assertEqual(result.status, "PASS", persisted)
+        self.assertEqual(agent.observed["CODEX_API_KEY"], "secret-sentinel")
+        self.assertNotIn("secret-sentinel", persisted)
+        self.assertNotIn("store-sentinel", persisted)
     def test_claude_worker_discovers_hidden_credentials_in_config_directory(self) -> None:
         from hwskill.test_worker import WorkerRequest, _credential_material
 
@@ -590,6 +999,27 @@ class WorkerExecutionTests(unittest.TestCase):
             popen.call_args.args[0],
             ("python", str(Path(network_guard.__file__).resolve()), "--", "/bin/bash", "-lc", "true"),
         )
+
+    def test_command_executor_blocks_when_isolation_guard_cannot_install(self) -> None:
+        from hwskill.test_manifest import CommandAction
+        from hwskill.test_runner import ActionContext, CommandExecutor, TestEnvironment
+
+        process = Mock(returncode=125)
+        process.communicate.return_value = ("", "hwskill isolation guard unavailable\n")
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            artifacts = root / "artifacts"
+            workspace.mkdir()
+            artifacts.mkdir()
+            environment = TestEnvironment(root, "docker", "codex", "model", "high", command_prefix=("guard", "--"))
+            with patch("hwskill.test_runner.subprocess.Popen", return_value=process):
+                result = CommandExecutor().run(
+                    CommandAction("command", "true"), ActionContext(workspace, artifacts, environment),
+                )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertIsNone(result.exit_code)
 
     def test_worker_denies_network_syscalls_for_command_actions_even_in_agent_capable_container(self) -> None:
         from hwskill.test_worker import execute_worker, load_worker_request

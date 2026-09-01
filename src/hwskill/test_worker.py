@@ -17,9 +17,9 @@ from .hosts import HOST_SPECS
 from .hosts import canonical_host
 from . import network_guard
 from .test_agent import AgentExecutor
-from .test_artifacts import CollectionResult
+from .test_artifacts import ActionResult, CollectionResult, safe_artifact_id
 from .test_configuration import HostModel, TestConfiguration, resolve_host_model
-from .test_manifest import TestManifestError, load_test_collection
+from .test_manifest import TestCollection, TestManifestError, load_test_collection
 from .test_runner import TestEnvironment, run_collection
 from .test_setup import parse_host_version
 
@@ -185,7 +185,7 @@ def execute_worker(
                 "BLOCKED", artifacts, (), "docker", request.host, request.model, "unavailable",
                 blocked_reason="container Agent host version is unavailable or unsupported",
             )
-            _write_worker_result(result, artifacts)
+            _write_worker_result(result, artifacts, request.selections)
             return 3
         selections = _load_selections(request, repository)
         environment_variables, store_available, store_secret_values = _credential_material(request)
@@ -196,9 +196,15 @@ def execute_worker(
                 + store_secret_values
             ),
             environment_variables=environment_variables,
+            command_environment_variables=(),
+            command_path=f"{Path(sys.executable).parent}:/usr/local/bin:/usr/bin:/bin",
             timeout_seconds=request.timeout_seconds,
             workspace_root=workspace,
-            command_prefix=(sys.executable, str(Path(network_guard.__file__).resolve()), "--"),
+            command_prefix=(
+                sys.executable, str(Path(network_guard.__file__).resolve()),
+                "--read-only", str(repository), "--read-only", str(tests),
+                "--read-write", str(artifacts), "--read-write", str(workspace), "--",
+            ),
         )
         agent_executor = AgentExecutor(
             credential_available=lambda host: host == request.host and (
@@ -225,7 +231,7 @@ def execute_worker(
         else:
             status = "PASS"
         result = TestRunResult(status, artifacts, tuple(results), "docker", request.host, request.model, version)
-        _write_worker_result(result, artifacts)
+        _write_worker_result(result, artifacts, request.selections, selections)
         return {"PASS": 0, "FAIL": 1, "BLOCKED": 3}[status]
     except (OSError, ValueError, TestManifestError):
         try:
@@ -234,7 +240,7 @@ def execute_worker(
                 "BLOCKED", artifacts, (), "docker", request.host, request.model, "unavailable",
                 blocked_reason="container test execution is unavailable",
             )
-            _write_worker_result(result, artifacts)
+            _write_worker_result(result, artifacts, request.selections)
         except (OSError, ValueError):
             pass
         return 3
@@ -348,7 +354,12 @@ def _probe_host_version(host: str) -> str | None:
     return version if completed.returncode == 0 else None
 
 
-def _write_worker_result(result: TestRunResult, artifact_root: Path) -> None:
+def _write_worker_result(
+    result: TestRunResult,
+    artifact_root: Path,
+    selections: tuple[WorkerSelection, ...] = (),
+    loaded_selections: tuple[object, ...] = (),
+) -> None:
     payload = {
         "schema_version": 1,
         "status": result.status,
@@ -357,7 +368,13 @@ def _write_worker_result(result: TestRunResult, artifact_root: Path) -> None:
         "model": result.model,
         "host_version": result.host_version,
         "blocked_reason": result.blocked_reason,
-        "collections": [_collection_payload(item, artifact_root) for item in result.collections],
+        "collections": [
+            _collection_payload(
+                item, artifact_root, selection.path,
+                loaded_selections[index] if index < len(loaded_selections) else None,
+            )
+            for index, (item, selection) in enumerate(zip(result.collections, selections))
+        ],
     }
     path = artifact_root / "result.json"
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -366,17 +383,36 @@ def _write_worker_result(result: TestRunResult, artifact_root: Path) -> None:
         handle.write("\n")
 
 
-def _collection_payload(collection, root: Path) -> dict[str, object]:
+def _collection_payload(collection, root: Path, selection_path: str, selected: object | None = None) -> dict[str, object]:
     core = collection.target.target_id == "core"
     return {
         "kind": "core" if core else collection.target.kind,
         "target_id": "core" if core else collection.target.target_id,
+        "selection_path": selection_path,
         "status": collection.status,
-        "cases": [_case_payload(case, root) for case in collection.cases],
+        "cases": [
+            _case_payload(
+                case, root,
+                selected.cases[index] if isinstance(selected, TestCollection) and index < len(selected.cases) else None,
+            )
+            for index, case in enumerate(collection.cases)
+        ],
     }
 
 
-def _case_payload(case, root: Path) -> dict[str, object]:
+def _case_payload(case, root: Path, selected_case=None) -> dict[str, object]:
+    actions = list(case.actions)
+    if selected_case is not None:
+        declared = (() if selected_case.prepare is None else (selected_case.prepare,)) + selected_case.steps + (selected_case.post_check,)
+        observed_ids = tuple(action.action_id for action in actions)
+        expected_prefix = tuple(action.action_id for action in declared[:len(actions)])
+        if observed_ids != expected_prefix:
+            raise WorkerRequestError("executed actions do not match the selected manifest")
+        for action in declared[len(actions):]:
+            actions.append(ActionResult(
+                action.action_id, "blocked", None,
+                case.artifact_dir / "actions" / safe_artifact_id(action.action_id),
+            ))
     return {
         "case_id": case.case_id,
         "status": case.status,
@@ -386,7 +422,7 @@ def _case_payload(case, root: Path) -> dict[str, object]:
             "status": action.status,
             "exit_code": action.exit_code,
             "artifact_dir": _relative_artifact(action.artifact_dir, root),
-        } for action in case.actions],
+        } for action in actions],
     }
 
 

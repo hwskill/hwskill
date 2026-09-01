@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import secrets
+import shutil
 import stat
 import subprocess
 import tempfile
 from typing import Literal
 
 from .hosts import HOST_SPECS
-from .test_artifacts import ActionResult, CaseResult, CollectionResult
+from .test_artifacts import ActionResult, CaseResult, CollectionResult, safe_artifact_id
 from .test_configuration import TestConfiguration
 from .test_manifest import AgentAction, TestCollection, TestTarget
 
@@ -40,6 +44,11 @@ _DOCKER_CLIENT_ENVIRONMENT_NAMES = (
     "DOCKER_TLS_VERIFY",
     "DOCKER_CERT_PATH",
 )
+_BUILD_CONTEXT_INPUTS = (
+    "README.md", "install.sh", "pyproject.toml", ".gitignore", ".dockerignore",
+    "examples", "profiles", "registry", "scripts", "skills-src", "sources", "src", "tests", "docker/test",
+)
+_CONTAINER_NAME = re.compile(r"hwskill-run-[0-9a-f]{32}\Z")
 
 
 class DockerRunnerUnavailable(RuntimeError):
@@ -88,6 +97,21 @@ class DockerTestRequest:
     credential_files: tuple[CredentialFile, ...] = ()
 
 
+@dataclass(frozen=True)
+class _ExpectedCase:
+    case_id: str
+    action_ids: tuple[str, ...]
+    command_post_check: bool
+
+
+@dataclass(frozen=True)
+class _ExpectedCollection:
+    selection_path: str
+    kind: str
+    target_id: str
+    cases: tuple[_ExpectedCase, ...]
+
+
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -114,11 +138,12 @@ class DockerTestRunner:
         self._credential_files = credential_files
 
     def build(self) -> ImageInfo:
-        dockerfile = self.repo_root / "docker" / "test" / "Dockerfile"
-        completed = self._invoke((
-            "docker", "build", "--pull=false", "--file", str(dockerfile),
-            "--tag", _IMAGE_NAME, str(self.repo_root),
-        ), timeout=1800)
+        with _private_build_context(self.repo_root) as context:
+            dockerfile = context / "docker" / "test" / "Dockerfile"
+            completed = self._invoke((
+                "docker", "build", "--pull=false", "--file", str(dockerfile),
+                "--tag", _IMAGE_NAME, str(context),
+            ), timeout=1800)
         if completed.returncode != 0:
             raise DockerRunnerUnavailable("standard test image build failed")
         self._image = self.inspect_image()
@@ -141,7 +166,7 @@ class DockerTestRunner:
             raise DockerRunnerUnavailable("standard test image labels are unsupported")
         return ImageInfo(_IMAGE_NAME, digest)
 
-    def build_run_command(self, request: DockerTestRequest) -> tuple[str, ...]:
+    def build_run_command(self, request: DockerTestRequest, *, container_name: str | None = None) -> tuple[str, ...]:
         identity = self._image
         if identity is None or _DIGEST.fullmatch(identity.digest) is None:
             raise DockerRunnerUnavailable("a verified standard image identity is required")
@@ -166,6 +191,10 @@ class DockerTestRunner:
             "--env", "HOME=/workspace/home",
             "--env", "HWSKILL_REGISTRY_ROOT=/registry",
         ]
+        if container_name is not None:
+            if _CONTAINER_NAME.fullmatch(container_name) is None:
+                raise DockerRunnerUnavailable("Docker container name is invalid")
+            argv[2:2] = ("--name", container_name)
         seen_names: set[str] = set()
         for name, _value in request.environment_variables:
             if name in seen_names or not _approved_environment_name(self.config.default_host, name):
@@ -194,6 +223,7 @@ class DockerTestRunner:
             if self._image is None:
                 self._image = self.inspect_image()
             payload = _worker_request_payload(collections, environment, self.repo_root)
+            expectations = _result_expectations(collections, self.repo_root)
             with tempfile.TemporaryDirectory(prefix="hwskill-docker-request-") as request_directory, tempfile.TemporaryDirectory(
                 prefix="hwskill-docker-workspace-"
             ) as workspace_directory:
@@ -208,12 +238,16 @@ class DockerTestRunner:
                     selection_network_mode(collections),
                     tuple(environment.environment_variables), self._credential_files,
                 )
-                argv = self.build_run_command(request)
-                completed = self._run_container(argv, environment.environment_variables, environment.timeout_seconds)
+                container_name = "hwskill-run-" + secrets.token_hex(16)
+                argv = self.build_run_command(request, container_name=container_name)
+                completed = self._run_container(
+                    argv, environment.environment_variables,
+                    _selection_timeout_budget(collections, environment.timeout_seconds), container_name,
+                )
             result_path = artifacts / "result.json"
             if not result_path.is_file() or result_path.is_symlink():
                 raise DockerRunnerUnavailable("Docker worker did not produce a result")
-            result = _load_result(result_path, artifacts)
+            result = _load_result(result_path, artifacts, expectations)
             expected_code = {"PASS": 0, "FAIL": 1, "BLOCKED": 3}[result.status]
             if completed.returncode != expected_code:
                 raise DockerRunnerUnavailable("Docker worker exit status does not match its result")
@@ -235,16 +269,43 @@ class DockerTestRunner:
         argv: Sequence[str],
         environment_variables: Sequence[tuple[str, str]],
         timeout_seconds: float,
+        container_name: str,
     ) -> subprocess.CompletedProcess[str]:
         child_environment = _docker_client_environment(environment_variables)
         try:
             return self._command_runner(
                 tuple(argv), text=True, capture_output=True,
-                timeout=max(float(timeout_seconds) + 30.0, 60.0), check=False,
+                timeout=timeout_seconds, check=False,
                 env=child_environment,
             )
         except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
+            self._cleanup_container(container_name)
             raise DockerRunnerUnavailable("Docker worker is unavailable") from exc
+
+    def _cleanup_container(self, container_name: str) -> None:
+        if _CONTAINER_NAME.fullmatch(container_name) is None:
+            raise DockerRunnerUnavailable("refusing unsafe Docker cleanup target")
+        environment = _docker_client_environment()
+        for argv in (
+            ("docker", "stop", "--time", "5", container_name),
+            ("docker", "rm", "--force", container_name),
+        ):
+            try:
+                self._command_runner(
+                    argv, text=True, capture_output=True, timeout=10, check=False, env=environment,
+                )
+            except (OSError, subprocess.SubprocessError, TimeoutError):
+                pass
+        try:
+            inspected = self._command_runner(
+                ("docker", "container", "ls", "--all", "--quiet", "--filter", f"name=^/{container_name}$"),
+                text=True, capture_output=True,
+                timeout=10, check=False, env=environment,
+            )
+        except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
+            raise DockerRunnerUnavailable("Docker container cleanup could not be confirmed") from exc
+        if inspected.returncode != 0 or inspected.stdout.strip():
+            raise DockerRunnerUnavailable("Docker container cleanup failed")
 
     def _invoke(self, argv: Sequence[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
         try:
@@ -258,6 +319,105 @@ class DockerTestRunner:
 
 def standard_image_name() -> str:
     return _IMAGE_NAME
+
+
+@contextmanager
+def _private_build_context(repo_root: Path):
+    repository = _real_directory(repo_root, "repository")
+    completed = subprocess.run(
+        ("git", "ls-files", "-z", "--", *_BUILD_CONTEXT_INPUTS), cwd=repository,
+        capture_output=True, check=False, env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8"},
+    )
+    if completed.returncode != 0:
+        raise DockerRunnerUnavailable("cannot enumerate tracked Docker build inputs")
+    raw_paths = completed.stdout.split(b"\0")
+    try:
+        tracked = tuple(item.decode("utf-8") for item in raw_paths if item)
+    except UnicodeError as exc:
+        raise DockerRunnerUnavailable("tracked Docker build input path is invalid") from exc
+    directory = Path(tempfile.mkdtemp(prefix="hwskill-build-context-"))
+    os.chmod(directory, 0o700)
+    try:
+        for declared in _BUILD_CONTEXT_INPUTS:
+            if "/" not in declared and (repository / declared).is_dir():
+                (directory / declared).mkdir(mode=0o700, parents=True, exist_ok=True)
+        repository_fd = os.open(repository, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            for item in tracked:
+                _copy_tracked_build_file(repository_fd, item, directory)
+        finally:
+            os.close(repository_fd)
+        if not (directory / "docker/test/Dockerfile").is_file():
+            raise DockerRunnerUnavailable("tracked Dockerfile is unavailable")
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _copy_tracked_build_file(repository_fd: int, relative: str, destination_root: Path) -> None:
+    pure = PurePosixPath(relative)
+    if (
+        pure.is_absolute() or not pure.parts or any(part in {"", ".", ".."} for part in pure.parts)
+        or any(ord(character) < 32 or ord(character) == 127 for character in relative)
+        or not any(pure == PurePosixPath(item) or pure.is_relative_to(PurePosixPath(item)) for item in _BUILD_CONTEXT_INPUTS)
+    ):
+        raise DockerRunnerUnavailable("tracked Docker build input path is unsafe")
+    descriptors = [repository_fd]
+    try:
+        parent = repository_fd
+        for component in pure.parts[:-1]:
+            parent = os.open(
+                component, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent,
+            )
+            descriptors.append(parent)
+        source = os.open(
+            pure.parts[-1], os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent,
+        )
+        descriptors.append(source)
+        before = os.fstat(source)
+        if not stat.S_ISREG(before.st_mode):
+            raise DockerRunnerUnavailable("Docker build input must be a regular file")
+        destination = destination_root.joinpath(*pure.parts)
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700 if before.st_mode & 0o111 else 0o600)
+        try:
+            while block := os.read(source, 1024 * 1024):
+                remaining = memoryview(block)
+                while remaining:
+                    written = os.write(descriptor, remaining)
+                    if written <= 0:
+                        raise OSError(errno.EIO, "short Docker build context write")
+                    remaining = remaining[written:]
+        finally:
+            os.close(descriptor)
+        after = os.fstat(source)
+        identity = lambda value: (
+            value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size,
+            value.st_mtime_ns, value.st_ctime_ns,
+        )
+        if identity(before) != identity(after):
+            raise DockerRunnerUnavailable("Docker build input changed while copying")
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, DockerRunnerUnavailable):
+            raise
+        raise DockerRunnerUnavailable("cannot safely copy Docker build input") from exc
+    finally:
+        for descriptor in reversed(descriptors[1:]):
+            os.close(descriptor)
+
+
+def _selection_timeout_budget(collections: Sequence[object], action_timeout: float) -> float:
+    units = 0
+    for item in collections:
+        if isinstance(item, Path):
+            units += 2  # one core case and its unittest action
+            continue
+        if not isinstance(item, TestCollection):
+            raise DockerRunnerUnavailable("unsupported Docker test selection")
+        for case in item.cases:
+            action_count = len(case.steps) + 1 + (1 if case.prepare is not None else 0)
+            units += 1 + action_count
+    return max(float(action_timeout) * max(units, 1) + 20.0, 30.0)
 
 
 def _docker_client_environment(
@@ -312,7 +472,36 @@ def _worker_request_payload(collections: Sequence[object], environment, repo_roo
     }
 
 
-def _load_result(path: Path, artifact_root: Path) -> TestRunResult:
+def _result_expectations(collections: Sequence[object], repo_root: Path) -> tuple[_ExpectedCollection, ...]:
+    expected: list[_ExpectedCollection] = []
+    for item in collections:
+        if isinstance(item, Path):
+            selection_path = item.as_posix()
+            case_id = "core" if item == Path("tests/core") else selection_path
+            expected.append(_ExpectedCollection(selection_path, "core", "core", (_ExpectedCase(case_id, ("unittest",), True),)))
+            continue
+        if not isinstance(item, TestCollection):
+            raise DockerRunnerUnavailable("unsupported Docker test selection")
+        try:
+            selection_path = item.manifest_path.relative_to(repo_root).as_posix()
+        except ValueError as exc:
+            raise DockerRunnerUnavailable("test manifest is outside the repository") from exc
+        cases: list[_ExpectedCase] = []
+        for case in item.cases:
+            actions = (() if case.prepare is None else (case.prepare,)) + case.steps + (case.post_check,)
+            cases.append(_ExpectedCase(
+                case.case_id, tuple(action.action_id for action in actions),
+                not isinstance(case.post_check, AgentAction),
+            ))
+        expected.append(_ExpectedCollection(selection_path, item.target.kind, item.target.target_id, tuple(cases)))
+    return tuple(expected)
+
+
+def _load_result(
+    path: Path,
+    artifact_root: Path,
+    expected: tuple[_ExpectedCollection, ...] | None = None,
+) -> TestRunResult:
     descriptor: int | None = None
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
@@ -337,7 +526,8 @@ def _load_result(path: Path, artifact_root: Path) -> TestRunResult:
     blocked_reason = data["blocked_reason"]
     if blocked_reason is not None and not isinstance(blocked_reason, str):
         raise DockerRunnerUnavailable("Docker worker blocked_reason is invalid")
-    collections = tuple(_parse_collection_result(item, artifact_root) for item in _list(data["collections"], "collections"))
+    raw_collections = _list(data["collections"], "collections")
+    collections = tuple(_parse_collection_result(item, artifact_root) for item in raw_collections)
     if status != "BLOCKED" and not collections:
         raise DockerRunnerUnavailable("Docker worker returned no executed collections")
     if collections:
@@ -348,6 +538,8 @@ def _load_result(path: Path, artifact_root: Path) -> TestRunResult:
         )
         if aggregate != status:
             raise DockerRunnerUnavailable("Docker worker aggregate status is inconsistent")
+    if expected is not None:
+        _validate_result_binding(raw_collections, collections, status, expected, artifact_root)
     return TestRunResult(
         status, artifact_root, collections, _single_line(data["runner"], "runner"),
         _single_line(data["host"], "host"), _single_line(data["model"], "model"),
@@ -357,7 +549,10 @@ def _load_result(path: Path, artifact_root: Path) -> TestRunResult:
 
 def _parse_collection_result(value: object, root: Path) -> CollectionResult | CoreCollectionResult:
     data = _object(value, "collection")
-    _result_keys(data, {"kind", "target_id", "status", "cases"}, "collection")
+    allowed = {"kind", "target_id", "status", "cases", "selection_path"}
+    if set(data) != allowed:
+        raise DockerRunnerUnavailable("Docker worker collection keys are invalid")
+    _safe_result_selection_path(data["selection_path"])
     kind = _single_line(data["kind"], "collection kind")
     target_id = _single_line(data["target_id"], "collection target")
     if kind not in {"core", "skill", "profile"}:
@@ -369,6 +564,110 @@ def _parse_collection_result(value: object, root: Path) -> CollectionResult | Co
             raise DockerRunnerUnavailable("Docker worker core target is invalid")
         return CoreCollectionResult(TestTarget("profile", "core"), status, cases)
     return CollectionResult(TestTarget(kind, target_id), status, cases)
+
+
+def _safe_result_selection_path(value: object) -> str:
+    text = _single_line(value, "selection path")
+    path = PurePosixPath(text)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise DockerRunnerUnavailable("Docker worker selection path is unsafe")
+    return text
+
+
+def _validate_result_binding(
+    raw_collections: list[object],
+    collections: tuple[CollectionResult | CoreCollectionResult, ...],
+    status: RunStatus,
+    expected: tuple[_ExpectedCollection, ...],
+    artifact_root: Path,
+) -> None:
+    if status == "BLOCKED" and not collections:
+        return
+    if len(collections) != len(expected):
+        raise DockerRunnerUnavailable("Docker worker result selection count does not match request")
+    for raw, collection, wanted in zip(raw_collections, collections, expected):
+        data = _object(raw, "collection")
+        if data.get("selection_path") != wanted.selection_path:
+            raise DockerRunnerUnavailable("Docker worker result selection path does not match request")
+        actual_kind = "core" if isinstance(collection, CoreCollectionResult) else collection.target.kind
+        actual_id = "core" if isinstance(collection, CoreCollectionResult) else collection.target.target_id
+        if (actual_kind, actual_id) != (wanted.kind, wanted.target_id):
+            raise DockerRunnerUnavailable("Docker worker result target does not match request")
+        if tuple(case.case_id for case in collection.cases) != tuple(case.case_id for case in wanted.cases):
+            raise DockerRunnerUnavailable("Docker worker result cases do not match request")
+        for case, wanted_case in zip(collection.cases, wanted.cases):
+            if tuple(action.action_id for action in case.actions) != wanted_case.action_ids:
+                raise DockerRunnerUnavailable("Docker worker result actions do not match request")
+            for action in case.actions:
+                if (
+                    (action.status == "completed" and action.exit_code != 0)
+                    or (action.status == "failed" and (action.exit_code is None or action.exit_code == 0))
+                    or (action.status == "blocked" and action.exit_code is not None)
+                ):
+                    raise DockerRunnerUnavailable("Docker worker action status is inconsistent")
+            derived = _expected_case_status(case.actions, wanted_case.command_post_check, case.artifact_dir, artifact_root)
+            if derived is not None and case.status != derived:
+                raise DockerRunnerUnavailable("Docker worker case status is inconsistent")
+        collection_status: RunStatus = (
+            "BLOCKED" if any(case.status == "BLOCKED" for case in collection.cases)
+            else "FAIL" if any(case.status == "FAIL" for case in collection.cases)
+            else "PASS"
+        )
+        if collection.status != collection_status:
+            raise DockerRunnerUnavailable("Docker worker collection status is inconsistent")
+
+
+def _expected_case_status(
+    actions: tuple[ActionResult, ...],
+    command_post_check: bool,
+    case_artifact_dir: Path,
+    artifact_root: Path,
+) -> RunStatus:
+    if not actions or any(action.status == "blocked" for action in actions):
+        return "BLOCKED"
+    post = actions[-1]
+    if command_post_check:
+        if post.exit_code == 0:
+            return "PASS"
+        if post.exit_code == 1:
+            return "FAIL"
+        return "BLOCKED"
+    if post.status != "completed":
+        return "BLOCKED"
+    if post.artifact_dir != case_artifact_dir / "actions" / safe_artifact_id(post.action_id):
+        return "BLOCKED"
+    return _read_agent_post_check(post.artifact_dir, artifact_root)
+
+
+def _read_agent_post_check(action_artifact_dir: Path, artifact_root: Path) -> RunStatus:
+    try:
+        relative = action_artifact_dir.relative_to(artifact_root)
+        if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+            return "BLOCKED"
+        flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        root_fd = os.open(artifact_root, flags)
+        descriptors = [root_fd]
+        try:
+            parent_fd = root_fd
+            for component in relative.parts:
+                parent_fd = os.open(component, flags, dir_fd=parent_fd)
+                descriptors.append(parent_fd)
+            response_fd = os.open(
+                "final-response.md", os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd,
+            )
+            descriptors.append(response_fd)
+            if not stat.S_ISREG(os.fstat(response_fd).st_mode):
+                return "BLOCKED"
+            raw = os.read(response_fd, 64 * 1024 + 1)
+            if len(raw) > 64 * 1024 or os.read(response_fd, 1):
+                return "BLOCKED"
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+        from .test_agent import parse_agent_post_check
+        return parse_agent_post_check(raw.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return "BLOCKED"
 
 
 def _parse_case_result(value: object, root: Path) -> CaseResult:

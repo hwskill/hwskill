@@ -18,6 +18,11 @@ contains an Agent action uses Docker's ordinary bridge network because the
 Agent needs its configured provider; the container is still read-only,
 capability-free, unprivileged, and has no Docker socket. There is no fallback to
 host-local execution. Use `--runner local` explicitly when debugging.
+Within an Agent-capable container, every ordinary command and command
+post-check additionally runs under an unprivileged Landlock filesystem
+allowlist and the socket seccomp guard. It receives no Agent credential
+environment, cannot read `/proc` or `/credentials`, and is reported BLOCKED if
+the kernel cannot install either isolation layer.
 
 Offline worker smoke (after the image has been built) must mount the repository
 and tests read-only, provide separate writable artifact/workspace roots, and

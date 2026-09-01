@@ -17,6 +17,30 @@ _BPF_JMP_JEQ_K = 0x15
 _BPF_RET_K = 0x06
 _SECCOMP_RET_ALLOW = 0x7FFF0000
 _SECCOMP_RET_ERRNO = 0x00050000
+_LANDLOCK_CREATE_RULESET = 444
+_LANDLOCK_ADD_RULE = 445
+_LANDLOCK_RESTRICT_SELF = 446
+_LANDLOCK_CREATE_RULESET_VERSION = 1
+_LANDLOCK_RULE_PATH_BENEATH = 1
+_LANDLOCK_ACCESS_FS_EXECUTE = 1 << 0
+_LANDLOCK_ACCESS_FS_WRITE_FILE = 1 << 1
+_LANDLOCK_ACCESS_FS_READ_FILE = 1 << 2
+_LANDLOCK_ACCESS_FS_READ_DIR = 1 << 3
+_LANDLOCK_ACCESS_FS_REMOVE_DIR = 1 << 4
+_LANDLOCK_ACCESS_FS_REMOVE_FILE = 1 << 5
+_LANDLOCK_ACCESS_FS_MAKE_CHAR = 1 << 6
+_LANDLOCK_ACCESS_FS_MAKE_DIR = 1 << 7
+_LANDLOCK_ACCESS_FS_MAKE_REG = 1 << 8
+_LANDLOCK_ACCESS_FS_MAKE_SOCK = 1 << 9
+_LANDLOCK_ACCESS_FS_MAKE_FIFO = 1 << 10
+_LANDLOCK_ACCESS_FS_MAKE_BLOCK = 1 << 11
+_LANDLOCK_ACCESS_FS_MAKE_SYM = 1 << 12
+_LANDLOCK_ACCESS_FS_REFER = 1 << 13
+_LANDLOCK_ACCESS_FS_TRUNCATE = 1 << 14
+_LANDLOCK_READ = _LANDLOCK_ACCESS_FS_EXECUTE | _LANDLOCK_ACCESS_FS_READ_FILE | _LANDLOCK_ACCESS_FS_READ_DIR
+_LANDLOCK_WRITE_V1 = sum(1 << bit for bit in range(1, 13))
+GUARD_FAILURE_EXIT = 125
+GUARD_FAILURE_MARKER = "hwskill isolation guard unavailable"
 
 
 class _SockFilter(ctypes.Structure):
@@ -30,6 +54,14 @@ class _SockFilter(ctypes.Structure):
 
 class _SockFprog(ctypes.Structure):
     _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_SockFilter))]
+
+
+class _LandlockRulesetAttr(ctypes.Structure):
+    _fields_ = [("handled_access_fs", ctypes.c_uint64)]
+
+
+class _LandlockPathBeneathAttr(ctypes.Structure):
+    _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
 
 
 def install_network_guard() -> None:
@@ -63,16 +95,80 @@ def install_network_guard() -> None:
         raise OSError(code, os.strerror(code))
 
 
+def install_filesystem_guard(read_only: tuple[str, ...], read_write: tuple[str, ...]) -> None:
+    """Allow only runtime files plus declared test mounts; notably exclude /proc and /credentials."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    syscall = libc.syscall
+    syscall.restype = ctypes.c_long
+    abi = syscall(_LANDLOCK_CREATE_RULESET, 0, 0, _LANDLOCK_CREATE_RULESET_VERSION)
+    if abi < 1:
+        code = ctypes.get_errno() or errno.ENOTSUP
+        raise OSError(code, "Landlock filesystem isolation is unavailable")
+    handled = _LANDLOCK_READ | _LANDLOCK_WRITE_V1
+    if abi >= 2:
+        handled |= _LANDLOCK_ACCESS_FS_REFER
+    if abi >= 3:
+        handled |= _LANDLOCK_ACCESS_FS_TRUNCATE
+    ruleset_attr = _LandlockRulesetAttr(handled)
+    ruleset_fd = syscall(_LANDLOCK_CREATE_RULESET, ctypes.byref(ruleset_attr), ctypes.sizeof(ruleset_attr), 0)
+    if ruleset_fd < 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    try:
+        system_read_only = tuple(dict.fromkeys(
+            os.path.realpath(path) for path in (
+                "/bin", "/usr", "/lib", "/lib64", "/etc", sys.prefix, sys.exec_prefix,
+                os.path.dirname(sys.executable),
+            )
+            if os.path.exists(path)
+        ))
+        system_read_write = tuple(dict.fromkeys(
+            os.path.realpath(path) for path in ("/dev", "/tmp") if os.path.exists(path)
+        ))
+        for path, writable in tuple((path, False) for path in (*system_read_only, *read_only)) + tuple(
+            (path, True) for path in (*system_read_write, *read_write)
+        ):
+            descriptor = os.open(path, getattr(os, "O_PATH", os.O_RDONLY) | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                allowed = handled if writable else _LANDLOCK_READ
+                attribute = _LandlockPathBeneathAttr(allowed, descriptor)
+                if syscall(
+                    _LANDLOCK_ADD_RULE, ruleset_fd, _LANDLOCK_RULE_PATH_BENEATH,
+                    ctypes.byref(attribute), 0,
+                ) != 0:
+                    code = ctypes.get_errno()
+                    raise OSError(code, os.strerror(code))
+            finally:
+                os.close(descriptor)
+        if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+        if syscall(_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0) != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+    finally:
+        os.close(ruleset_fd)
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] != "--" or len(arguments) == 1:
+    read_only: list[str] = []
+    read_write: list[str] = []
+    while arguments and arguments[0] != "--":
+        option = arguments.pop(0)
+        if option not in {"--read-only", "--read-write"} or not arguments:
+            return 2
+        (read_only if option == "--read-only" else read_write).append(arguments.pop(0))
+    if not arguments or arguments.pop(0) != "--" or not arguments:
         return 2
     try:
+        install_filesystem_guard(tuple(read_only), tuple(read_write))
         install_network_guard()
-        os.execvp(arguments[1], arguments[1:])
+        os.execvp(arguments[0], arguments)
     except OSError:
-        return 3
-    return 3
+        print(GUARD_FAILURE_MARKER, file=sys.stderr)
+        return GUARD_FAILURE_EXIT
+    return GUARD_FAILURE_EXIT
 
 
 if __name__ == "__main__":

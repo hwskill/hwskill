@@ -38,6 +38,8 @@ class TestEnvironment:
     fixture_source: FixtureSource | None = None
     workspace_root: Path | None = None
     command_prefix: tuple[str, ...] = ()
+    command_environment_variables: tuple[tuple[str, str], ...] | None = None
+    command_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -322,6 +324,10 @@ def _run_command(
             return ActionResult(action.action_id, "blocked", None, context.artifact_dir)
     except (OSError, ValueError) as exc:
         return _blocked_result(action.action_id, context.artifact_dir, str(exc), context.environment, payload)
+    if process.returncode == 125 and "hwskill isolation guard unavailable" in stderr:
+        payload.update({"status": "blocked", "exit_code": None, "reason": "command isolation is unavailable"})
+        _persist_action(context.artifact_dir, payload, stdout, stderr, context.environment)
+        return ActionResult(action.action_id, "blocked", None, context.artifact_dir)
     status: Literal["completed", "failed"] = "completed" if process.returncode == 0 else "failed"
     payload.update({"status": status, "exit_code": process.returncode})
     _persist_action(context.artifact_dir, payload, stdout, stderr, context.environment)
@@ -394,7 +400,27 @@ def _command_environment(
     workspace: Path,
     extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    result = {"PATH": os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace.absolute())}
+    result = {"PATH": environment.command_path or os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace.absolute())}
+    declared = (
+        environment.environment_variables
+        if environment.command_environment_variables is None
+        else environment.command_environment_variables
+    )
+    for key, value in declared:
+        if not key or "=" in key or "\x00" in key or "\x00" in value:
+            raise ValueError("invalid declared test environment variable")
+        result[key] = value
+    if extra:
+        result.update(extra)
+    return result
+
+
+def _agent_environment(
+    environment: TestEnvironment,
+    workspace: Path,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    result = {"PATH": environment.command_path or os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace.absolute())}
     for key, value in environment.environment_variables:
         if not key or "=" in key or "\x00" in key or "\x00" in value:
             raise ValueError("invalid declared test environment variable")

@@ -136,6 +136,36 @@ class TestCliTest(unittest.TestCase):
         selected.assert_called_once_with(self.repo.resolve(), "HEAD^")
         cleared.assert_called_once()
 
+    def test_affected_does_not_clear_pending_when_docker_binding_blocks_forged_result(self) -> None:
+        from hwskill import test_cli
+
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        selection = TestSelection(
+            skill_ids=("team/review",), collection_paths=(manifest.relative_to(self.repo),),
+            digests=(("team/review", "sha256:" + "a" * 64),),
+        )
+        boundary = Mock()
+        boundary.run.return_value = test_cli.TestRunResult(
+            "BLOCKED", self.repo / "artifacts", (), "docker", "codex", "test-model", "unavailable",
+            blocked_reason="Docker worker result selection does not match request",
+        )
+        docker_config = TestConfiguration(
+            runner="docker", default_host="codex", hosts={"codex": HostModel("test-model", "minimal")},
+        )
+        with patch("hwskill.test_cli.load_test_configuration", return_value=docker_config), patch(
+            "hwskill.test_cli.select_affected_tests", return_value=selection,
+        ), patch("hwskill.test_cli.clear_pending_verification") as cleared:
+            args = Namespace(
+                test_target="affected", test_id=None, runner="docker", host=None, base="HEAD^",
+                check=False, json=True, model=None, reasoning=None,
+            )
+            code = test_cli.run_test_command(
+                args, self.repo, StringIO(), StringIO(), execution_boundary=boundary,
+            )
+
+        self.assertEqual(code, 3)
+        cleared.assert_not_called()
+
     def test_test_command_does_not_call_integrity_check(self) -> None:
         self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
         with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
@@ -690,10 +720,10 @@ class TestCliTest(unittest.TestCase):
             def communicate(self, timeout=None):
                 return "", ""
 
-        captured = {}
+        captured = []
 
         def popen(_command, **kwargs):
-            captured["environment"] = kwargs["env"]
+            captured.append(kwargs["env"])
             return Process()
 
         completed = type("Completed", (), {"returncode": 0})()
@@ -712,8 +742,9 @@ class TestCliTest(unittest.TestCase):
             code = test_cli.run_test_command(args, self.repo, stdout, StringIO())
 
         self.assertEqual(code, 0, stdout.getvalue())
-        self.assertEqual(captured["environment"]["CODEX_API_KEY"], sentinel)
-        self.assertNotIn("UNRELATED_SECRET", captured["environment"])
+        credentialed = [environment for environment in captured if "CODEX_API_KEY" in environment]
+        self.assertEqual(credentialed[0]["CODEX_API_KEY"], sentinel)
+        self.assertTrue(all("UNRELATED_SECRET" not in environment for environment in captured))
         case_dir = Path(json.loads(stdout.getvalue())["collections"][0]["cases"][0]["artifact_dir"])
         for artifact in case_dir.rglob("*"):
             if not artifact.is_file():

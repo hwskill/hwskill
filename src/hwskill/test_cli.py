@@ -565,7 +565,7 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
                 process = subprocess.Popen(
                     environment.command_prefix
                     + (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_core), selected),
-                    cwd=root_path, env=_core_environment(root_path), stdin=subprocess.DEVNULL,
+                    cwd=root_path, env=_core_environment(root_path, environment), stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                     start_new_session=True, pass_fds=(root_fd, core_fd),
                 )
@@ -577,6 +577,12 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
             action_status, status, exit_code = "blocked", "BLOCKED", None
             payload = {"action_id": "unittest", "kind": "core", "status": "blocked", "exit_code": None, "reason": "timeout"}
             stderr += f"core test timed out after {environment.timeout_seconds} seconds\n"
+        elif process.returncode == 125 and "hwskill isolation guard unavailable" in stderr:
+            action_status, status, exit_code = "blocked", "BLOCKED", None
+            payload = {
+                "action_id": "unittest", "kind": "core", "status": "blocked", "exit_code": None,
+                "reason": "command isolation is unavailable",
+            }
         else:
             action_status = "completed" if process.returncode == 0 else "failed"
             status = "PASS" if process.returncode == 0 else "FAIL"
@@ -658,12 +664,13 @@ def _copy_core_directory(source_fd: int, destination: Path) -> None:
                 os.close(source_file_fd)
 
 
-def _core_environment(root_path: str) -> dict[str, str]:
+def _core_environment(root_path: str, environment: TestEnvironment) -> dict[str, str]:
+    python_root = str(environment.repo_root / "src") if environment.runner == "docker" else root_path + "/src"
     return {
-        "PATH": os.defpath,
+        "PATH": environment.command_path or os.defpath,
         "LANG": "C.UTF-8",
         "HOME": tempfile.gettempdir(),
-        "PYTHONPATH": f"{root_path}/src",
+        "PYTHONPATH": python_root,
         "PYTHONDONTWRITEBYTECODE": "1",
     }
 

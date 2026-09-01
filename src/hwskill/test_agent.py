@@ -17,6 +17,7 @@ from .test_manifest import AgentAction, CommandAction
 from .test_runner import (
     ActionContext,
     _after_workdir_opened,
+    _agent_environment,
     _blocked_result,
     _command_environment,
     _open_anchored_workdir,
@@ -220,7 +221,7 @@ class AgentExecutor:
                         anchored_cwd=cwd,
                     ),
                     cwd=cwd,
-                    env=_command_environment(context.environment, context.workspace),
+                    env=_agent_environment(context.environment, context.workspace),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
