@@ -327,6 +327,9 @@ def _source_references(
     source_ids: dict[str, list[Path]] = {}
     for path in source_paths:
         raw = _read_source_data(path)
+        source_id = _raw_source_id(raw)
+        if source_id is not None:
+            source_ids.setdefault(source_id, []).append(path)
         _report_raw_resolved_ignore_overlap(root, path, raw, issues)
         try:
             source = load_source_manifest(path)
@@ -334,7 +337,6 @@ def _source_references(
             issues.append(_issue("invalid-source-manifest", root, path, str(exc)))
             references.extend(_raw_source_references(path, raw))
             continue
-        source_ids.setdefault(source.source_id, []).append(path)
         references.extend(
             _SourceSkillReference(
                 manifest_path=path,
@@ -363,6 +365,16 @@ def _read_source_data(path: Path) -> object | None:
         return None
 
 
+def _raw_source_id(raw: object | None) -> str | None:
+    """Return only a manifest-shaped scalar ID without depending on full parsing."""
+    if not isinstance(raw, dict):
+        return None
+    source_id = raw.get("source_id")
+    if not isinstance(source_id, str) or not source_id or source_id != source_id.strip():
+        return None
+    return source_id
+
+
 def _report_raw_resolved_ignore_overlap(
     root: Path,
     manifest_path: Path,
@@ -388,7 +400,7 @@ def _report_raw_resolved_ignore_overlap(
 def _raw_source_references(path: Path, raw: object | None) -> tuple[_SourceSkillReference, ...]:
     if not isinstance(raw, dict):
         return ()
-    source_id = raw.get("source_id") if isinstance(raw.get("source_id"), str) else None
+    source_id = _raw_source_id(raw)
     resolved = raw.get("resolved")
     revision = resolved.get("revision") if isinstance(resolved, dict) and isinstance(resolved.get("revision"), str) else None
     skills = resolved.get("skills") if isinstance(resolved, dict) else None
@@ -423,6 +435,23 @@ def _check_source_skill_consistency(
     for reference in references:
         references_by_id.setdefault(reference.skill_id, []).append(reference)
         references_by_source_path.setdefault((reference.source_id, reference.upstream_path), []).append(reference)
+    for (source_id, upstream_path), owners in sorted(
+        references_by_source_path.items(),
+        key=lambda item: (item[0][0] is None, item[0][0] or "", item[0][1]),
+    ):
+        if source_id is None or len({owner.skill_id for owner in owners}) < 2:
+            continue
+        ordered_owners = tuple(sorted(
+            owners, key=lambda item: (item.manifest_path.as_posix(), item.skill_id)
+        ))
+        evidence = ", ".join(
+            f"{owner.manifest_path.relative_to(root).as_posix()} -> {owner.skill_id}"
+            for owner in ordered_owners
+        )
+        issues.append(_issue(
+            "duplicate-source-path", root, ordered_owners[0].manifest_path,
+            f"source_id {source_id} maps upstream path {upstream_path} to multiple Skill IDs: {evidence}",
+        ))
     for skill_id, owners in sorted(references_by_id.items()):
         if len(owners) > 1:
             issues.append(_issue(

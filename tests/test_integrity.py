@@ -265,6 +265,53 @@ class IntegrityTest(unittest.TestCase):
 
         self.assertIn("duplicate-source-skill", {issue.code for issue in report.issues})
 
+    def test_integrity_reports_two_ids_for_one_path_inside_an_invalid_source(self) -> None:
+        """Raw source inspection retains path-to-ID ownership evidence after parser rejection."""
+        from hwskill.integrity import check_integrity
+
+        source = self.read_source()
+        duplicate = dict(source["resolved"]["skills"][0])
+        duplicate["id"] = "other/brainstorming"
+        source["resolved"]["skills"].append(duplicate)
+        self.write_source(source)
+
+        report = check_integrity(self.repo)
+
+        conflict = next(issue for issue in report.issues if issue.code == "duplicate-source-path")
+        self.assertIn("sources/superpowers.yaml", conflict.message)
+        self.assertIn("superpowers/brainstorming", conflict.message)
+        self.assertIn("other/brainstorming", conflict.message)
+
+    def test_integrity_reports_two_ids_for_one_path_across_duplicate_source_manifests(self) -> None:
+        """Source-path ownership remains unique even when the duplicate lives in another file."""
+        from hwskill.integrity import check_integrity
+
+        duplicate = self.read_source()
+        duplicate["resolved"]["skills"][0]["id"] = "other/brainstorming"
+        self.write_source(duplicate, "duplicate")
+
+        report = check_integrity(self.repo)
+
+        conflict = next(issue for issue in report.issues if issue.code == "duplicate-source-path")
+        self.assertIn("sources/duplicate.yaml", conflict.message)
+        self.assertIn("sources/superpowers.yaml", conflict.message)
+        self.assertIn("superpowers/brainstorming", conflict.message)
+        self.assertIn("other/brainstorming", conflict.message)
+
+    def test_integrity_reports_duplicate_source_id_from_an_invalid_manifest(self) -> None:
+        """A syntactically usable source ID survives unrelated manifest schema failure."""
+        from hwskill.integrity import check_integrity
+
+        invalid = self.read_source()
+        invalid["unexpected"] = "schema error"
+        self.write_source(invalid, "invalid")
+
+        report = check_integrity(self.repo)
+
+        self.assertTrue({"invalid-source-manifest", "duplicate-source-id"} <= {
+            issue.code for issue in report.issues
+        })
+
     def test_integrity_reports_resolved_ignore_overlap_even_when_manifest_is_invalid(self) -> None:
         """Raw overlap inspection keeps the actionable conflict visible after parser rejection."""
         from hwskill.integrity import check_integrity
