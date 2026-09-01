@@ -214,11 +214,11 @@ class AgentExecutor:
             try:
                 _after_workdir_opened(context.workspace, action.workdir)
                 process = subprocess.Popen(
-                    host.build_command(
+                    context.environment.agent_command_prefix + host.build_command(
                         context, action,
                         model=context.environment.model,
                         reasoning=context.environment.reasoning,
-                        anchored_cwd=cwd,
+                        anchored_cwd="." if context.environment.agent_command_prefix else cwd,
                     ),
                     cwd=cwd,
                     env=_agent_environment(context.environment, context.workspace),

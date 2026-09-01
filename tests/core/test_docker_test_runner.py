@@ -47,6 +47,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
         self.assertIn('2.1.141 (Claude Code)', entrypoint)
         self.assertIn('1.14.48', entrypoint)
         self.assertIn('exec "$@"', entrypoint)
+        self.assertIn('if [ "$#" -eq 1 ] && [ "$1" = preflight ]', entrypoint)
 
     def test_documented_worker_smoke_uses_the_production_runtime_environment(self) -> None:
         readme = (ROOT / "docker/test/README.md").read_text(encoding="utf-8")
@@ -54,6 +55,8 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
         self.assertIn('--env HOME=/workspace/home', readme)
         self.assertIn('--env HWSKILL_REGISTRY_ROOT=/registry', readme)
         self.assertIn('--pids-limit 512', readme)
+        self.assertIn('dst=/export', readme)
+        self.assertIn('/artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700', readme)
 
     def test_docker_run_mounts_registry_read_only_and_artifacts_writable_without_secrets(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, DockerTestRequest, ImageInfo
@@ -69,7 +72,9 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
                 path.mkdir(parents=True)
             request.write_text("{}", encoding="utf-8")
             config = TestConfiguration("docker", "codex", {"codex": HostModel("model", "high")})
-            runner = DockerTestRunner(repo, config, image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "a" * 64))
+            runner = DockerTestRunner(
+                repo, config, image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "a" * 64), uid=123, gid=456,
+            )
             value = DockerTestRequest(request, artifacts, workspace, "none", (("CODEX_API_KEY", "credential-sentinel"),))
 
             argv = runner.build_run_command(value)
@@ -77,7 +82,8 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             joined = " ".join(argv)
             self.assertIn(f"src={repo},dst=/registry,readonly", joined)
             self.assertIn(f"src={repo / 'tests'},dst=/tests,readonly", joined)
-            self.assertIn(f"src={artifacts},dst=/artifacts", joined)
+            self.assertIn(f"src={artifacts},dst=/export", joined)
+            self.assertIn("--tmpfs /artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=123,gid=456", joined)
             self.assertIn(f"src={workspace},dst=/workspace", joined)
             self.assertIn("--network none", joined)
             self.assertIn("--env CODEX_API_KEY", joined)
@@ -114,6 +120,27 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             self.assertIn(f"src={auth},dst=/credentials/codex/auth.json,readonly", joined)
             self.assertNotIn("secret file", joined)
             self.assertNotIn("--privileged", argv)
+
+    def test_preflight_uses_same_digest_without_credentials_or_business_mounts(self) -> None:
+        from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
+        from hwskill.test_configuration import HostModel, TestConfiguration
+
+        digest = "sha256:" + "9" * 64
+        config = TestConfiguration("docker", "codex", {"codex": HostModel("model", "high")})
+        runner = DockerTestRunner(Path.cwd(), config, image=ImageInfo("hwskill-test:0.1.0", digest), uid=123, gid=456)
+
+        argv = runner.build_preflight_command(container_name="hwskill-preflight-" + "a" * 32)
+        joined = " ".join(argv)
+
+        self.assertEqual(argv[-2:], (digest, "preflight"))
+        self.assertIn("--network none", joined)
+        self.assertIn("--read-only", argv)
+        self.assertIn("--cap-drop ALL", joined)
+        self.assertNotIn("--mount", argv)
+        self.assertNotIn("CODEX_API_KEY", joined)
+        self.assertNotIn("/workspace", joined)
+        self.assertNotIn("/export", joined)
+        self.assertNotIn("/credentials", joined)
 
     def test_claude_host_store_preserves_hidden_credentials_filename(self) -> None:
         from hwskill.test_cli import _environment_credential_material
@@ -301,6 +328,7 @@ class WorkerRequestValidationTests(unittest.TestCase):
             "schema_version": 1,
             "selections": [{"kind": "core", "path": "tests/core"}],
             "host": "codex",
+            "host_version": "0.147.0",
             "model": "gpt-5.6-terra",
             "reasoning": "high",
             "timeout_seconds": 30,
@@ -370,6 +398,18 @@ class WorkerRequestValidationTests(unittest.TestCase):
             with self.assertRaises(WorkerRequestError):
                 load_worker_request(path)
 
+    def test_worker_rejects_a_host_version_not_bound_to_the_standard_image(self) -> None:
+        from hwskill.test_worker import WorkerRequestError, load_worker_request
+
+        payload = self._request()
+        payload["host_version"] = "forged-version"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "request.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(WorkerRequestError, "host_version"):
+                load_worker_request(path)
+
 
 class DockerExecutionTests(unittest.TestCase):
     def _config(self):
@@ -394,11 +434,13 @@ class DockerExecutionTests(unittest.TestCase):
                         "org.opencontainers.image.version": "0.1.0",
                     }},
                 }]), "")
+            if argv[-1] == "preflight":
+                return subprocess.CompletedProcess(argv, 0, "", "")
             mounts = [argv[index + 1] for index, value in enumerate(argv) if value == "--mount"]
             request_mount = next(value for value in mounts if "dst=/run/request.json" in value)
             request_path = Path(request_mount.split("src=", 1)[1].split(",dst=", 1)[0])
             captured_request.update(json.loads(request_path.read_text(encoding="utf-8")))
-            artifact_mount = next(value for value in mounts if "dst=/artifacts" in value)
+            artifact_mount = next(value for value in mounts if "dst=/export" in value)
             artifact_root = Path(artifact_mount.split("src=", 1)[1].split(",dst=", 1)[0])
             (artifact_root / "result.json").write_text(json.dumps({
                 "schema_version": 1,
@@ -441,6 +483,10 @@ class DockerExecutionTests(unittest.TestCase):
             self.assertEqual(result.host_version, "0.147.0")
             self.assertEqual(result.collections[0].cases[0].actions[0].artifact_dir, artifacts / "core/core/actions/unittest")
             self.assertEqual(captured_request["credential_environment"], ["CODEX_API_KEY"])
+            self.assertEqual(captured_request["host_version"], "0.147.0")
+            runs = [argv for argv in captured_argv if argv[:2] == ("docker", "run")]
+            self.assertEqual(runs[0][-2:], ("sha256:" + "e" * 64, "preflight"))
+            self.assertEqual(runs[1][-5:], ("python", "-m", "hwskill.test_worker", "--request", "/run/request.json"))
             self.assertNotIn("credential-sentinel", json.dumps(captured_request))
             self.assertNotIn("credential-sentinel", " ".join(captured_argv[-1]))
             self.assertNotIn("credential-sentinel", "".join(
@@ -472,6 +518,36 @@ class DockerExecutionTests(unittest.TestCase):
         self.assertEqual(result.status, "BLOCKED")
         self.assertEqual(result.collections, ())
         self.assertIn("Docker", result.blocked_reason)
+
+    def test_preflight_failure_never_starts_the_credentialed_worker(self) -> None:
+        from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
+        from hwskill.test_runner import TestEnvironment
+
+        calls = []
+
+        def execute(argv, **kwargs):
+            calls.append(tuple(argv))
+            return subprocess.CompletedProcess(argv, 1, "", "version mismatch")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            (repo / "tests/core").mkdir(parents=True)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            runner = DockerTestRunner(
+                repo, self._config(), image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "f" * 64),
+                command_runner=execute,
+            )
+
+            result = runner.run(
+                (Path("tests/core"),), TestEnvironment(repo, "docker", "codex", "model", "high"), artifacts,
+            )
+
+        runs = [argv for argv in calls if argv[:2] == ("docker", "run")]
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0][-1], "preflight")
 
     def test_timeout_cleans_only_the_unguessable_named_container_without_secrets(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
@@ -505,7 +581,7 @@ class DockerExecutionTests(unittest.TestCase):
         self.assertEqual(result.status, "BLOCKED")
         run = next(argv for argv, _kwargs in calls if argv[:2] == ("docker", "run"))
         name = run[run.index("--name") + 1]
-        self.assertRegex(name, r"^hwskill-run-[0-9a-f]{32}$")
+        self.assertRegex(name, r"^hwskill-preflight-[0-9a-f]{32}$")
         self.assertIn(("docker", "stop", "--time", "5", name), [argv for argv, _kwargs in calls])
         self.assertIn(("docker", "rm", "--force", name), [argv for argv, _kwargs in calls])
         self.assertIn(
@@ -514,6 +590,9 @@ class DockerExecutionTests(unittest.TestCase):
         )
         cleanup_calls = [item for item in calls if item[0][:2] != ("docker", "run")]
         self.assertNotIn("secret-sentinel", repr(cleanup_calls))
+        self.assertEqual(run[-1], "preflight")
+        self.assertNotIn("--mount", run)
+        self.assertNotIn("CODEX_API_KEY", " ".join(run))
 
     def test_outer_timeout_budget_counts_every_case_and_action(self) -> None:
         from hwskill.docker_test_runner import _result_expectations, _selection_timeout_budget
@@ -536,8 +615,10 @@ class DockerExecutionTests(unittest.TestCase):
         from hwskill.test_runner import TestEnvironment
 
         def execute(argv, **kwargs):
+            if argv[-1] == "preflight":
+                return subprocess.CompletedProcess(argv, 0, "", "")
             mounts = [argv[index + 1] for index, value in enumerate(argv) if value == "--mount"]
-            artifact_mount = next(value for value in mounts if "dst=/artifacts" in value)
+            artifact_mount = next(value for value in mounts if "dst=/export" in value)
             artifact_root = Path(artifact_mount.split("src=", 1)[1].split(",dst=", 1)[0])
             (artifact_root / "result.json").write_text(json.dumps({
                 "schema_version": 1, "status": "PASS", "runner": "docker", "host": "codex",
@@ -742,6 +823,126 @@ class DockerExecutionTests(unittest.TestCase):
 
 
 class WorkerExecutionTests(unittest.TestCase):
+    def test_allow_network_guard_keeps_export_isolated_and_supports_local_socketpair(self) -> None:
+        from hwskill import network_guard
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            exported = root / "export"
+            workspace.mkdir()
+            exported.mkdir()
+            (exported / "secret").write_text("must-not-read", encoding="utf-8")
+            probe = (
+                "import pathlib,socket; left,right=socket.socketpair(); left.close(); right.close(); "
+                "out=pathlib.Path('probe'); "
+                "\ntry: pathlib.Path(%r).read_text(); out.write_text('export-readable')"
+                "\nexcept OSError: out.write_text('socket-ok-export-denied')"
+            ) % str(exported / "secret")
+            completed = subprocess.run(
+                (
+                    sys.executable, str(Path(network_guard.__file__).resolve()), "--allow-network",
+                    "--read-write", str(workspace), "--", sys.executable, "-c", probe,
+                ), cwd=workspace, text=True, capture_output=True, check=False,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace)},
+            )
+            observed = (workspace / "probe").read_text(encoding="utf-8") if (workspace / "probe").exists() else ""
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(observed, "socket-ok-export-denied")
+
+    def test_worker_exports_no_raw_secret_while_preserving_agent_business_changes(self) -> None:
+        from hwskill.test_artifacts import ActionResult
+        from hwskill.test_worker import WorkerRequest, WorkerSelection, execute_worker
+
+        sentinel = "raw-secret-" + "x" * 8192
+
+        class MaliciousAgent:
+            def run(self, action, context):
+                (context.workspace / "business.txt").write_text("business-change\n", encoding="utf-8")
+                (context.workspace / "raw-secret.bin").write_bytes(b"prefix" + sentinel.encode() + b"suffix")
+                (context.artifact_dir / "agent-leak.bin").write_bytes(b"agent:" + sentinel.encode())
+                return ActionResult(action.action_id, "completed", 0, context.artifact_dir)
+
+        manifest = """\
+schema_version: 1
+target: {kind: skill, id: local/export-isolation}
+cases:
+  - id: mixed
+    steps:
+      - {type: agent, id: agent, prompt: change files}
+      - type: command
+        id: verify
+        command: >-
+          test "$(cat business.txt)" = business-change &&
+          ! cp raw-secret.bin EXPORT_ROOT/direct-secret.bin &&
+          cat raw-secret.bin
+    post_check:
+      type: command
+      id: post
+      command: >-
+        test -f business.txt &&
+        cp business.txt "$HWSKILL_TEST_ARTIFACTS/business.txt" &&
+        cp raw-secret.bin "$HWSKILL_TEST_ARTIFACTS/copied-secret.bin"
+"""
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            repo = root / "registry"
+            target = repo / "tests/skills/local/export-isolation"
+            target.mkdir(parents=True)
+            staging = root / "artifacts-staging"
+            exported = root / "export"
+            workspace = root / "workspace"
+            for path in (staging, exported, workspace):
+                path.mkdir()
+            (target / "test.yaml").write_text(
+                manifest.replace("EXPORT_ROOT", str(exported)), encoding="utf-8",
+            )
+            request = WorkerRequest(
+                (WorkerSelection("skill", "tests/skills/local/export-isolation/test.yaml"),),
+                "codex", "0.147.0", "model", "high", 30, ("CODEX_API_KEY",),
+            )
+            with patch.dict(os.environ, {"CODEX_API_KEY": sentinel}, clear=False):
+                status = execute_worker(
+                    request, repo_root=repo, tests_root=repo / "tests", artifact_root=staging,
+                    export_root=exported, workspace_root=workspace,
+                    agent_executor=MaliciousAgent(),
+                )
+
+            exported_files = [path for path in exported.rglob("*") if path.is_file()]
+            persisted = b"\n".join(path.read_bytes() for path in exported_files)
+            result = json.loads((exported / "result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(status, 3)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertNotIn(sentinel.encode(), persisted)
+        self.assertTrue(any(path.name == "business.txt" for path in exported_files))
+        self.assertIn(b"business-change", persisted)
+
+    def test_artifact_export_rejects_links_and_redacts_binary_cross_block_secret(self) -> None:
+        from hwskill.test_worker import _export_artifacts
+
+        sentinel = b"cross-boundary-secret"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            exported = root / "exported"
+            staging.mkdir()
+            exported.mkdir()
+            (staging / "binary.bin").write_bytes(b"a" * (64 * 1024 - 5) + sentinel + b"tail")
+            (staging / "link").symlink_to("binary.bin")
+            (staging / "linked.bin").write_bytes(b"safe")
+            os.link(staging / "linked.bin", staging / "hardlink")
+
+            unsafe = _export_artifacts(staging, exported, (sentinel.decode(),))
+            persisted = b"\n".join(path.read_bytes() for path in exported.rglob("*") if path.is_file())
+            exported_names = {path.name for path in exported.rglob("*")}
+
+        self.assertTrue(unsafe)
+        self.assertNotIn(sentinel, persisted)
+        self.assertNotIn("link", exported_names)
+        self.assertNotIn("hardlink", exported_names)
+
     def test_guard_can_exec_the_active_python_runtime(self) -> None:
         from hwskill import network_guard
 
@@ -928,7 +1129,7 @@ cases:
     def test_claude_worker_discovers_hidden_credentials_in_config_directory(self) -> None:
         from hwskill.test_worker import WorkerRequest, _credential_material
 
-        request = WorkerRequest((), "claude-code", "model", "high", 30, ())
+        request = WorkerRequest((), "claude-code", "2.1.141", "model", "high", 30, ())
         with patch("hwskill.test_worker._credential_file_secrets", return_value=("secret",)) as inspect_store:
             environment, available, secrets = _credential_material(request)
 
@@ -936,6 +1137,17 @@ cases:
         self.assertEqual(environment, (("CLAUDE_CONFIG_DIR", "/credentials/claude-code"),))
         self.assertTrue(available)
         self.assertEqual(secrets, ("secret",))
+
+    def test_credential_store_short_raw_values_are_still_export_guarded(self) -> None:
+        from hwskill.test_worker import _credential_file_secrets
+
+        with TemporaryDirectory() as directory:
+            store = Path(directory) / "auth.json"
+            store.write_text('{"token":"abc","empty":""}', encoding="utf-8")
+
+            secrets = _credential_file_secrets(store)
+
+        self.assertEqual(secrets, ("abc",))
 
     def test_core_executor_uses_the_same_network_guard_prefix(self) -> None:
         from io import StringIO
@@ -1051,14 +1263,13 @@ cases:
             request_path.write_text(json.dumps({
                 "schema_version": 1,
                 "selections": [{"kind": "skill", "path": "tests/skills/local/network/test.yaml"}],
-                "host": "codex", "model": "model", "reasoning": "high",
+                "host": "codex", "host_version": "0.147.0", "model": "model", "reasoning": "high",
                 "timeout_seconds": 30, "credential_environment": [],
             }), encoding="utf-8")
 
             status = execute_worker(
                 load_worker_request(request_path), repo_root=repo, tests_root=repo / "tests",
                 artifact_root=artifacts, workspace_root=workspace,
-                host_version_probe=lambda _host: "0.147.0",
             )
 
         self.assertEqual(status, 0)
@@ -1087,30 +1298,31 @@ cases:
             collection.mkdir(parents=True)
             (collection / "test.yaml").write_text(manifest, encoding="utf-8")
             artifacts = root / "artifacts"
+            exported = root / "exported"
             workspace = root / "workspace"
             artifacts.mkdir()
+            exported.mkdir()
             workspace.mkdir()
             request_path = root / "request.json"
             payload = {
                 "schema_version": 1,
                 "selections": [{"kind": "skill", "path": "tests/skills/local/example/test.yaml"}],
-                "host": "codex", "model": "gpt-5.6-terra", "reasoning": "high",
+                "host": "codex", "host_version": "0.147.0", "model": "gpt-5.6-terra", "reasoning": "high",
                 "timeout_seconds": 30, "credential_environment": [],
             }
             request_path.write_text(json.dumps(payload), encoding="utf-8")
 
             status = execute_worker(
                 load_worker_request(request_path), repo_root=repo, tests_root=repo / "tests",
-                artifact_root=artifacts, workspace_root=workspace,
-                host_version_probe=lambda _host: "0.147.0",
+                artifact_root=artifacts, export_root=exported, workspace_root=workspace,
             )
 
-            result = json.loads((artifacts / "result.json").read_text(encoding="utf-8"))
+            result = json.loads((exported / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(status, 0)
             self.assertEqual(result["status"], "PASS")
             self.assertEqual(result["host_version"], "0.147.0")
             self.assertFalse(Path(result["collections"][0]["cases"][0]["artifact_dir"]).is_absolute())
-            context = json.loads(next(artifacts.rglob("context.json")).read_text(encoding="utf-8"))
+            context = json.loads(next(exported.rglob("context.json")).read_text(encoding="utf-8"))
             self.assertTrue(Path(context["workspace"]).is_relative_to(workspace))
 
     def test_worker_blocks_when_mount_root_is_a_symlink(self) -> None:
@@ -1127,11 +1339,13 @@ cases:
             artifacts.symlink_to(artifacts_real, target_is_directory=True)
             workspace = root / "workspace"
             workspace.mkdir()
-            request = WorkerRequest((WorkerSelection("core", "tests/core"),), "codex", "model", "high", 30, ())
+            request = WorkerRequest(
+                (WorkerSelection("core", "tests/core"),), "codex", "0.147.0", "model", "high", 30, (),
+            )
 
             status = execute_worker(
                 request, repo_root=repo, tests_root=tests, artifact_root=artifacts,
-                workspace_root=workspace, host_version_probe=lambda _host: "0.147.0",
+                workspace_root=workspace,
             )
 
         self.assertEqual(status, 3)

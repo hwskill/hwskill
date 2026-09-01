@@ -143,6 +143,26 @@ class TestAgentHostTest(unittest.TestCase):
         for path in self.artifact_dir.iterdir():
             self.assertNotIn("super-secret", path.read_text(encoding="utf-8"))
 
+    def test_agent_process_runs_inside_its_filesystem_boundary(self) -> None:
+        from hwskill.test_agent import AgentExecutor, CodexTestHost
+
+        environment = replace(self.environment, agent_command_prefix=("guard", "--allow-network", "--"))
+        context = replace(self.context, environment=environment)
+        executor = AgentExecutor(
+            CodexTestHost(), credential_available=lambda _host: True,
+            setup_runner=lambda *_args, **_kwargs: _CompletedProcess(),
+        )
+        process = _Process(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}}) + "\n")
+
+        with patch("hwskill.test_agent.subprocess.Popen", return_value=process) as popen:
+            result = executor.run(self.action, context)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(popen.call_args.args[0][:3], ("guard", "--allow-network", "--"))
+        self.assertEqual(popen.call_args.args[0][3:5], ("codex", "exec"))
+        command = popen.call_args.args[0]
+        self.assertEqual(command[command.index("--cd") + 1], ".")
+
     def test_codex_cd_uses_the_opened_workdir_fd_after_path_swap(self) -> None:
         from hwskill.test_agent import AgentExecutor
 

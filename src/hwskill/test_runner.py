@@ -40,6 +40,7 @@ class TestEnvironment:
     command_prefix: tuple[str, ...] = ()
     command_environment_variables: tuple[tuple[str, str], ...] | None = None
     command_path: str | None = None
+    agent_command_prefix: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

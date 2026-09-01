@@ -154,8 +154,12 @@ def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     read_only: list[str] = []
     read_write: list[str] = []
+    allow_network = False
     while arguments and arguments[0] != "--":
         option = arguments.pop(0)
+        if option == "--allow-network":
+            allow_network = True
+            continue
         if option not in {"--read-only", "--read-write"} or not arguments:
             return 2
         (read_only if option == "--read-only" else read_write).append(arguments.pop(0))
@@ -163,7 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         install_filesystem_guard(tuple(read_only), tuple(read_write))
-        install_network_guard()
+        if not allow_network:
+            install_network_guard()
         os.execvp(arguments[0], arguments)
     except OSError:
         print(GUARD_FAILURE_MARKER, file=sys.stderr)

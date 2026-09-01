@@ -48,7 +48,7 @@ _BUILD_CONTEXT_INPUTS = (
     "README.md", "install.sh", "pyproject.toml", ".gitignore", ".dockerignore",
     "examples", "profiles", "registry", "scripts", "skills-src", "sources", "src", "tests", "docker/test",
 )
-_CONTAINER_NAME = re.compile(r"hwskill-run-[0-9a-f]{32}\Z")
+_CONTAINER_NAME = re.compile(r"hwskill-(?:run|preflight)-[0-9a-f]{32}\Z")
 
 
 class DockerRunnerUnavailable(RuntimeError):
@@ -183,9 +183,10 @@ class DockerTestRunner:
             "--pids-limit", "512", "--network", "none" if request.network == "none" else "bridge",
             "--user", f"{self._uid}:{self._gid}",
             "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=256m",
+            "--tmpfs", f"/artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid={self._uid},gid={self._gid}",
             "--mount", _mount(repository, "/registry", readonly=True),
             "--mount", _mount(tests, "/tests", readonly=True),
-            "--mount", _mount(artifacts, "/artifacts"),
+            "--mount", _mount(artifacts, "/export"),
             "--mount", _mount(workspace, "/workspace"),
             "--mount", _mount(request_path, "/run/request.json", readonly=True),
             "--env", "HOME=/workspace/home",
@@ -211,6 +212,20 @@ class DockerTestRunner:
         argv.extend((identity.digest, "python", "-m", "hwskill.test_worker", "--request", "/run/request.json"))
         return tuple(argv)
 
+    def build_preflight_command(self, *, container_name: str) -> tuple[str, ...]:
+        identity = self._image
+        if identity is None or _DIGEST.fullmatch(identity.digest) is None:
+            raise DockerRunnerUnavailable("a verified standard image identity is required")
+        if _CONTAINER_NAME.fullmatch(container_name) is None or not container_name.startswith("hwskill-preflight-"):
+            raise DockerRunnerUnavailable("Docker preflight container name is invalid")
+        return (
+            "docker", "run", "--name", container_name, "--rm", "--init", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--pids-limit", "128", "--network", "none", "--user", f"{self._uid}:{self._gid}",
+            "--tmpfs", f"/tmp:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid={self._uid},gid={self._gid}",
+            "--env", "HOME=/tmp", identity.digest, "preflight",
+        )
+
     def run(
         self,
         collections: Sequence[object],
@@ -222,6 +237,12 @@ class DockerTestRunner:
             artifacts = _real_directory(artifact_root, "artifact root")
             if self._image is None:
                 self._image = self.inspect_image()
+            preflight_name = "hwskill-preflight-" + secrets.token_hex(16)
+            preflight = self._run_container(
+                self.build_preflight_command(container_name=preflight_name), (), 60.0, preflight_name,
+            )
+            if preflight.returncode != 0:
+                raise DockerRunnerUnavailable("standard test image preflight failed")
             payload = _worker_request_payload(collections, environment, self.repo_root)
             expectations = _result_expectations(collections, self.repo_root)
             with tempfile.TemporaryDirectory(prefix="hwskill-docker-request-") as request_directory, tempfile.TemporaryDirectory(
@@ -465,6 +486,7 @@ def _worker_request_payload(collections: Sequence[object], environment, repo_roo
         "schema_version": 1,
         "selections": selections,
         "host": environment.host,
+        "host_version": HOST_SPECS[environment.host].verified_version,
         "model": environment.model,
         "reasoning": environment.reasoning,
         "timeout_seconds": environment.timeout_seconds,
