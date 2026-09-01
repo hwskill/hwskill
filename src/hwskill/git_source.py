@@ -3,19 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path, PurePosixPath
-import re
 import subprocess
 from tempfile import TemporaryDirectory
 from types import MappingProxyType
 from typing import Callable, Literal, Mapping
 
 from .frontmatter import FrontmatterError, parse_skill_markdown
+from .source_manifest import is_full_commit_track
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
-
-_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-
 
 class GitSourceError(ValueError):
     """A remote source cannot be safely resolved or inspected."""
@@ -87,9 +84,9 @@ class GitSourceClient:
             except GitSourceError as error:
                 raise GitSourceError(f"track does not resolve to a commit: {track}") from error
             actual = completed.stdout.strip()
-        if not _COMMIT_RE.fullmatch(actual):
+        if not is_full_commit_track(actual):
             raise GitSourceError(f"track did not resolve to a full commit SHA: {actual!r}")
-        if _COMMIT_RE.fullmatch(track) and actual != track:
+        if is_full_commit_track(track) and actual != track:
             raise GitSourceError(
                 f"commit track did not resolve to the requested commit: expected {track}, got {actual}"
             )
@@ -100,7 +97,7 @@ class GitSourceClient:
         self._run(["checkout", "--quiet", "--detach", "FETCH_HEAD"], cwd=destination)
         completed = self._run(["rev-parse", "HEAD^{commit}"], cwd=destination)
         commit = completed.stdout.strip()
-        if not _COMMIT_RE.fullmatch(commit):
+        if not is_full_commit_track(commit):
             raise GitSourceError(f"checkout did not resolve to a full commit SHA: {commit!r}")
         return commit
 
@@ -123,7 +120,7 @@ class GitSourceClient:
                     default_branch = target
                 continue
             object_id, separator, ref = line.partition("\t")
-            if not separator or not _COMMIT_RE.fullmatch(object_id):
+            if not separator or not is_full_commit_track(object_id):
                 continue
             if ref.endswith("^{}") and ref.startswith("refs/tags/"):
                 peeled[ref[:-3]] = object_id
@@ -173,7 +170,7 @@ class GitSourceClient:
 def verify_existing_tag(track: str, expected_commit: str, actual_commit: str) -> None:
     if not track.startswith("refs/tags/"):
         raise GitSourceError(f"not a tag track: {track}")
-    if not _COMMIT_RE.fullmatch(expected_commit) or not _COMMIT_RE.fullmatch(actual_commit):
+    if not is_full_commit_track(expected_commit) or not is_full_commit_track(actual_commit):
         raise GitSourceError("tag revisions must be full commit SHAs")
     if expected_commit != actual_commit:
         raise GitSourceError(
@@ -218,7 +215,7 @@ def discover_skills(checkout: Path, skills_path: str) -> tuple[DiscoveredSkill, 
 
 
 def _track_kind(track: str) -> Literal["branch", "tag", "commit"]:
-    if _COMMIT_RE.fullmatch(track):
+    if is_full_commit_track(track):
         return "commit"
     if track.startswith("refs/heads/") and _valid_ref_suffix(track.removeprefix("refs/heads/")):
         return "branch"

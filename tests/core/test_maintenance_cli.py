@@ -142,8 +142,9 @@ class MaintenanceCliTest(unittest.TestCase):
         args = self._update_args(source_id=None, all=True, on_added=None, on_removed=None, yes=False)
         # The fake remote contains one and two.  Mix include and ignore for every source.
         answers = "include\nignore\nignore\ninclude\ny\n"
+        stdin, stdout, stderr = self._streams(answers)
         with patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as dispatch:
-            self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answers), self.git), 0)
+            self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
 
         policies = dispatch.call_args.args[2]
         self.assertEqual(
@@ -151,6 +152,10 @@ class MaintenanceCliTest(unittest.TestCase):
             {("other", "one"): "include", ("other", "two"): "ignore", ("team", "one"): "ignore", ("team", "two"): "include"},
         )
         self.assertEqual(dispatch.call_args.kwargs["expected_inspections"].keys(), {"other", "team"})
+        # JSON mode reserves stdout for the final machine result, so prompts are stderr.
+        rendered = stderr.getvalue()
+        self.assertLess(rendered.index("Source update: other"), rendered.index("Added other/one"))
+        self.assertLess(rendered.index("Source update: team"), rendered.index("Added other/one"))
 
     def test_source_update_track_override_and_select_track(self):
         from hwskill.maintenance_cli import run_maintenance_command
@@ -248,6 +253,15 @@ class MaintenanceCliTest(unittest.TestCase):
         for answer in ("0", "99", "x,y"):
             args=self._update_args(select_track=True, yes=True)
             self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 2)
+        for answer in ("D" * 40,):
+            args=self._update_args(select_track=True, yes=True)
+            with patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as planner:
+                self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 2)
+            planner.assert_not_called()
+        args = self._update_args(track="D" * 40)
+        with patch("hwskill.maintenance_cli.plan_update_sources") as planner:
+            self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(), self.git), 2)
+        planner.assert_not_called()
 
     def test_source_delete_interactively_shows_impact_then_chooses_policy_or_cancels(self):
         from hwskill.maintenance_cli import run_maintenance_command
@@ -273,6 +287,15 @@ class MaintenanceCliTest(unittest.TestCase):
         planner.assert_not_called()
         self.assertIn("Cancelled", stdout.getvalue())
 
+        for tty in (True, False):
+            args.skills = None
+            args.yes = True
+            with self.subTest(tty=tty), patch("hwskill.maintenance_cli.plan_delete_source") as planner:
+                stdin, stdout, stderr = self._streams("delete\n", tty=tty)
+                self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 2)
+            planner.assert_not_called()
+        args.yes = False
+
     def test_source_check_reports_local_payload_and_catalog_drift_without_remote_change(self):
         from hwskill.maintenance_cli import run_maintenance_command
 
@@ -286,8 +309,32 @@ class MaintenanceCliTest(unittest.TestCase):
         row = json.loads(stdout.getvalue())["sources"][0]
         self.assertEqual(row["upstream_status"], "current")
         self.assertEqual(row["local_status"], "drift")
-        self.assertTrue(any(item["code"].startswith("catalog-") for item in row["local_drift"]))
         self.assertTrue(any(item["code"].startswith("source-skill-") for item in row["local_drift"]))
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(any(item["code"].startswith("catalog-") for item in payload["global_drift"]))
+
+    def test_source_check_reports_catalog_drift_once_without_misattributing_it_to_healthy_sources(self):
+        from hwskill.integrity import IntegrityIssue, IntegrityReport
+        from hwskill.maintenance_cli import run_maintenance_command
+        from hwskill.source_maintenance import SourceInspection
+
+        for source_id in ("alpha", "beta"):
+            write_source_manifest(
+                self.repo / "sources" / f"{source_id}.yaml",
+                UpstreamSource(source_id, UpstreamConfig(f"https://x/{source_id}.git", "refs/heads/main", "library", ()), SourceDefaults(source_id, "l1", "MIT"), "a" * 40, ()),
+            )
+        report = IntegrityReport((IntegrityIssue("registry/catalog.json", "catalog-stale", "manual and beta records differ"),), 3, 2, 0)
+        inspection = SourceInspection("a" * 40, "a" * 40, (), (), (), ())
+        with patch("hwskill.maintenance_cli.inspect_source", return_value=inspection), patch("hwskill.maintenance_cli.check_integrity", return_value=report) as integrity:
+            args = SimpleNamespace(command="source", source_command="check", source_id=None, all=True, repo_root=str(self.repo), json=True)
+            stdin, stdout, stderr = self._streams(tty=False)
+            self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "global_drift")
+        self.assertEqual([row["local_status"] for row in payload["sources"]], ["current", "current"])
+        self.assertEqual([row["local_drift"] for row in payload["sources"]], [[], []])
+        self.assertEqual(payload["global_drift"], [{"path": "registry/catalog.json", "code": "catalog-stale", "message": "manual and beta records differ"}])
+        self.assertEqual(integrity.call_count, 1)
 
     def test_interactive_skill_create_json_prompts_only_stderr(self):
         from hwskill.maintenance_cli import run_maintenance_command

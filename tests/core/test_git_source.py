@@ -108,6 +108,12 @@ class GitSourceClientTest(unittest.TestCase):
         self.assertEqual(resolved.kind, "commit")
         self.assertEqual(resolved.commit, self.branch_commit)
 
+    def test_resolve_rejects_an_uppercase_full_commit_sha(self) -> None:
+        from hwskill.git_source import GitSourceClient, GitSourceError
+
+        with self.assertRaisesRegex(GitSourceError, "full 40-character"):
+            GitSourceClient().resolve(str(self.remote), self.branch_commit.upper())
+
     def test_resolve_missing_ref_and_bare_ref_fail_clearly(self) -> None:
         from hwskill.git_source import GitSourceClient, GitSourceError
 

@@ -111,6 +111,13 @@ class SourceManifestTest(unittest.TestCase):
 
         self.assertEqual(source.upstream.track, "c" * 40)
 
+    def test_track_rejects_an_uppercase_full_commit_sha(self):
+        data = self.source_data()
+        data["upstream"]["track"] = "C" * 40
+
+        with self.assertRaisesRegex(SourceManifestError, "track"):
+            load_source_manifest(self.write_source(data))
+
     def test_rejects_full_refs_outside_heads_and_tags(self):
         data = self.source_data()
         data["upstream"]["track"] = "refs/pull/1/head"

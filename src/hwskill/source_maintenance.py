@@ -23,6 +23,7 @@ from .source_manifest import (
     SourceDefaults,
     UpstreamConfig,
     UpstreamSource,
+    is_valid_track,
     load_source_manifest,
 )
 
@@ -132,6 +133,8 @@ def plan_add_source(
 ) -> MaintenancePlan:
     root = Path(repo_root)
     _validate_source_id(request.source_id)
+    if not is_valid_track(request.track):
+        raise SourceMaintenanceError("track must be a full ref or lowercase 40-character commit SHA")
     known_sources = _load_sources_with_paths(root)
     if any(source.source_id == request.source_id for _, source in known_sources):
         raise SourceMaintenanceError(f"source already exists: {request.source_id}")
@@ -203,6 +206,8 @@ def plan_update_sources(
 ) -> MaintenancePlan:
     _validate_policies(policies)
     root = Path(repo_root)
+    if track_overrides and any(not is_valid_track(track) for track in track_overrides.values()):
+        raise SourceMaintenanceError("track must be a full ref or lowercase 40-character commit SHA")
     selected = _selected_sources(root, source_ids)
 
     # Keep every checkout alive until every source has resolved successfully.  This is

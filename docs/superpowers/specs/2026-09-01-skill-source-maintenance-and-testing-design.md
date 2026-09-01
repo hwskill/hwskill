@@ -259,7 +259,8 @@ hwskill source check --all
 - track 和 resolved revision 状态；
 - 已纳管 Skill 的内容变化；
 - 新增、删除和 ignored Skill；
-- source、快照与 Catalog 的内部漂移。
+- 每个 source 自己的快照与 governance 内部漂移；
+- 全局 Catalog 漂移单独报告一次，不归因到任一健康 source。
 
 更新命令：
 
@@ -270,9 +271,9 @@ hwskill source update superpowers --track refs/tags/v6.4.0
 hwskill source update --all
 ```
 
-- `--select-track` 交互列出 branch、tag，并允许输入完整 commit SHA。
+- `--select-track` 交互列出 branch、tag，并允许输入完整、小写 40 位 commit SHA。
 - source ID 与 `--all` 互斥。
-- `--all` 先完成全部 source 的获取、分析和选择，全部通过后统一写入。交互选择完成后，事务规划会再次物化并核对这份 inventory；远端在此间变化时停止，要求重新执行。
+- `--all` 先完成全部 source 的获取、分析和展示，再开始逐项选择；全部通过后统一写入。交互选择完成后，事务规划会再次物化并核对这份 inventory；远端在此间变化时停止，要求重新执行。
 - 新增或删除 Skill 时交互逐项处理。
 - 非交互模式（包括 `--yes`）使用 `--on-added include|ignore|fail` 与 `--on-removed remove|manualize|fail`；不会读取或提示逐项决策。
 - 新增 Skill 使用 source 默认 layer；需要例外时由维护者在合并前修改 resolved 条目。
@@ -347,7 +348,7 @@ hwskill source delete superpowers --skills delete
 hwskill source delete superpowers --skills manualize
 ```
 
-交互选择删除全部 Skill、全部 manualize 或取消。删除模式遇到 Profile 引用默认失败；manualize 模式删除 source manifest 后无需保留原 source ignore。
+交互选择删除全部 Skill、全部 manualize 或取消，仅适用于未带 `--yes` 的 TTY 调用。删除模式遇到 Profile 引用默认失败；manualize 模式删除 source manifest 后无需保留原 source ignore。非交互与 `--yes` 调用必须显式给出 `--skills`。
 
 ### 5.10 人类输出
 

@@ -242,6 +242,23 @@ class SourceMaintenanceTest(unittest.TestCase):
 
         self.assertEqual(load_source_manifest(self.repo / "sources/team.yaml").resolved_revision, "b" * 40)
 
+    def test_services_reject_uppercase_commit_tracks_before_materializing(self) -> None:
+        from hwskill.source_maintenance import SourceAddRequest, SourceMaintenanceError, SourceSelection, UpdatePolicies, plan_add_source, plan_update_sources
+
+        request = SourceAddRequest(
+            "team", "https://team.example/team.git", "D" * 40, "skills", SourceDefaults("team", "l2", "MIT"),
+        )
+        with self.assertRaisesRegex(SourceMaintenanceError, "track"):
+            plan_add_source(self.repo, request, SourceSelection(("new-skill",), ()), self.git)
+        self.assertEqual(self.git.calls, 0)
+
+        self._source()
+        with self.assertRaisesRegex(SourceMaintenanceError, "track"):
+            plan_update_sources(
+                self.repo, ("team",), UpdatePolicies("include", "remove"), self.git,
+                {"team": "D" * 40},
+            )
+
     def test_ignore_allows_future_rejects_resolved_and_unignore_reports_manual_adopt(self) -> None:
         from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
 

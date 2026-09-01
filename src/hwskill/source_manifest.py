@@ -51,7 +51,10 @@ class UpstreamSource:
     skills: tuple[ResolvedSourceSkill, ...]
 
 
-_SHA1_RE = re.compile(r"[0-9a-fA-F]{40}")
+# Git always emits object IDs in lowercase.  Keeping the persisted and entered
+# track grammar identical prevents a manifest from accepting a value the Git
+# resolver will later reject.
+_SHA1_RE = re.compile(r"[0-9a-f]{40}")
 _SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _SCP_GIT_URL_RE = re.compile(r"(?:[^@/:\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]*:[^/\s].+")
 
@@ -253,7 +256,7 @@ def _is_local_repository_path(repository: str) -> bool:
 
 def is_valid_track(track: str) -> bool:
     """Return whether a manifest track uses the supported ref-or-commit grammar."""
-    if _SHA1_RE.fullmatch(track):
+    if is_full_commit_track(track):
         return True
     for prefix in ("refs/heads/", "refs/tags/"):
         if track.startswith(prefix):
