@@ -111,7 +111,7 @@ class TestLocalCaseRunner(unittest.TestCase):
         command = (
             'python3 -c "import os,pathlib; '
             'assert all(pathlib.Path(os.environ[name]).is_absolute() for name in '
-            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE'])\""
+            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE','HWSKILL_TEST_REPO_ROOT'])\""
         )
         result = run_case(self.case(post_check=CommandAction("post-check", command)), self.environment(), self.artifacts)
 

@@ -280,6 +280,7 @@ def _run_post_check(action: CommandAction, context: ActionContext, context_path:
         "HWSKILL_TEST_CONTEXT": str(context_path.absolute()),
         "HWSKILL_TEST_ARTIFACTS": str(case_dir.absolute()),
         "HWSKILL_TEST_WORKSPACE": str(context.workspace.absolute()),
+        "HWSKILL_TEST_REPO_ROOT": str(context.environment.repo_root.absolute()),
     }
     return _run_command(action, context, additions)
 

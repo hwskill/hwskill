@@ -575,6 +575,7 @@ artifacts/tests/<run-id>/<case-id>/
 HWSKILL_TEST_CONTEXT=<absolute-path>/context.json
 HWSKILL_TEST_ARTIFACTS=<absolute-path>/artifacts/<case-id>
 HWSKILL_TEST_WORKSPACE=<absolute-path>/workspace
+HWSKILL_TEST_REPO_ROOT=<absolute-path>/repository
 ```
 
 Command post-check 可读取 Agent `events.jsonl`，检查工具顺序、参数、运行时路径、文件范围和业务结果。退出码 `0` 为 PASS、`1` 为 FAIL，其他退出码为 BLOCKED。

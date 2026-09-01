@@ -238,40 +238,34 @@ bash scripts/run_docker_smoke.sh
 构建阶段需要下载 Python/npm 依赖；容器执行阶段使用 `--network none` 和全新 HOME，验证
 三种宿主的用户级 setup/doctor、用户 Profile 回退与 adapter 注入，同时保留项目级集成验证。
 
-可选 Codex Live Eval（使用已有 `codex login` 登录态，或显式 API key）：
+可选的 Agent collection 由统一测试运行器执行。先检查 Docker、已配置的宿主、模型和
+凭据；结果会输出每次运行独立的 artifact 目录：
 
 ```bash
-CODEX_API_KEY=... bash scripts/run_codex_live_eval.sh
+hwskill test setup --check
+hwskill test tests/profiles/codex-demo/test.yaml --runner docker
+hwskill test tests/skills/local/gitcode-pr-review-fetch/test.yaml --runner docker
 ```
 
-也可直接复用 `codex login` 的现有登录态。凭据不写入镜像、仓库或审计日志。
+`codex-demo` Profile collection 在隔离 fixture 中修复订单折扣阈值边界，并运行业务
+单元测试。GitCode collection 要求 Agent 通过 Search/Load 使用
+`local/gitcode-pr-review-fetch`，取得 `openeuler/OmniStream#587` 的 patch；post-check
+检查运行时脚本路径、patch 输出路径和 API 诊断。凭据不写入镜像、仓库或 artifact。
 
-GitCode PR 脚本定位与执行的真实 Agent 验证：
+兼容入口仍保留，均是对精确 collection path 的 Docker 调用，且会保留原先的凭据
+前置检查及原样传递附加参数：
 
 ```bash
+bash scripts/run_codex_live_eval.sh
 bash scripts/run_gitcode_pr_agent_eval.sh
-```
-
-该验证在联网 Docker 容器内运行 Codex，让 Agent 自主搜索并加载
-`local/gitcode-pr-review-fetch`，获取 `openeuler/OmniStream#587` 的完整 patch。
-验证器事后分析 Codex JSONL，确认脚本命令直接锚定到 Load 返回的运行时 Skill 路径，
-并分别报告直接定位与执行成功状态、脚本尝试次数，以及执行前是否出现技能目录搜索；
-不会向 Agent 禁用 `find`、`rg` 或 `ls`。验证任务使用 Codex 0.147.0、
-`gpt-5.6-sol` 和 medium reasoning。每次运行的证据写入独立的
-`artifacts/gitcode-pr-agent-eval/<run-id>/` 目录，失败运行不会覆盖或冒充先前结果。
-
-Claude Code 与 OpenCode 使用同一用例和相同观察标准：
-
-```bash
 bash scripts/run_claude_code_gitcode_pr_agent_eval.sh
 bash scripts/run_opencode_gitcode_pr_agent_eval.sh
 ```
 
-两者都从现有 OpenCode `minimax-cn-coding-plan` 登录文件读取凭据。登录文件只读挂载到
-Docker，token 在容器进程内解析，不进入镜像、Docker 命令行、仓库、artifact 或审计日志。
-OpenCode 1.14.48 使用 `minimax-cn-coding-plan/MiniMax-M2.5`。Claude Code 2.1.141 的
-初始化事件记录了命令行请求标签，但真实 assistant 事件返回的模型为 `MiniMax-M3`；模型
-归属应以响应事件为准，凭据 provider 为 `minimax-cn-coding-plan`。
+Codex wrapper 使用已有 `codex login` 或 `CODEX_API_KEY`；Claude Code 与 OpenCode
+wrappers 要求现有的 OpenCode MiniMax 登录文件。实际 host/model/reasoning 统一从
+`hwskill test setup` 的用户级配置读取；当 Docker、凭据或模型不可用时命令以
+`BLOCKED`（退出码 3）结束，不会静默跳过或宣称 Agent 用例通过。
 
 OpenCode 的 Catalog 注入依赖 1.14.48 的
 `experimental.chat.system.transform`。`doctor opencode` 只对该验证版本报告 PASS，其他版本
