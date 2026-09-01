@@ -90,15 +90,15 @@ class SourceMaintenanceTest(unittest.TestCase):
     def _source(self, *, track: str = "refs/heads/main", revision: str = "a" * 40) -> UpstreamSource:
         old_changed = self._skill(
             "team/changed-skill", "l1", body="old body",
-            source={"source_id": "team", "revision": revision, "upstream_path": "changed-skill"},
+            source={"kind": "upstream", "source_id": "team", "revision": revision, "upstream_path": "changed-skill"},
         )
         same = self._skill(
             "team/same-skill", "l3", body="same body",
-            source={"source_id": "team", "revision": revision, "upstream_path": "same-skill"},
+            source={"kind": "upstream", "source_id": "team", "revision": revision, "upstream_path": "same-skill"},
         )
         deleted = self._skill(
             "team/deleted-skill", "l2", body="deleted body",
-            source={"source_id": "team", "revision": revision, "upstream_path": "deleted-skill"},
+            source={"kind": "upstream", "source_id": "team", "revision": revision, "upstream_path": "deleted-skill"},
         )
         source = UpstreamSource(
             source_id="team",
@@ -153,6 +153,7 @@ class SourceMaintenanceTest(unittest.TestCase):
         self.assertFalse((self.repo / "skills-src/l2/team/deleted-skill").exists())
         changed_governance = yaml.safe_load((self.repo / "skills-src/l1/team/changed-skill/skill.yaml").read_text(encoding="utf-8"))
         self.assertEqual(changed_governance["source"]["revision"], "b" * 40)
+        self.assertEqual(changed_governance["source"]["kind"], "upstream")
         catalog = yaml.safe_load((self.repo / "registry/catalog.json").read_text(encoding="utf-8"))
         self.assertEqual([item["id"] for item in catalog["skills"]], ["team/changed-skill", "team/new-skill", "team/same-skill"])
 
@@ -171,6 +172,10 @@ class SourceMaintenanceTest(unittest.TestCase):
         self.assertEqual(source.skills[0].skill_id, "team/new-skill")
         self.assertEqual(source.skills[0].layer, "l2")
         self.assertTrue((self.repo / "skills-src/l2/team/new-skill/SKILL.md").is_file())
+        self.assertEqual(
+            yaml.safe_load((self.repo / "skills-src/l2/team/new-skill/skill.yaml").read_text(encoding="utf-8"))["source"]["kind"],
+            "upstream",
+        )
         self.assertEqual([item.path for item in source.upstream.ignore], ["changed-skill", "ignored-skill", "same-skill"])
 
     def test_add_accepts_a_fixed_tag_without_a_prior_resolved_revision(self) -> None:
@@ -216,6 +221,56 @@ class SourceMaintenanceTest(unittest.TestCase):
             {"kind": "manual"},
         )
         self.assertEqual(yaml.safe_load((self.repo / "profiles/demo.yaml").read_text(encoding="utf-8"))["skills"], ["team/same-skill"])
+        from hwskill.registry import build_catalog, validate_registry
+        self.assertEqual(len(validate_registry(self.repo)), 3)
+        self.assertEqual(build_catalog(self.repo)["skills"][0]["source_kind"], "manual")
+
+    def test_unrelated_ignore_rejects_invalid_or_unknown_provenance_kind(self) -> None:
+        from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
+
+        self._source()
+        governance_path = self.repo / "skills-src/l1/team/changed-skill/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        for source in (
+            {key: value for key, value in governance["source"].items() if key != "kind"},
+            {"kind": "other", "source_id": "team", "revision": "a" * 40, "upstream_path": "changed-skill"},
+        ):
+            governance["source"] = source
+            governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+            with self.assertRaisesRegex(SourceMaintenanceError, "source kind"):
+                plan_ignore_change(self.repo, "team", "future-skill", "add")
+
+    def test_unrelated_ignore_rejects_wrong_upstream_path_and_orphan(self) -> None:
+        from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
+
+        self._source()
+        governance_path = self.repo / "skills-src/l1/team/changed-skill/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["source"]["upstream_path"] = "wrong-path"
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+        with self.assertRaisesRegex(SourceMaintenanceError, "upstream path"):
+            plan_ignore_change(self.repo, "team", "future-skill", "add")
+
+        governance["source"]["upstream_path"] = "changed-skill"
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+        self._skill(
+            "team/orphan", "l2", body="orphan",
+            source={"kind": "upstream", "source_id": "team", "revision": "a" * 40, "upstream_path": "orphan"},
+        )
+        with self.assertRaisesRegex(SourceMaintenanceError, "not resolved"):
+            plan_ignore_change(self.repo, "team", "future-skill", "add")
+
+    def test_unrelated_ignore_rejects_resolved_skill_with_manual_provenance(self) -> None:
+        from hwskill.source_maintenance import SourceMaintenanceError, plan_ignore_change
+
+        self._source()
+        governance_path = self.repo / "skills-src/l1/team/changed-skill/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["source"] = {"kind": "manual"}
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+
+        with self.assertRaisesRegex(SourceMaintenanceError, "provenance mismatch"):
+            plan_ignore_change(self.repo, "team", "future-skill", "add")
 
     def test_all_update_resolves_every_source_before_any_candidate_is_applied(self) -> None:
         from hwskill.source_maintenance import UpdatePolicies, plan_update_sources

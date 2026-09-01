@@ -12,14 +12,13 @@ from typing import Literal
 import yaml
 
 from .digest import content_digest
-from .frontmatter import FrontmatterError, parse_skill_markdown
 from .git_source import DiscoveredSkill, GitSourceClient, GitSourceError, ResolvedTrack, discover_skills, verify_existing_tag
 from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction
+from .registry import RegistryValidationError, build_catalog
 from .source_manifest import (
     IgnoredSkill,
     ResolvedSourceSkill,
     SourceDefaults,
-    SourceManifestError,
     UpstreamConfig,
     UpstreamSource,
     load_source_manifest,
@@ -446,7 +445,7 @@ def _stage_governance(
 
 
 def _upstream_provenance(source: UpstreamSource, revision: str, upstream_path: str) -> dict[str, str]:
-    return {"source_id": source.source_id, "revision": revision, "upstream_path": upstream_path}
+    return {"kind": "upstream", "source_id": source.source_id, "revision": revision, "upstream_path": upstream_path}
 
 
 def _stage_catalog(tx: RepositoryTransaction) -> None:
@@ -455,29 +454,50 @@ def _stage_catalog(tx: RepositoryTransaction) -> None:
 
 
 def _catalog_content(root: Path) -> str:
-    records = _collect_catalog_records(root)
-    return json.dumps({"schema_version": 1, "skills": records}, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    if not _has_governance(root):
+        return json.dumps({"schema_version": 1, "skills": []}, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    try:
+        catalog = build_catalog(root)
+    except RegistryValidationError as error:
+        raise SourceMaintenanceError(str(error)) from error
+    return json.dumps(catalog, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
 def _validate_candidate(root: Path) -> None:
     sources = _load_sources_with_paths(root)
     records = _collect_catalog_records(root)
     by_id = {item["id"]: item for item in records}
-    expected: dict[str, ResolvedSourceSkill] = {}
+    governance_sources = _governance_sources(root, records)
+    expected: dict[str, tuple[UpstreamSource, ResolvedSourceSkill]] = {}
     for _, source in sources:
         for item in source.skills:
             if item.skill_id in expected:
                 raise SourceMaintenanceError(f"duplicate resolved Skill id: {item.skill_id}")
-            expected[item.skill_id] = item
+            expected[item.skill_id] = (source, item)
             record = by_id.get(item.skill_id)
             if record is None:
                 raise SourceMaintenanceError(f"resolved Skill payload is missing: {item.skill_id}")
-            if record["source_kind"] != "upstream" or record["source_id"] != source.source_id:
+            provenance = governance_sources[item.skill_id]
+            if record["source_kind"] != "upstream" or provenance.get("kind") != "upstream":
                 raise SourceMaintenanceError(f"resolved Skill provenance mismatch: {item.skill_id}")
-            if record["revision"] != source.resolved_revision or record["content_digest"] != item.content_digest:
+            if (
+                record["source_id"] != source.source_id
+                or record["revision"] != source.resolved_revision
+                or provenance.get("source_id") != source.source_id
+                or provenance.get("revision") != source.resolved_revision
+            ):
                 raise SourceMaintenanceError(f"resolved Skill metadata mismatch: {item.skill_id}")
-            if record["layer"] != item.layer or record["path"] != _skill_destination(item.layer, item.skill_id).as_posix():
+            if provenance.get("upstream_path") != item.path:
+                raise SourceMaintenanceError(f"resolved Skill upstream path mismatch: {item.skill_id}")
+            if (
+                record["content_digest"] != item.content_digest
+                or record["layer"] != item.layer
+                or record["path"] != _skill_destination(item.layer, item.skill_id).as_posix()
+            ):
                 raise SourceMaintenanceError(f"resolved Skill location mismatch: {item.skill_id}")
+    for record in records:
+        if record["source_kind"] == "upstream" and record["id"] not in expected:
+            raise SourceMaintenanceError(f"upstream Skill is not resolved: {record['id']}")
     for profile in sorted((root / "profiles").glob("*.yaml")) if (root / "profiles").is_dir() else ():
         data = _load_yaml(profile)
         if not isinstance(data, dict) or data.get("id") != profile.stem or not isinstance(data.get("skills"), list):
@@ -493,51 +513,33 @@ def _validate_candidate(root: Path) -> None:
 
 
 def _collect_catalog_records(root: Path) -> list[dict[str, object]]:
-    records: list[dict[str, object]] = []
-    ids: set[str] = set()
+    if not _has_governance(root):
+        return []
+    try:
+        return [dict(item) for item in build_catalog(root)["skills"]]
+    except RegistryValidationError as error:
+        raise SourceMaintenanceError(str(error)) from error
+
+
+def _has_governance(root: Path) -> bool:
     skills_root = root / "skills-src"
-    if not skills_root.is_dir():
-        return records
-    for governance_path in sorted(skills_root.glob("**/skill.yaml")):
-        skill_dir = governance_path.parent
-        data = _load_governance(governance_path)
-        skill_id = data.get("id")
-        if not isinstance(skill_id, str) or skill_id in ids:
-            raise SourceMaintenanceError(f"duplicate or missing Skill id: {skill_id}")
-        ids.add(skill_id)
-        markdown = skill_dir / "SKILL.md"
-        if not markdown.is_file():
-            raise SourceMaintenanceError(f"missing SKILL.md for {skill_id}")
-        try:
-            metadata, _ = parse_skill_markdown(markdown.read_text(encoding="utf-8"))
-        except (FrontmatterError, OSError, UnicodeError) as error:
-            raise SourceMaintenanceError(f"invalid SKILL.md for {skill_id}: {error}") from error
-        if data.get("name") != metadata["name"] or skill_dir.name != metadata["name"]:
-            raise SourceMaintenanceError(f"Skill name/path mismatch: {skill_id}")
-        actual_digest = content_digest(skill_dir)
-        if data.get("content_digest") != actual_digest:
-            raise SourceMaintenanceError(f"content digest mismatch: {skill_id}")
+    return skills_root.is_dir() and next(skills_root.glob("**/skill.yaml"), None) is not None
+
+
+def _governance_sources(root: Path, records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    provenance: dict[str, dict[str, object]] = {}
+    for record in records:
+        skill_id = str(record["id"])
+        data = _load_governance(root / str(record["path"]) / "skill.yaml")
         source = data.get("source")
-        if not isinstance(source, dict):
-            raise SourceMaintenanceError(f"missing provenance: {skill_id}")
-        if source.get("kind") == "manual":
-            source_kind, source_id, revision = "manual", None, "manual"
-        else:
-            source_id, revision = source.get("source_id"), source.get("revision")
-            if not isinstance(source_id, str) or not isinstance(revision, str) or not source.get("upstream_path"):
-                raise SourceMaintenanceError(f"incomplete upstream provenance: {skill_id}")
-            source_kind = "upstream"
-        layer = data.get("layer")
-        license_name = data.get("license")
-        if not isinstance(layer, str) or not isinstance(license_name, str):
-            raise SourceMaintenanceError(f"incomplete governance: {skill_id}")
-        records.append({
-            "id": skill_id, "name": metadata["name"], "description": data.get("description", metadata["description"]),
-            "layer": layer, "source_kind": source_kind, "source_id": source_id, "revision": revision,
-            "license": license_name, "content_digest": actual_digest,
-            "path": skill_dir.relative_to(root).as_posix(),
-        })
-    return sorted(records, key=lambda item: str(item["id"]))
+        if not isinstance(source, dict) or source.get("kind") not in {"manual", "upstream"}:
+            raise SourceMaintenanceError(f"invalid source kind: {skill_id}")
+        if source["kind"] == "manual" and set(source) != {"kind"}:
+            raise SourceMaintenanceError(f"invalid manual source kind: {skill_id}")
+        if source["kind"] == "upstream" and set(source) != {"kind", "source_id", "revision", "upstream_path"}:
+            raise SourceMaintenanceError(f"invalid upstream source kind: {skill_id}")
+        provenance[skill_id] = source
+    return provenance
 
 
 def _load_sources_with_paths(root: Path) -> tuple[tuple[Path, UpstreamSource], ...]:
@@ -593,8 +595,7 @@ def _assert_new_ids_available(root: Path, skill_ids: object) -> None:
 def _is_manual_skill(root: Path, skill_id: str) -> bool:
     for record in _collect_catalog_records(root):
         if record["id"] == skill_id:
-            governance = _load_governance(root / str(record["path"]) / "skill.yaml")
-            return governance.get("source") == {"kind": "manual"}
+            return record["source_kind"] == "manual"
     return False
 
 

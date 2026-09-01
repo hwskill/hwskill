@@ -40,17 +40,15 @@ def validate_registry(repo_root: Path) -> list[SkillRecord]:
             raise RegistryValidationError(
                 f"content_digest mismatch for {skill_id}: {data.get('content_digest')} != {actual}"
             )
-        source = data.get("source")
-        if not isinstance(source, dict) or not source.get("source_id") or not source.get("revision"):
-            raise RegistryValidationError(f"incomplete provenance: {skill_id}")
+        source_kind, source_id, revision = _parse_provenance(data.get("source"), skill_id)
         records.append(SkillRecord(
             skill_id=skill_id,
             name=str(data["name"]),
             description=str(data.get("description", metadata["description"])),
             layer=str(data["layer"]),
-            source_kind="upstream",
-            source_id=str(source["source_id"]),
-            revision=str(source["revision"]),
+            source_kind=source_kind,
+            source_id=source_id,
+            revision=revision,
             license=str(data["license"]),
             content_digest=actual,
             path=skill_dir,
@@ -70,6 +68,43 @@ def validate_registry(repo_root: Path) -> list[SkillRecord]:
                     f"unknown skill in profile {profile_path.stem}: {skill_id}"
                 )
     return sorted(records, key=lambda item: item.skill_id)
+
+
+def _parse_provenance(source: object, skill_id: str) -> tuple[str, str | None, str]:
+    if not isinstance(source, dict):
+        raise RegistryValidationError(f"invalid source kind: {skill_id}")
+    kind = source.get("kind")
+    if kind is None:
+        # Runtime readers preserve pre-schema-2 upstream records.  Source
+        # maintenance uses a stricter collector and never stages this form.
+        source_id = source.get("source_id")
+        revision = source.get("revision")
+        upstream_path = source.get("upstream_path")
+        if (
+            not isinstance(source_id, str) or not source_id.strip()
+            or not isinstance(revision, str) or not revision.strip() or revision == "manual"
+            or not isinstance(upstream_path, str) or not upstream_path.strip()
+        ):
+            raise RegistryValidationError(f"invalid legacy source kind: {skill_id}")
+        return "upstream", source_id, revision
+    if kind == "manual":
+        if set(source) != {"kind"}:
+            raise RegistryValidationError(f"invalid manual source kind: {skill_id}")
+        return "manual", None, "manual"
+    if kind != "upstream":
+        raise RegistryValidationError(f"invalid source kind: {skill_id}")
+    if set(source) != {"kind", "source_id", "revision", "upstream_path"}:
+        raise RegistryValidationError(f"invalid upstream source kind: {skill_id}")
+    source_id = source.get("source_id")
+    revision = source.get("revision")
+    upstream_path = source.get("upstream_path")
+    if (
+        not isinstance(source_id, str) or not source_id.strip()
+        or not isinstance(revision, str) or not revision.strip() or revision == "manual"
+        or not isinstance(upstream_path, str) or not upstream_path.strip()
+    ):
+        raise RegistryValidationError(f"invalid upstream source kind: {skill_id}")
+    return "upstream", source_id, revision
 
 
 def build_catalog(repo_root: Path) -> dict[str, Any]:

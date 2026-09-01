@@ -24,6 +24,16 @@ class RegistryTest(unittest.TestCase):
         target = self.repo / "skills-src/l1/local/chinese-thinking"
         target.parent.mkdir(parents=True)
         shutil.copytree(SOURCE_SKILL, target)
+        governance_path = target / "skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        source = governance["source"]
+        governance["source"] = {
+            "kind": "upstream",
+            "source_id": source["source_id"],
+            "revision": source["revision"],
+            "upstream_path": source["upstream_path"],
+        }
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()
@@ -62,6 +72,28 @@ class RegistryTest(unittest.TestCase):
             "skills": ["missing/skill"],
         }), encoding="utf-8")
         with self.assertRaisesRegex(RegistryValidationError, "unknown skill in profile"):
+            validate_registry(self.repo)
+
+    def test_validation_accepts_strict_manual_provenance(self):
+        governance_path = self.repo / "skills-src/l1/local/chinese-thinking/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["source"] = {"kind": "manual"}
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+
+        record = validate_registry(self.repo)[0]
+        catalog = build_catalog(self.repo)
+
+        self.assertEqual((record.source_kind, record.source_id, record.revision), ("manual", None, "manual"))
+        self.assertEqual(catalog["skills"][0]["source_kind"], "manual")
+        self.assertIsNone(catalog["skills"][0]["source_id"])
+        self.assertEqual(catalog["skills"][0]["revision"], "manual")
+
+    def test_validation_rejects_unknown_source_kind(self):
+        governance_path = self.repo / "skills-src/l1/local/chinese-thinking/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["source"] = {"kind": "other", "source_id": "source", "revision": "revision", "upstream_path": "path"}
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+        with self.assertRaisesRegex(RegistryValidationError, "source kind"):
             validate_registry(self.repo)
 
 
