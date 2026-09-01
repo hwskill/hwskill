@@ -356,7 +356,7 @@ Profile ID-set or member-digest change selects every collection for that Profile
 
 - [ ] **Step 5: Implement gitdir-local pending state**
 
-Resolve the Git directory with `git rev-parse --git-dir`; write `hwskill/pending-verification.json` atomically. Store changed paths, expected content digests, and selected test IDs. Clear only when the current digests equal the recorded digests and all selected required cases PASS.
+Resolve the Git directory with `git rev-parse --git-dir`; write `hwskill/pending-verification.json` atomically. Persist only a schema version and an opaque SHA-256 verification identity computed from the canonical, validated selection and expected digests; never persist paths, IDs, reasons, test cases, digests, prompts, output, or credentials. Clear only when the successful run recomputes the identical identity, its required cases PASS, and its supplied digests still equal the current inventory.
 
 - [ ] **Step 6: Run impact and pending-state tests**
 

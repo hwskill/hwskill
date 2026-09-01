@@ -10,7 +10,7 @@ from unittest.mock import patch
 import yaml
 
 from hwskill.digest import content_digest
-from hwskill.pending_verification import VerificationResult, load_pending_verification
+from hwskill.pending_verification import VerificationResult, load_pending_verification, verification_identity
 from hwskill.git_source import ResolvedTrack
 from hwskill.source_manifest import (
     IgnoredSkill,
@@ -161,7 +161,7 @@ class SkillMaintenanceTest(unittest.TestCase):
         self.assertTrue((self.repo / "skills-src/l2/team/Review_Name/SKILL.md").is_file())
         pending_record = load_pending_verification(self.repo)
         self.assertIsNotNone(pending_record)
-        self.assertEqual(pending_record.selection, plan.selection)
+        self.assertEqual(pending_record.identity, verification_identity(plan.selection, plan.candidate_digests))
 
     def test_move_changes_physical_layer_but_rename_migrates_identity_references(self) -> None:
         from hwskill.skill_maintenance import plan_move_skill, plan_rename_skill

@@ -652,7 +652,7 @@ hwskill test tests/skills/local/gitcode-pr-review-fetch/test.yaml
 
 写命令在候选目录中自动运行 `integrity-check`。内容或 Skill 集合发生变化时，生成受影响测试计划；行为测试与组织检查保持独立命令，但写命令默认要求受影响的必需用例通过后才应用候选变更。
 
-显式 `--skip-tests` 可生成待验证的工作树修改，但必须在当前 Git 仓库的 gitdir 下写入 `hwskill/pending-verification.json`。该本地状态记录变更路径、候选 digest 和受影响测试计划，不进入工作树或提交。只有针对同一组 digest 的 `hwskill test affected` 成功才能删除该状态；`integrity-check` 成功不能清除行为未验证状态。新环境中没有该本地状态时，`test affected` 仍根据工作树与指定 Git base 重新计算测试范围，因此后续 CI 不依赖维护者机器的 gitdir 状态。
+显式 `--skip-tests` 可生成待验证的工作树修改，但必须在当前 Git 仓库的 gitdir 下写入 `hwskill/pending-verification.json`。该本地状态只记录 schema version 和一个不透明的 SHA-256 验证 identity：它在内存中由规范化、校验后的受影响测试选择和候选 digest 计算，绝不落盘变更路径、测试/Skill/Profile ID、原因、测试用例、digest 值、Prompt、输出或凭据。只有 `hwskill test affected` 使用成功运行的选择和 digest 重算出相同 identity、所有必需用例 PASS，且该运行提供的 digest 仍与当前库存一致时才能删除状态；`integrity-check` 成功不能清除行为未验证状态。新环境中没有该本地状态时，`test affected` 仍根据工作树与指定 Git base 重新计算测试范围，因此后续 CI 不依赖维护者机器的 gitdir 状态。
 
 ## 10. 旧机制迁移
 

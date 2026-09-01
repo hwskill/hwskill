@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -23,8 +24,7 @@ class PendingVerificationError(RuntimeError):
 
 @dataclass(frozen=True)
 class PendingVerification:
-    selection: TestSelection
-    digests: tuple[tuple[str, str], ...]
+    identity: str
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,7 @@ class PreparedPendingVerification:
 _PENDING_NAME = "pending-verification.json"
 _LOCK_NAME = "pending-verification.lock"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_PENDING_SCHEMA_VERSION = 2
 _MAX_IDENTIFIER_COMPONENT_LENGTH = 255
 _MAX_REPOSITORY_PATH_LENGTH = 4096
 
@@ -92,6 +93,11 @@ def write_pending_verification(repo_root: Path, selection: TestSelection, digest
     except BaseException:
         prepared.discard()
         raise
+
+
+def verification_identity(selection: TestSelection, digests: Mapping[str, str]) -> str:
+    """Return the opaque identity used to bind pending state to verification evidence."""
+    return _verification_identity(selection, digests)
 
 
 def prepare_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> PreparedPendingVerification:
@@ -135,6 +141,10 @@ def load_pending_verification(repo_root: Path) -> PendingVerification | None:
 
 def clear_pending_verification(repo_root: Path, passed: VerificationResult) -> bool:
     try:
+        expected_identity = _verification_identity(passed.selection, passed.digests)
+    except PendingVerificationError:
+        return False
+    try:
         directory_fd, _ = _open_pending_directory(repo_root, create=False)
     except PendingVerificationError:
         return False
@@ -143,16 +153,16 @@ def clear_pending_verification(repo_root: Path, passed: VerificationResult) -> b
         lock_fd = _acquire_pending_lock(directory_fd)
         raw = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
         record = None if raw is None else _parse_pending(raw)
-        if record is None or record.selection != passed.selection or record.digests != tuple(sorted(passed.digests.items())):
+        if record is None or record.identity != expected_identity:
             return False
         try:
             current = {item.skill_id: item.content_digest for item in load_impact_inventory(repo_root).skills}
         except Exception:
             return False
-        if any(current.get(skill_id) != digest for skill_id, digest in record.digests):
+        if any(current.get(skill_id) != digest for skill_id, digest in passed.digests.items()):
             return False
         statuses = dict(passed.case_statuses)
-        if any(statuses.get(case_id) != "PASS" for case_id in record.selection.required_case_ids):
+        if any(statuses.get(case_id) != "PASS" for case_id in passed.selection.required_case_ids):
             return False
         _before_clear_unlink()
         if _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True) != raw:
@@ -333,29 +343,32 @@ def _fsync_fd(fd: int) -> None:
 
 def _parse_pending(raw: bytes) -> PendingVerification | None:
     data = json.loads(raw.decode("utf-8"))
-    if not isinstance(data, dict) or set(data) != {"schema_version", "changed_paths", "digests", "selection"} or data["schema_version"] != 1:
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"schema_version", "verification_identity"}
+        or data["schema_version"] != _PENDING_SCHEMA_VERSION
+        or not _digest_is_safe(data["verification_identity"])
+    ):
         return None
-    if not isinstance(data["changed_paths"], list) or not isinstance(data["digests"], dict):
-        return None
-    selection = _selection_from_data(data["selection"])
-    if not _selection_is_safe(selection) or not _digest_mapping_is_safe(data["digests"]):
-        return None
-    if data["changed_paths"] != list(selection.changed_paths):
-        return None
-    if data["selection"] != _selection_data(selection):
-        return None
-    return PendingVerification(selection, tuple(sorted(data["digests"].items())))
+    return PendingVerification(data["verification_identity"])
 
 
 def _pending_data(selection: TestSelection, digests: Mapping[str, str]) -> dict[str, object]:
+    return {
+        "schema_version": _PENDING_SCHEMA_VERSION,
+        "verification_identity": _verification_identity(selection, digests),
+    }
+
+
+def _verification_identity(selection: TestSelection, digests: Mapping[str, str]) -> str:
     if not _selection_is_safe(selection) or not _digest_mapping_is_safe(digests):
         raise PendingVerificationError("pending verification state contains unsafe metadata")
-    return {
-        "schema_version": 1,
-        "changed_paths": list(selection.changed_paths),
-        "digests": dict(sorted(digests.items())),
+    payload = {
         "selection": _selection_data(selection),
+        "digests": [[key, value] for key, value in sorted(digests.items())],
     }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _selection_is_safe(selection: object) -> bool:
@@ -389,6 +402,7 @@ def _identifier_component_is_safe(value: object) -> bool:
     return (
         isinstance(value, str)
         and bool(value)
+        and value == value.strip()
         and len(value) <= _MAX_IDENTIFIER_COMPONENT_LENGTH
         and value not in {".", ".."}
         and "/" not in value
@@ -484,15 +498,3 @@ def _reason_is_safe(value: object) -> bool:
 
 def _selection_data(selection: TestSelection) -> dict[str, object]:
     return {"core": selection.core, "skill_ids": list(selection.skill_ids), "profile_ids": list(selection.profile_ids), "collection_paths": [path.as_posix() for path in selection.collection_paths], "reasons": list(selection.reasons), "changed_paths": list(selection.changed_paths), "digests": [list(item) for item in selection.digests]}
-
-
-def _selection_from_data(value: object) -> TestSelection:
-    if not isinstance(value, dict) or set(value) != {"core", "skill_ids", "profile_ids", "collection_paths", "reasons", "changed_paths", "digests"}:
-        raise ValueError("invalid pending selection")
-    strings = ("skill_ids", "profile_ids", "collection_paths", "reasons", "changed_paths")
-    if not isinstance(value["core"], bool) or any(not isinstance(value[key], list) or not all(isinstance(item, str) for item in value[key]) for key in strings):
-        raise ValueError("invalid pending selection")
-    digest_values = value["digests"]
-    if not isinstance(digest_values, list) or not all(isinstance(item, list) and len(item) == 2 and all(isinstance(part, str) for part in item) for item in digest_values):
-        raise ValueError("invalid pending selection")
-    return TestSelection(core=value["core"], skill_ids=tuple(value["skill_ids"]), profile_ids=tuple(value["profile_ids"]), collection_paths=tuple(Path(item) for item in value["collection_paths"]), reasons=tuple(value["reasons"]), changed_paths=tuple(value["changed_paths"]), digests=tuple((item[0], item[1]) for item in digest_values))

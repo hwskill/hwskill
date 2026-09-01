@@ -20,6 +20,7 @@ from hwskill.pending_verification import (
     VerificationResult,
     load_pending_verification,
     prepare_pending_verification,
+    verification_identity,
     write_pending_verification,
 )
 from hwskill.test_impact import TestSelection
@@ -249,7 +250,7 @@ class RepositoryTransactionTest(unittest.TestCase):
         self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "candidate source\n")
         pending = load_pending_verification(self.repo)
         self.assertIsNotNone(pending)
-        self.assertEqual(pending.selection, selection)
+        self.assertEqual(pending.identity, verification_identity(selection, plan.candidate_digests))
 
     def test_finalize_failure_rolls_back_applied_candidate(self) -> None:
         tx = RepositoryTransaction(self.repo)

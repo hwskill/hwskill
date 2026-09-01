@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import os
+import json
 import subprocess
 import threading
 import unittest
@@ -15,6 +16,7 @@ from hwskill.pending_verification import (
     clear_pending_verification,
     load_pending_verification,
     prepare_pending_verification,
+    verification_identity,
     write_pending_verification,
 )
 from hwskill.test_impact import TestSelection
@@ -56,10 +58,11 @@ class PendingVerificationTest(unittest.TestCase):
         self.assertTrue(path.is_relative_to(self.repo / ".git"))
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         record = load_pending_verification(self.repo)
-        self.assertEqual(record.digests, (("team/review", _DIGEST_A),))
-        self.assertEqual(record.selection, self.selection)
+        self.assertIsNotNone(record)
+        self.assertEqual(record.identity, verification_identity(self.selection, self.digests))
+        self.assertEqual(set(json.loads(path.read_text(encoding="utf-8"))), {"schema_version", "verification_identity"})
 
-    def test_writer_accepts_authoritative_whitespace_bearing_skill_component(self) -> None:
+    def test_writer_rejects_registry_invalid_whitespace_bearing_skill_component(self) -> None:
         selection = TestSelection(
             skill_ids=("team/ Review ",),
             collection_paths=(Path("tests/skills/team/ Review /test.yaml"),),
@@ -68,12 +71,9 @@ class PendingVerificationTest(unittest.TestCase):
         )
         digests = {"team/ Review ": _DIGEST_A}
 
-        write_pending_verification(self.repo, selection, digests)
-
-        record = load_pending_verification(self.repo)
-        self.assertIsNotNone(record)
-        self.assertEqual(record.selection, selection)
-        self.assertEqual(record.digests, (("team/ Review ", _DIGEST_A),))
+        with self.assertRaises(pending.PendingVerificationError):
+            write_pending_verification(self.repo, selection, digests)
+        self.assertFalse((self.repo / ".git/hwskill").exists())
 
     def test_only_exact_digests_and_all_required_passes_clear(self) -> None:
         write_pending_verification(self.repo, self.selection, self.digests)
@@ -126,7 +126,7 @@ class PendingVerificationTest(unittest.TestCase):
         self.assertNotIn("prompt", data.lower())
         self.assertNotIn("output", data.lower())
         self.assertNotIn("secret", data.lower())
-        self.assertEqual(set(__import__("json").loads(data)), {"schema_version", "changed_paths", "digests", "selection"})
+        self.assertEqual(set(json.loads(data)), {"schema_version", "verification_identity"})
 
     def test_publish_stage_failures_restore_existing_record(self) -> None:
         original = write_pending_verification(self.repo, self.selection, self.digests).read_bytes()
@@ -174,6 +174,43 @@ class PendingVerificationTest(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), original)
                 self.assertNotIn(sentinel.encode("utf-8"), path.read_bytes())
 
+    def test_opaque_identity_never_persists_printable_metadata(self) -> None:
+        sentinel = "SK_PROBE_TOKEN"
+        valid = _DIGEST_A
+        cases = (
+            (TestSelection(skill_ids=(f"team/{sentinel}",)), {"team/review": valid}, True),
+            (TestSelection(profile_ids=(sentinel,)), {"team/review": valid}, True),
+            (TestSelection(
+                skill_ids=(f"team/{sentinel}",),
+                collection_paths=(Path(f"tests/skills/team/{sentinel}/test.yaml"),),
+            ), {"team/review": valid}, True),
+            (TestSelection(reasons=(f"skill-added:team/{sentinel}",)), {"team/review": valid}, True),
+            (TestSelection(changed_paths=(f"sources/{sentinel}.yaml",)), {"team/review": valid}, True),
+            (TestSelection(digests=((f"team/{sentinel}", valid),)), {"team/review": valid}, True),
+            (TestSelection(), {f"team/{sentinel}": valid}, True),
+            (TestSelection(digests=(("team/review", sentinel),)), {"team/review": valid}, False),
+            (TestSelection(), {"team/review": sentinel}, False),
+        )
+        path = self.repo / ".git/hwskill/pending-verification.json"
+        for replacement in (False, True):
+            for selection, digests, accepted in cases:
+                with self.subTest(replacement=replacement, selection=selection, digests=digests):
+                    if path.exists():
+                        path.unlink()
+                    if replacement:
+                        write_pending_verification(self.repo, self.selection, self.digests)
+                    original = path.read_bytes() if path.exists() else None
+                    if accepted:
+                        write_pending_verification(self.repo, selection, digests)
+                        self.assertNotIn(sentinel.encode("utf-8"), path.read_bytes())
+                    else:
+                        with self.assertRaises(pending.PendingVerificationError):
+                            write_pending_verification(self.repo, selection, digests)
+                        if original is None:
+                            self.assertFalse(path.exists())
+                        else:
+                            self.assertEqual(path.read_bytes(), original)
+
     def test_clear_cannot_delete_a_newer_record_published_during_evidence_check(self) -> None:
         write_pending_verification(self.repo, self.selection, self.digests)
         evidence = VerificationResult(
@@ -214,7 +251,7 @@ class PendingVerificationTest(unittest.TestCase):
         self.assertEqual(clear_result, [True])
         pending_record = load_pending_verification(self.repo)
         self.assertIsNotNone(pending_record)
-        self.assertEqual(pending_record.selection, newer)
+        self.assertEqual(pending_record.identity, verification_identity(newer, {}))
 
     def test_lock_must_be_a_regular_file_and_prepared_locks_close_once(self) -> None:
         gitdir = self.repo / ".git"
@@ -275,4 +312,6 @@ class PendingVerificationTest(unittest.TestCase):
         (linked / "registry/catalog.json").write_text((self.repo / "registry/catalog.json").read_text(encoding="utf-8"), encoding="utf-8")
         path = write_pending_verification(linked, self.selection, self.digests)
         self.assertFalse(path.is_relative_to(linked))
-        self.assertEqual(load_pending_verification(linked).selection, self.selection)
+        record = load_pending_verification(linked)
+        self.assertIsNotNone(record)
+        self.assertEqual(record.identity, verification_identity(self.selection, self.digests))
