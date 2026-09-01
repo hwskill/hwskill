@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import stat
@@ -44,12 +45,21 @@ class MaintenancePlan:
 class _PathState:
     kind: str
     digest: str | None
+    device: int | None
+    inode: int | None
 
 
-_MISSING = _PathState("missing", None)
+_MISSING = _PathState("missing", None, None, None)
 Replace = Callable[[Path, Path], None]
 Remove = Callable[[Path], None]
 Validate = Callable[[Path], None]
+
+
+@dataclass
+class _TargetHandle:
+    relative_path: Path
+    parent_fd: int
+    name: str
 
 
 class RepositoryTransaction:
@@ -66,9 +76,16 @@ class RepositoryTransaction:
         self.repo_root = Path(repo_root).resolve()
         if not self.repo_root.is_dir():
             raise TransactionError(f"repository root does not exist: {self.repo_root}")
+        if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
+            raise TransactionError("repository transactions require POSIX O_NOFOLLOW support")
         self._validate = validate
-        self._replace = replace or _replace_path
-        self._remove = remove or _remove_path
+        self._replace = replace
+        self._remove = remove
+        self._state = "active"
+        self._repo_fd = os.open(
+            self.repo_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
         self._candidate_directory = Path(tempfile.mkdtemp(prefix="hwskill-candidate-"))
         self.candidate_root = self._candidate_directory
         try:
@@ -88,6 +105,7 @@ class RepositoryTransaction:
         self.discard()
 
     def write_bytes(self, relative_path: Path, content: bytes) -> None:
+        self._require_active()
         path = self._candidate_path(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
@@ -102,6 +120,7 @@ class RepositoryTransaction:
         self.write_bytes(relative_path, content.encode(encoding))
 
     def delete(self, relative_path: Path) -> None:
+        self._require_active()
         path = self._candidate_path(relative_path)
         if path.is_dir():
             shutil.rmtree(path)
@@ -109,6 +128,7 @@ class RepositoryTransaction:
             path.unlink()
 
     def changed_paths(self) -> tuple[Path, ...]:
+        self._require_active()
         candidate = _snapshot_managed_roots(self.candidate_root)
         changed = [
             path
@@ -128,38 +148,57 @@ class RepositoryTransaction:
         )
 
     def apply(self) -> None:
+        self._require_active()
         if self._validate is not None:
             self._validate(self.candidate_root)
         targets = self.changed_paths()
         self._assert_preimages(targets)
         if not targets:
+            self._state = "applied"
             return
 
         with tempfile.TemporaryDirectory(prefix="hwskill-backup-") as temporary_backup:
             backup_root = Path(temporary_backup)
-            for relative_path in targets:
-                original = self.repo_root / relative_path
-                if self._baseline.get(relative_path, _MISSING).kind != "missing":
-                    _copy_path(original, backup_root / relative_path)
-
-            applied: list[Path] = []
+            handles: list[_TargetHandle] = []
             try:
                 for relative_path in targets:
-                    applied.append(relative_path)
-                    candidate = self.candidate_root / relative_path
-                    destination = self.repo_root / relative_path
-                    if candidate.exists():
-                        self._replace(candidate, destination)
-                    else:
-                        self._remove(destination)
-            except BaseException:
-                rollback_error = self._rollback(applied, backup_root)
-                if rollback_error is not None:
-                    raise TransactionError("transaction failed and rollback was incomplete") from rollback_error
-                raise
+                    handle = self._open_verified_target(relative_path)
+                    handles.append(handle)
+                    if self._baseline.get(relative_path, _MISSING).kind != "missing":
+                        _copy_from_fd_to_path(handle.parent_fd, handle.name, backup_root / relative_path)
+
+                applied: list[_TargetHandle] = []
+                try:
+                    for handle in handles:
+                        self._assert_ancestor_identities(handle.relative_path)
+                        self._assert_handle_preimage(handle)
+                        applied.append(handle)
+                        candidate = self.candidate_root / handle.relative_path
+                        destination = self.repo_root / handle.relative_path
+                        if candidate.exists():
+                            if self._replace is not None:
+                                self._replace(candidate, destination)
+                            _replace_at(handle.parent_fd, handle.name, candidate)
+                        else:
+                            if self._remove is not None:
+                                self._remove(destination)
+                            _remove_at(handle.parent_fd, handle.name)
+                except BaseException:
+                    rollback_error = self._rollback(applied, backup_root)
+                    if rollback_error is not None:
+                        raise TransactionError("transaction failed and rollback was incomplete") from rollback_error
+                    raise
+            finally:
+                for handle in handles:
+                    os.close(handle.parent_fd)
+        self._state = "applied"
 
     def discard(self) -> None:
+        if self._state == "discarded":
+            return
         shutil.rmtree(self._candidate_directory, ignore_errors=True)
+        os.close(self._repo_fd)
+        self._state = "discarded"
 
     def _candidate_path(self, relative_path: Path) -> Path:
         relative = Path(relative_path)
@@ -172,24 +211,77 @@ class RepositoryTransaction:
             raise TransactionError("transaction targets must be safe paths below managed roots")
         return self.candidate_root / relative
 
+    def _require_active(self) -> None:
+        if self._state == "discarded":
+            raise TransactionError("transaction is discarded")
+        if self._state == "applied":
+            raise TransactionError("transaction is already applied")
+
     def _assert_preimages(self, targets: tuple[Path, ...]) -> None:
         for relative_path in targets:
-            expected = self._baseline.get(relative_path, _MISSING)
-            actual = _path_state(self.repo_root / relative_path)
-            if actual != expected:
-                raise TransactionConflictError(
-                    f"target preimage changed: {relative_path.as_posix()}"
-                )
+            handle = self._open_verified_target(relative_path)
+            os.close(handle.parent_fd)
 
-    def _rollback(self, applied: list[Path], backup_root: Path) -> BaseException | None:
+    def _open_verified_target(self, relative_path: Path) -> _TargetHandle:
+        parent_fd = os.dup(self._repo_fd)
+        try:
+            for index, part in enumerate(relative_path.parts[:-1], start=1):
+                ancestor = Path(*relative_path.parts[:index])
+                child_fd = _open_directory_at(parent_fd, part)
+                actual = _directory_state_from_fd(child_fd)
+                expected = self._baseline.get(ancestor, _MISSING)
+                if actual != expected:
+                    os.close(child_fd)
+                    raise TransactionConflictError(
+                        f"target ancestor preimage changed: {ancestor.as_posix()}"
+                    )
+                os.close(parent_fd)
+                parent_fd = child_fd
+            handle = _TargetHandle(relative_path, parent_fd, relative_path.name)
+            self._assert_handle_preimage(handle)
+            return handle
+        except BaseException:
+            os.close(parent_fd)
+            raise
+
+    def _assert_handle_preimage(self, handle: _TargetHandle) -> None:
+        expected = self._baseline.get(handle.relative_path, _MISSING)
+        actual = _path_state_at(handle.parent_fd, handle.name)
+        if actual != expected:
+            raise TransactionConflictError(
+                f"target preimage changed: {handle.relative_path.as_posix()}"
+            )
+
+    def _assert_ancestor_identities(self, relative_path: Path) -> None:
+        parent_fd = os.dup(self._repo_fd)
+        try:
+            for index, part in enumerate(relative_path.parts[:-1], start=1):
+                ancestor = Path(*relative_path.parts[:index])
+                child_fd = _open_directory_at(parent_fd, part)
+                actual = _directory_state_from_fd(child_fd)
+                expected = self._baseline.get(ancestor, _MISSING)
+                if (
+                    actual.kind != "directory"
+                    or actual.device != expected.device
+                    or actual.inode != expected.inode
+                ):
+                    os.close(child_fd)
+                    raise TransactionConflictError(
+                        f"target ancestor changed: {ancestor.as_posix()}"
+                    )
+                os.close(parent_fd)
+                parent_fd = child_fd
+        finally:
+            os.close(parent_fd)
+
+    def _rollback(self, applied: list[_TargetHandle], backup_root: Path) -> BaseException | None:
         rollback_error: BaseException | None = None
-        for relative_path in reversed(applied):
+        for handle in reversed(applied):
             try:
-                destination = self.repo_root / relative_path
-                original = self._baseline.get(relative_path, _MISSING)
-                _remove_path(destination)
+                original = self._baseline.get(handle.relative_path, _MISSING)
+                _remove_at(handle.parent_fd, handle.name)
                 if original.kind != "missing":
-                    _copy_path(backup_root / relative_path, destination)
+                    _copy_path_to_fd(backup_root / handle.relative_path, handle.parent_fd, handle.name)
             except BaseException as exc:
                 rollback_error = rollback_error or exc
         return rollback_error
@@ -217,9 +309,9 @@ def _path_state(path: Path) -> _PathState:
     except FileNotFoundError:
         return _MISSING
     if stat.S_ISREG(metadata.st_mode):
-        return _PathState("file", _file_digest(path))
+        return _PathState("file", _file_digest(path), metadata.st_dev, metadata.st_ino)
     if stat.S_ISDIR(metadata.st_mode):
-        return _PathState("directory", _directory_digest(path))
+        return _PathState("directory", _directory_digest(path), metadata.st_dev, metadata.st_ino)
     raise TransactionError(f"unsupported transaction path type: {path}")
 
 
@@ -233,17 +325,20 @@ def _file_digest(path: Path) -> str:
 
 def _directory_digest(path: Path) -> str:
     digest = hashlib.sha256()
-    for child in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
-        relative = child.relative_to(path).as_posix().encode("utf-8")
+    for child in sorted(path.iterdir(), key=lambda item: item.name):
         state = _path_state(child)
-        digest.update(state.kind.encode("ascii"))
-        digest.update(b"\0")
-        digest.update(relative)
-        digest.update(b"\0")
-        if state.digest is not None:
-            digest.update(state.digest.encode("ascii"))
-            digest.update(b"\0")
+        _update_directory_digest(digest, child.name, state)
     return digest.hexdigest()
+
+
+def _update_directory_digest(digest: "hashlib._Hash", name: str, state: _PathState) -> None:
+    digest.update(state.kind.encode("ascii"))
+    digest.update(b"\0")
+    digest.update(name.encode("utf-8"))
+    digest.update(b"\0")
+    if state.digest is not None:
+        digest.update(state.digest.encode("ascii"))
+        digest.update(b"\0")
 
 
 def _candidate_state_changed(before: _PathState, after: _PathState) -> bool:
@@ -252,22 +347,110 @@ def _candidate_state_changed(before: _PathState, after: _PathState) -> bool:
     return before.kind == "file" and before.digest != after.digest
 
 
-def _replace_path(source: Path, destination: Path) -> None:
-    _remove_path(destination)
-    _copy_path(source, destination)
-
-
-def _remove_path(path: Path) -> None:
+def _path_state_at(parent_fd: int, name: str) -> _PathState:
     try:
-        metadata = path.lstat()
+        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return _MISSING
+    if stat.S_ISREG(metadata.st_mode):
+        file_fd = _open_file_at(parent_fd, name)
+        file_metadata = os.fstat(file_fd)
+        return _PathState(
+            "file",
+            _file_digest_fd(file_fd),
+            file_metadata.st_dev,
+            file_metadata.st_ino,
+        )
+    if stat.S_ISDIR(metadata.st_mode):
+        directory_fd = _open_directory_at(parent_fd, name)
+        try:
+            return _directory_state_from_fd(directory_fd)
+        finally:
+            os.close(directory_fd)
+    raise TransactionError(f"unsupported transaction path type: {name}")
+
+
+def _directory_state_from_fd(directory_fd: int) -> _PathState:
+    metadata = os.fstat(directory_fd)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise TransactionError("transaction ancestor is not a directory")
+    return _PathState(
+        "directory",
+        _directory_digest_from_fd(directory_fd),
+        metadata.st_dev,
+        metadata.st_ino,
+    )
+
+
+def _directory_digest_from_fd(directory_fd: int) -> str:
+    digest = hashlib.sha256()
+    for name in sorted(os.listdir(directory_fd)):
+        _update_directory_digest(digest, name, _path_state_at(directory_fd, name))
+    return digest.hexdigest()
+
+
+def _open_directory_at(parent_fd: int, name: str) -> int:
+    try:
+        directory_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent_fd,
+        )
+    except OSError as exc:
+        raise TransactionConflictError(f"transaction ancestor is unsafe: {name}") from exc
+    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+        os.close(directory_fd)
+        raise TransactionConflictError(f"transaction ancestor is not a directory: {name}")
+    return directory_fd
+
+
+def _open_file_at(parent_fd: int, name: str) -> int:
+    try:
+        file_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=parent_fd,
+        )
+    except OSError as exc:
+        raise TransactionConflictError(f"transaction target is unsafe: {name}") from exc
+    if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+        os.close(file_fd)
+        raise TransactionConflictError(f"transaction target is not a regular file: {name}")
+    return file_fd
+
+
+def _file_digest_fd(file_fd: int) -> str:
+    digest = hashlib.sha256()
+    try:
+        while block := os.read(file_fd, 1024 * 1024):
+            digest.update(block)
+    finally:
+        os.close(file_fd)
+    return digest.hexdigest()
+
+
+def _replace_at(parent_fd: int, name: str, source: Path) -> None:
+    _remove_at(parent_fd, name)
+    _copy_path_to_fd(source, parent_fd, name)
+
+
+def _remove_at(parent_fd: int, name: str) -> None:
+    try:
+        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
         return
-    if stat.S_ISDIR(metadata.st_mode):
-        shutil.rmtree(path)
-    elif stat.S_ISREG(metadata.st_mode):
-        path.unlink()
-    else:
-        raise TransactionError(f"unsupported transaction path type: {path}")
+    if stat.S_ISREG(metadata.st_mode):
+        os.unlink(name, dir_fd=parent_fd)
+        return
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise TransactionError(f"unsupported transaction path type: {name}")
+    directory_fd = _open_directory_at(parent_fd, name)
+    try:
+        for child_name in os.listdir(directory_fd):
+            _remove_at(directory_fd, child_name)
+    finally:
+        os.close(directory_fd)
+    os.rmdir(name, dir_fd=parent_fd)
 
 
 def _copy_path(source: Path, destination: Path) -> None:
@@ -280,3 +463,60 @@ def _copy_path(source: Path, destination: Path) -> None:
         shutil.copytree(source, destination)
     else:
         raise TransactionError(f"cannot copy missing transaction path: {source}")
+
+
+def _copy_path_to_fd(source: Path, parent_fd: int, name: str) -> None:
+    state = _path_state(source)
+    if state.kind == "file":
+        destination_fd = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            stat.S_IMODE(source.stat().st_mode),
+            dir_fd=parent_fd,
+        )
+        try:
+            with source.open("rb") as source_file:
+                while block := source_file.read(1024 * 1024):
+                    _write_all(destination_fd, block)
+        finally:
+            os.close(destination_fd)
+        return
+    if state.kind != "directory":
+        raise TransactionError(f"cannot copy missing transaction path: {source}")
+    os.mkdir(name, stat.S_IMODE(source.stat().st_mode), dir_fd=parent_fd)
+    destination_fd = _open_directory_at(parent_fd, name)
+    try:
+        for child in source.iterdir():
+            _copy_path_to_fd(child, destination_fd, child.name)
+    finally:
+        os.close(destination_fd)
+
+
+def _copy_from_fd_to_path(parent_fd: int, name: str, destination: Path) -> None:
+    state = _path_state_at(parent_fd, name)
+    if state.kind == "file":
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        file_fd = _open_file_at(parent_fd, name)
+        try:
+            with destination.open("xb") as destination_file:
+                while block := os.read(file_fd, 1024 * 1024):
+                    destination_file.write(block)
+        finally:
+            os.close(file_fd)
+        return
+    if state.kind != "directory":
+        raise TransactionError(f"cannot copy missing transaction path: {name}")
+    destination.mkdir(parents=True)
+    directory_fd = _open_directory_at(parent_fd, name)
+    try:
+        for child_name in os.listdir(directory_fd):
+            _copy_from_fd_to_path(directory_fd, child_name, destination / child_name)
+    finally:
+        os.close(directory_fd)
+
+
+def _write_all(file_fd: int, block: bytes) -> None:
+    remaining = memoryview(block)
+    while remaining:
+        written = os.write(file_fd, remaining)
+        remaining = remaining[written:]

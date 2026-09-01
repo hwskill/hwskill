@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import os
+import shutil
 import unittest
 
 from hwskill.maintenance_transaction import (
     RepositoryTransaction,
     TransactionConflictError,
+    TransactionError,
 )
 
 
@@ -161,6 +164,100 @@ class RepositoryTransactionTest(unittest.TestCase):
         self.assertFalse(candidate.exists())
         tx.discard()
         self.assertFalse(candidate.exists())
+
+    def test_direct_discard_closes_transaction_without_mutating_worktree(self) -> None:
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+
+        tx.discard()
+        tx.discard()
+
+        with self.assertRaisesRegex(TransactionError, "discarded"):
+            tx.changed_paths()
+        with self.assertRaisesRegex(TransactionError, "discarded"):
+            tx.apply()
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
+    def test_context_exit_closes_transaction_without_mutating_worktree(self) -> None:
+        with RepositoryTransaction(self.repo) as tx:
+            tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+
+        with self.assertRaisesRegex(TransactionError, "discarded"):
+            tx.apply()
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
+    def test_repeated_apply_is_rejected_even_when_first_apply_has_no_changes(self) -> None:
+        tx = RepositoryTransaction(self.repo)
+
+        tx.apply()
+
+        with self.assertRaisesRegex(TransactionError, "already applied"):
+            tx.apply()
+        with self.assertRaisesRegex(TransactionError, "already applied"):
+            tx.changed_paths()
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
+    def test_replace_rejects_symlinked_managed_ancestor_without_touching_external_file(self) -> None:
+        external = self.repo.parent / "external"
+        external.mkdir()
+        external_file = external / "a.yaml"
+        external_file.write_text("old source\n", encoding="utf-8")
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        shutil.rmtree(self.repo / "sources")
+        os.symlink(external, self.repo / "sources")
+
+        with self.assertRaises(TransactionError):
+            tx.apply()
+
+        self.assertEqual(external_file.read_text(encoding="utf-8"), "old source\n")
+        self.assertTrue((self.repo / "sources").is_symlink())
+
+    def test_delete_rejects_symlinked_managed_ancestor_without_touching_external_file(self) -> None:
+        external = self.repo.parent / "external"
+        external.mkdir()
+        external_file = external / "a.yaml"
+        external_file.write_text("old source\n", encoding="utf-8")
+        tx = RepositoryTransaction(self.repo)
+        tx.delete(Path("sources/a.yaml"))
+        shutil.rmtree(self.repo / "sources")
+        os.symlink(external, self.repo / "sources")
+
+        with self.assertRaises(TransactionError):
+            tx.apply()
+
+        self.assertEqual(external_file.read_text(encoding="utf-8"), "old source\n")
+        self.assertTrue((self.repo / "sources").is_symlink())
+
+    def test_rollback_does_not_follow_a_managed_ancestor_replaced_by_symlink(self) -> None:
+        external = self.repo.parent / "external"
+        external.mkdir()
+        external_file = external / "a.yaml"
+        external_file.write_text("old source\n", encoding="utf-8")
+        original_inode = external_file.stat().st_ino
+        calls = 0
+
+        def replace_then_swap_ancestor(source: Path, destination: Path) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(source.read_bytes())
+                shutil.rmtree(self.repo / "sources")
+                os.symlink(external, self.repo / "sources")
+                return
+            raise OSError("injected second replacement failure")
+
+        tx = RepositoryTransaction(self.repo, replace=replace_then_swap_ancestor)
+        tx.write_text(Path("registry/catalog.json"), "candidate catalog\n")
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+
+        with self.assertRaises(TransactionError):
+            tx.apply()
+
+        self.assertEqual(external_file.read_text(encoding="utf-8"), "old source\n")
+        self.assertEqual(external_file.stat().st_ino, original_inode)
+        self.assertEqual((self.repo / "registry/catalog.json").read_text(encoding="utf-8"), "old catalog\n")
 
 
 if __name__ == "__main__":
