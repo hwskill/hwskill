@@ -131,6 +131,11 @@ def _parse_request(value: Any) -> WorkerRequest:
     names = tuple(raw_names)
     if len(set(names)) != len(names) or any(name not in _APPROVED_CREDENTIAL_ENVIRONMENT[host] for name in names):
         raise WorkerRequestError("credential_environment contains an unapproved name")
+    core_selections = tuple(item for item in selections if item.kind == "core")
+    if core_selections and len(core_selections) != len(selections):
+        raise WorkerRequestError("core selections require a dedicated worker request")
+    if core_selections and names:
+        raise WorkerRequestError("core selections cannot name Agent credentials")
     return WorkerRequest(selections, host, host_version, model.model, model.reasoning, timeout, names)
 
 

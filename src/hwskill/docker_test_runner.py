@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import errno
 import json
 import os
@@ -119,6 +119,14 @@ class _ExpectedCollection:
     kind: str
     target_id: str
     cases: tuple[_ExpectedCase, ...]
+
+
+@dataclass(frozen=True)
+class _DockerPartition:
+    name: Literal["core", "command", "agent"]
+    collections: tuple[object, ...]
+    environment_variables: tuple[tuple[str, str], ...]
+    credential_files: tuple[CredentialFile, ...]
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -255,45 +263,61 @@ class DockerTestRunner:
             )
             if preflight.returncode != 0:
                 raise DockerRunnerUnavailable("standard test image preflight failed")
-            payload = _worker_request_payload(collections, environment, self.repo_root)
-            expectations = _result_expectations(collections, self.repo_root)
-            with tempfile.TemporaryDirectory(prefix="hwskill-docker-request-") as request_directory:
-                os.chmod(request_directory, 0o700)
-                request_path = Path(request_directory) / "request.json"
-                descriptor = os.open(request_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                    json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-                    handle.write("\n")
-                request = DockerTestRequest(
-                    request_path, artifacts,
-                    selection_network_mode(collections),
-                    tuple(environment.environment_variables), self._credential_files,
-                )
-                container_name = "hwskill-run-" + secrets.token_hex(16)
-                argv = self.build_run_command(request, container_name=container_name)
-                completed = self._run_container(
-                    argv, environment.environment_variables,
-                    _selection_timeout_budget(collections, environment.timeout_seconds, self.repo_root), container_name,
-                )
-            result_path = artifacts / "result.json"
-            if not result_path.is_file() or result_path.is_symlink():
-                raise DockerRunnerUnavailable("Docker worker did not produce a result")
-            result = _load_result(result_path, artifacts, expectations)
-            expected_code = {"PASS": 0, "FAIL": 1, "BLOCKED": 3}[result.status]
-            if completed.returncode != expected_code:
-                raise DockerRunnerUnavailable("Docker worker exit status does not match its result")
-            if (result.runner, result.host, result.model) != (
-                "docker", environment.host, environment.model,
+            results: list[tuple[_DockerPartition, TestRunResult]] = []
+            for partition in _partition_collections(
+                collections, tuple(environment.environment_variables), self._credential_files,
             ):
-                raise DockerRunnerUnavailable("Docker worker result identity does not match the request")
-            if result.host_version != HOST_SPECS[environment.host].verified_version:
-                raise DockerRunnerUnavailable("Docker worker did not report the verified Agent host version")
-            return result
+                partition_root = artifacts / partition.name
+                partition_root.mkdir(mode=0o700)
+                partition_environment = replace(
+                    environment,
+                    environment_variables=partition.environment_variables,
+                    secret_values=tuple(value for _name, value in partition.environment_variables),
+                )
+                results.append((partition, self._run_partition(partition, partition_environment, partition_root)))
+            combined = _combine_partition_results(collections, results, self.repo_root, artifacts, environment)
+            _write_aggregate_result(combined, collections, self.repo_root, artifacts)
+            return combined
         except (DockerRunnerUnavailable, OSError, ValueError, TypeError):
             return TestRunResult(
                 "BLOCKED", Path(artifact_root), (), "docker", environment.host, environment.model,
                 "unavailable", blocked_reason="standard Docker test execution is unavailable",
             )
+
+    def _run_partition(
+        self, partition: _DockerPartition, environment, artifact_root: Path,
+    ) -> TestRunResult:
+        payload = _worker_request_payload(partition.collections, environment, self.repo_root)
+        expectations = _result_expectations(partition.collections, self.repo_root)
+        with tempfile.TemporaryDirectory(prefix="hwskill-docker-request-") as request_directory:
+            os.chmod(request_directory, 0o700)
+            request_path = Path(request_directory) / "request.json"
+            descriptor = os.open(request_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                handle.write("\n")
+            request = DockerTestRequest(
+                request_path, artifact_root, selection_network_mode(partition.collections),
+                partition.environment_variables, partition.credential_files,
+            )
+            container_name = "hwskill-run-" + secrets.token_hex(16)
+            argv = self.build_run_command(request, container_name=container_name)
+            completed = self._run_container(
+                argv, partition.environment_variables,
+                _selection_timeout_budget(partition.collections, environment.timeout_seconds, self.repo_root), container_name,
+            )
+        result_path = artifact_root / "result.json"
+        if not result_path.is_file() or result_path.is_symlink():
+            raise DockerRunnerUnavailable("Docker worker did not produce a result")
+        result = _load_result(result_path, artifact_root, expectations)
+        expected_code = {"PASS": 0, "FAIL": 1, "BLOCKED": 3}[result.status]
+        if completed.returncode != expected_code:
+            raise DockerRunnerUnavailable("Docker worker exit status does not match its result")
+        if (result.runner, result.host, result.model) != ("docker", environment.host, environment.model):
+            raise DockerRunnerUnavailable("Docker worker result identity does not match the request")
+        if result.host_version != HOST_SPECS[environment.host].verified_version:
+            raise DockerRunnerUnavailable("Docker worker did not report the verified Agent host version")
+        return result
 
     def _run_container(
         self,
@@ -478,6 +502,127 @@ def selection_network_mode(collections: Sequence[object]) -> NetworkMode:
             if any(isinstance(action, AgentAction) for action in actions):
                 return "agent"
     return "none"
+
+
+def _partition_collections(
+    collections: Sequence[object],
+    environment_variables: tuple[tuple[str, str], ...],
+    credential_files: tuple[CredentialFile, ...],
+) -> tuple[_DockerPartition, ...]:
+    """Separate framework, command, and credential-bearing Agent trust boundaries."""
+    grouped: dict[str, list[object]] = {"core": [], "command": [], "agent": []}
+    for item in collections:
+        if isinstance(item, Path):
+            grouped["core"].append(item)
+        elif isinstance(item, TestCollection):
+            grouped["agent" if selection_network_mode((item,)) == "agent" else "command"].append(item)
+        else:
+            raise DockerRunnerUnavailable("unsupported Docker test selection")
+    partitions: list[_DockerPartition] = []
+    for name in ("core", "command", "agent"):
+        items = tuple(grouped[name])
+        if not items:
+            continue
+        credentials = environment_variables if name == "agent" else ()
+        files = credential_files if name == "agent" else ()
+        partitions.append(_DockerPartition(name, items, credentials, files))
+    return tuple(partitions)
+
+
+def _combine_partition_results(
+    collections: Sequence[object],
+    results: Sequence[tuple[_DockerPartition, TestRunResult]],
+    repo_root: Path,
+    artifact_root: Path,
+    environment,
+) -> TestRunResult:
+    by_selection: dict[str, CollectionResult | CoreCollectionResult] = {}
+    for partition, result in results:
+        expected = _result_expectations(partition.collections, repo_root)
+        if len(result.collections) != len(expected):
+            raise DockerRunnerUnavailable("Docker partition result selection count does not match request")
+        for selection, collection in zip(expected, result.collections):
+            selection_path = selection.selection_path
+            if selection_path in by_selection:
+                raise DockerRunnerUnavailable("Docker partition produced a duplicate selection")
+            by_selection[selection_path] = collection
+    ordered: list[CollectionResult | CoreCollectionResult] = []
+    for selection in _result_expectations(collections, repo_root):
+        try:
+            ordered.append(by_selection[selection.selection_path])
+        except KeyError as exc:
+            raise DockerRunnerUnavailable("Docker partition omitted a requested selection") from exc
+    status: RunStatus = (
+        "BLOCKED" if any(item.status == "BLOCKED" for item in ordered)
+        else "FAIL" if any(item.status == "FAIL" for item in ordered)
+        else "PASS"
+    )
+    return TestRunResult(status, artifact_root, tuple(ordered), "docker", environment.host, environment.model,
+                         HOST_SPECS[environment.host].verified_version)
+
+
+def _write_aggregate_result(
+    result: TestRunResult, collections: Sequence[object], repo_root: Path, artifact_root: Path,
+) -> None:
+    expectations = _result_expectations(collections, repo_root)
+    payload = {
+        "schema_version": 1,
+        "status": result.status,
+        "runner": result.runner,
+        "host": result.host,
+        "model": result.model,
+        "host_version": result.host_version,
+        "blocked_reason": result.blocked_reason,
+        "collections": [
+            _aggregate_collection_payload(collection, expectation, artifact_root)
+            for collection, expectation in zip(result.collections, expectations)
+        ],
+    }
+    path = artifact_root / "result.json"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
+
+
+def _aggregate_collection_payload(
+    collection: CollectionResult | CoreCollectionResult, expectation: _ExpectedCollection, artifact_root: Path,
+) -> dict[str, object]:
+    kind = "core" if isinstance(collection, CoreCollectionResult) else collection.target.kind
+    target = "core" if kind == "core" else collection.target.target_id
+    return {
+        "kind": kind,
+        "target_id": target,
+        "selection_path": expectation.selection_path,
+        "status": collection.status,
+        "cases": [
+            {
+                "case_id": case.case_id,
+                "status": case.status,
+                "artifact_dir": _aggregate_relative_artifact(case.artifact_dir, artifact_root),
+                "actions": [
+                    {
+                        "action_id": action.action_id,
+                        "status": action.status,
+                        "exit_code": action.exit_code,
+                        "artifact_dir": _aggregate_relative_artifact(action.artifact_dir, artifact_root),
+                    }
+                    for action in case.actions
+                ],
+            }
+            for case in collection.cases
+        ],
+    }
+
+
+def _aggregate_relative_artifact(path: Path, artifact_root: Path) -> str:
+    try:
+        relative = path.relative_to(artifact_root)
+    except ValueError as exc:
+        raise DockerRunnerUnavailable("Docker partition artifact escapes aggregate root") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise DockerRunnerUnavailable("Docker partition artifact path is unsafe")
+    return relative.as_posix()
 
 
 def _worker_request_payload(collections: Sequence[object], environment, repo_root: Path) -> dict[str, object]:

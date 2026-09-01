@@ -257,7 +257,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             _mount(Path("safe"), "/bad,destination")
 
     def test_build_uses_fixed_context_labels_and_returns_verified_digest(self) -> None:
-        from hwskill.docker_test_runner import DockerTestRunner
+        from hwskill.docker_test_runner import CredentialFile, DockerTestRunner
         from hwskill.test_configuration import HostModel, TestConfiguration
 
         calls = []
@@ -385,7 +385,7 @@ class WorkerRequestValidationTests(unittest.TestCase):
             "model": "gpt-5.6-terra",
             "reasoning": "high",
             "timeout_seconds": 30,
-            "credential_environment": ["CODEX_API_KEY"],
+            "credential_environment": [],
         }
 
     def test_worker_accepts_strict_request_without_host_paths_or_secret_values(self) -> None:
@@ -397,7 +397,7 @@ class WorkerRequestValidationTests(unittest.TestCase):
             request = load_worker_request(path)
 
         self.assertEqual(request.selections[0].path, "tests/core")
-        self.assertEqual(request.credential_environment, ("CODEX_API_KEY",))
+        self.assertEqual(request.credential_environment, ())
         self.assertNotIn("credential-sentinel", repr(request))
 
     def test_worker_rejects_duplicate_json_keys(self) -> None:
@@ -451,6 +451,31 @@ class WorkerRequestValidationTests(unittest.TestCase):
             with self.assertRaises(WorkerRequestError):
                 load_worker_request(path)
 
+    def test_worker_rejects_core_requests_that_name_agent_credentials(self) -> None:
+        from hwskill.test_worker import WorkerRequestError, load_worker_request
+
+        payload = self._request()
+        payload["credential_environment"] = ["CODEX_API_KEY"]
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "request.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(WorkerRequestError, "core.*credentials"):
+                load_worker_request(path)
+
+    def test_worker_rejects_core_and_behavior_collections_in_one_request(self) -> None:
+        from hwskill.test_worker import WorkerRequestError, load_worker_request
+
+        payload = self._request()
+        payload["selections"] = [
+            {"kind": "core", "path": "tests/core"},
+            {"kind": "skill", "path": "tests/skills/local/example/test.yaml"},
+        ]
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "request.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(WorkerRequestError, "dedicated"):
+                load_worker_request(path)
+
     def test_worker_rejects_a_host_version_not_bound_to_the_standard_image(self) -> None:
         from hwskill.test_worker import WorkerRequestError, load_worker_request
 
@@ -471,7 +496,7 @@ class DockerExecutionTests(unittest.TestCase):
         return TestConfiguration("docker", "codex", {"codex": HostModel("gpt-5.6-terra", "high")})
 
     def test_run_writes_secret_free_request_and_parses_actual_worker_result(self) -> None:
-        from hwskill.docker_test_runner import DockerTestRunner
+        from hwskill.docker_test_runner import CredentialFile, DockerTestRunner
         from hwskill.test_runner import TestEnvironment
 
         captured_request = {}
@@ -523,19 +548,24 @@ class DockerExecutionTests(unittest.TestCase):
             (repo / "docker" / "test").mkdir(parents=True)
             artifacts = root / "artifacts"
             artifacts.mkdir()
+            credential = root / "auth.json"
+            credential.write_text('{"token":"credential-sentinel"}', encoding="utf-8")
             environment = TestEnvironment(
                 repo, "docker", "codex", "gpt-5.6-terra", "high",
                 secret_values=("credential-sentinel",),
                 environment_variables=(("CODEX_API_KEY", "credential-sentinel"),),
             )
-            result = DockerTestRunner(repo, self._config(), command_runner=execute).run(
+            result = DockerTestRunner(
+                repo, self._config(), command_runner=execute,
+                credential_files=(CredentialFile(credential, "/credentials/codex/auth.json"),),
+            ).run(
                 (Path("tests/core"),), environment, artifacts,
             )
 
             self.assertEqual(result.status, "PASS")
             self.assertEqual(result.host_version, "0.147.0")
-            self.assertEqual(result.collections[0].cases[0].actions[0].artifact_dir, artifacts / "core/core/actions/unittest")
-            self.assertEqual(captured_request["credential_environment"], ["CODEX_API_KEY"])
+            self.assertEqual(result.collections[0].cases[0].actions[0].artifact_dir, artifacts / "core/core/core/actions/unittest")
+            self.assertEqual(captured_request["credential_environment"], [])
             self.assertEqual(captured_request["host_version"], "0.147.0")
             runs = [argv for argv in captured_argv if argv[:2] == ("docker", "run")]
             self.assertEqual(runs[0][-2:], ("sha256:" + "e" * 64, "preflight"))
@@ -544,6 +574,8 @@ class DockerExecutionTests(unittest.TestCase):
             self.assertNotIn("dst=/workspace", " ".join(runs[1]))
             self.assertNotIn("credential-sentinel", json.dumps(captured_request))
             self.assertNotIn("credential-sentinel", " ".join(captured_argv[-1]))
+            self.assertNotIn("--env CODEX_API_KEY", " ".join(runs[1]))
+            self.assertNotIn("dst=/credentials", " ".join(runs[1]))
             self.assertNotIn("credential-sentinel", "".join(
                 path.read_text(encoding="utf-8", errors="replace")
                 for path in artifacts.rglob("*") if path.is_file()
@@ -682,6 +714,34 @@ class DockerExecutionTests(unittest.TestCase):
         self.assertEqual(full, 140)
         self.assertEqual(targeted, 50)
         self.assertEqual(core_timeout_seconds(Path("tests/core/test_0.py"), repo, 600), 600)
+
+    def test_partitions_core_and_command_collections_away_from_agent_credentials(self) -> None:
+        from hwskill.docker_test_runner import _partition_collections
+        from hwskill.test_manifest import AgentAction, CommandAction, TestCase, TestCollection, TestTarget
+
+        command = CommandAction("post", "true")
+        command_collection = TestCollection(
+            Path("tests/skills/local/command/test.yaml"), TestTarget("skill", "local/command"),
+            (TestCase("command", None, None, None, (), command),), Path("tests/skills/local/command/fixtures"),
+        )
+        agent_collection = TestCollection(
+            Path("tests/skills/local/agent/test.yaml"), TestTarget("skill", "local/agent"),
+            (TestCase("agent", None, None, None, (AgentAction("agent", "do work"),), command),),
+            Path("tests/skills/local/agent/fixtures"),
+        )
+
+        partitions = _partition_collections(
+            (Path("tests/core"), command_collection, agent_collection),
+            (("CODEX_API_KEY", "secret"),), (),
+        )
+
+        self.assertEqual([item.name for item in partitions], ["core", "command", "agent"])
+        self.assertEqual(partitions[0].collections, (Path("tests/core"),))
+        self.assertEqual(partitions[1].collections, (command_collection,))
+        self.assertEqual(partitions[2].collections, (agent_collection,))
+        self.assertEqual(partitions[0].environment_variables, ())
+        self.assertEqual(partitions[1].environment_variables, ())
+        self.assertEqual(partitions[2].environment_variables, (("CODEX_API_KEY", "secret"),))
 
     def test_forged_pass_for_unrelated_selection_is_blocked(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
@@ -1608,6 +1668,33 @@ cases:
         self.assertEqual(popen.call_count, 2)
         self.assertEqual(popen.call_args_list[0].args[0][-1], "tests/core/test_0.py")
         self.assertEqual(popen.call_args_list[1].args[0][-1], "tests/core/test_1.py")
+
+    def test_full_core_guard_unavailable_is_blocked_even_with_other_failed_files(self) -> None:
+        from hwskill.test_cli import _run_core_path
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            for index in range(2):
+                (core / f"test_{index}.py").write_text(
+                    "import unittest\nclass Test(unittest.TestCase):\n def test_ok(self): pass\n",
+                    encoding="utf-8",
+                )
+            artifacts = Path(directory) / "artifacts"
+            artifacts.mkdir()
+            environment = TestEnvironment(repo, "docker", "codex", "model", "high", command_prefix=("guard", "--"))
+            processes = [Mock(returncode=1), Mock(returncode=125)]
+            with patch("hwskill.test_cli.subprocess.Popen", side_effect=processes), patch(
+                "hwskill.test_cli._capture_core_output",
+                side_effect=[("", "ordinary failure", False), ("", "hwskill isolation guard unavailable", False)],
+            ):
+                result = _run_core_path(Path("tests/core"), repo, artifacts, environment)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions[0].status, "blocked")
+        self.assertIsNone(result.cases[0].actions[0].exit_code)
 
     def test_command_executor_uses_worker_network_guard_prefix(self) -> None:
         from hwskill.test_artifacts import ActionResult

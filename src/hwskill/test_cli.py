@@ -697,6 +697,7 @@ def _run_isolated_core_files(
     outputs: list[str] = []
     errors: list[str] = []
     failed = False
+    guard_unavailable = False
     for selected in selections:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -713,8 +714,12 @@ def _run_isolated_core_files(
         errors.extend((f"\n=== {selected} ===\n", stderr))
         if timed_out:
             return "".join(outputs), "".join(errors), True, 1
+        if process.returncode == 125 and "hwskill isolation guard unavailable" in stderr:
+            guard_unavailable = True
         if process.returncode != 0:
             failed = True
+    if guard_unavailable:
+        return "".join(outputs), "".join(errors), False, 125
     return "".join(outputs), "".join(errors), False, 1 if failed else 0
 
 
