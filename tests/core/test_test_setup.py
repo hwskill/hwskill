@@ -157,6 +157,53 @@ class TestTestSetup(unittest.TestCase):
                 runner=object(), write=lambda _config: None, prompt=lambda _message: "",
             )
 
+    def test_replacement_factory_is_inspected_before_it_is_persisted(self) -> None:
+        from hwskill.test_configuration import HostModel
+        from hwskill.test_setup import configure_test_setup, SetupCheck, SetupReport
+
+        replacement = type(self.config)(
+            runner="local", default_host="codex",
+            hosts={"codex": HostModel("replacement-model", "high")},
+        )
+        current_report = SetupReport("BLOCKED", (SetupCheck("model-availability", "BLOCKED", "unavailable"),))
+        replacement_report = SetupReport("READY", (SetupCheck("model-availability", "READY", "available"),))
+        created = []
+        writes = []
+
+        report = configure_test_setup(
+            self.config, runner=object(),
+            inspect=lambda config, _runner: current_report if config == self.config else replacement_report,
+            replacement_factory=lambda current: created.append(current) or replacement,
+            write=lambda config: writes.append(config),
+        )
+
+        self.assertIs(report, replacement_report)
+        self.assertEqual(created, [self.config])
+        self.assertEqual(writes, [replacement])
+
+    def test_explicit_replacement_bypasses_keep_prompt_and_is_inspected_before_write(self) -> None:
+        from hwskill.test_configuration import HostModel
+        from hwskill.test_setup import configure_test_setup, SetupCheck, SetupReport
+
+        replacement = type(self.config)(
+            runner="local", default_host="codex",
+            hosts={"codex": HostModel("replacement-model", "high")},
+        )
+        ready = SetupReport("READY", (SetupCheck("model-availability", "READY", "available"),))
+        writes = []
+
+        report = configure_test_setup(
+            self.config, replacement=replacement, runner=object(),
+            inspect=lambda config, _runner: ready if config == replacement else (_ for _ in ()).throw(
+                AssertionError("explicit replacement must not inspect or keep the old model")
+            ),
+            prompt=lambda _message: (_ for _ in ()).throw(AssertionError("keep prompt must not run")),
+            write=lambda config: writes.append(config),
+        )
+
+        self.assertIs(report, ready)
+        self.assertEqual(writes, [replacement])
+
     def test_blocked_replacement_is_not_persisted_and_preserves_current_file(self) -> None:
         from hwskill.test_configuration import HostModel, write_test_configuration
         from hwskill.test_setup import configure_test_setup, SetupCheck, SetupReport

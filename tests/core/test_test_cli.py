@@ -3,16 +3,17 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from argparse import Namespace
 
 import yaml
 
 from hwskill.cli import main
-from hwskill.test_configuration import HostModel, TestConfiguration
+from hwskill.test_configuration import HostModel, TestConfiguration, TestConfigurationError
 from hwskill.test_impact import TestSelection
 
 
@@ -26,8 +27,13 @@ class TestCliTest(unittest.TestCase):
             default_host="codex",
             hosts={"codex": HostModel("test-model", "minimal")},
         )
+        self.host_version_probe = patch(
+            "hwskill.test_cli._probe_local_host_version", return_value="0.147.0"
+        )
+        self.host_version_probe.start()
 
     def tearDown(self) -> None:
+        self.host_version_probe.stop()
         self.temporary.cleanup()
 
     def run_cli(self, *argv: str) -> tuple[int, str, str]:
@@ -106,13 +112,13 @@ class TestCliTest(unittest.TestCase):
 
         report = SetupReport("BLOCKED", (SetupCheck("docker-daemon", "BLOCKED", "Docker daemon unavailable"),))
         with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
-            "hwskill.test_cli.inspect_test_setup", return_value=report
-        ) as inspected:
+            "hwskill.test_cli.configure_test_setup", return_value=report
+        ) as configured:
             code, output, _ = self.run_cli(*self.command("setup", "--check", "--json"))
 
         self.assertEqual(code, 3)
         self.assertEqual(json.loads(output)["checks"][0]["name"], "docker-daemon")
-        inspected.assert_called_once()
+        configured.assert_called_once()
 
     def test_affected_uses_base_selection_and_only_clears_exact_complete_pass(self) -> None:
         manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
@@ -173,6 +179,363 @@ class TestCliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(boundary.called)
         self.assertEqual(json.loads(stdout.getvalue())["runner"], "docker")
+
+    def test_direct_core_root_and_file_use_one_real_core_action_without_post_check(self) -> None:
+        core = self.repo / "tests/core"
+        core.mkdir(parents=True)
+        test_file = core / "test_safe.py"
+        test_file.write_text(
+            "import unittest\nclass Safe(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            root_code, root_output, root_error = self.run_cli(*self.command("tests/core", "--runner", "local", "--json"))
+            file_code, file_output, file_error = self.run_cli(*self.command("tests/core/test_safe.py", "--runner", "local", "--json"))
+
+        self.assertEqual(root_code, 0, root_error)
+        self.assertEqual(file_code, 0, file_error)
+        data = json.loads(file_output)
+        case = data["collections"][0]["cases"][0]
+        self.assertIsNone(case["post_check"])
+        self.assertEqual([action["id"] for action in case["actions"]], ["unittest"])
+        action_dir = Path(case["actions"][0]["artifact_dir"])
+        self.assertTrue((action_dir / "result.json").is_file())
+        self.assertTrue((action_dir / "stdout.log").is_file())
+        self.assertTrue((action_dir / "stderr.log").is_file())
+        self.assertNotIn("POST", root_output)
+
+    def test_core_path_swap_after_descriptor_anchor_blocks_without_running_external_test(self) -> None:
+        core = self.repo / "tests/core"
+        core.mkdir(parents=True)
+        (core / "test_safe.py").write_text(
+            "import unittest\nclass Safe(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        outside = Path(self.temporary.name) / "outside"
+        outside.mkdir()
+        marker = outside / "executed"
+        (outside / "test_external.py").write_text(
+            "from pathlib import Path\nPath(" + repr(str(marker)) + ").write_text('bad')\n",
+            encoding="utf-8",
+        )
+
+        def swap_after_anchor(_root, _core):
+            core.rename(self.repo / "tests/core-safe")
+            core.symlink_to(outside, target_is_directory=True)
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_cli._after_core_directories_opened", side_effect=swap_after_anchor
+        ):
+            code, _, error = self.run_cli(*self.command("tests/core", "--runner", "local"))
+
+        self.assertEqual(code, 3, error)
+        self.assertFalse(marker.exists())
+
+    def test_repeated_core_runs_close_the_anchored_descriptors(self) -> None:
+        core = self.repo / "tests/core"
+        core.mkdir(parents=True)
+        (core / "test_safe.py").write_text(
+            "import unittest\nclass Safe(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        before = len(list(Path("/proc/self/fd").iterdir()))
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            for _ in range(12):
+                code, _, error = self.run_cli(*self.command("tests/core/test_safe.py", "--runner", "local"))
+                self.assertEqual(code, 0, error)
+        after = len(list(Path("/proc/self/fd").iterdir()))
+        self.assertLessEqual(after, before + 1)
+
+    def test_manifest_render_keeps_steps_separate_from_the_post_check(self) -> None:
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, output, error = self.run_cli(*self.command(manifest.relative_to(self.repo).as_posix(), "--runner", "local", "--json"))
+
+        self.assertEqual(code, 0, error)
+        case = json.loads(output)["collections"][0]["cases"][0]
+        self.assertEqual([action["id"] for action in case["actions"]], ["step"])
+        self.assertEqual(case["post_check"]["id"], "post")
+
+    def test_non_check_setup_uses_configurator_and_persists_only_ready_replacement(self) -> None:
+        from hwskill import test_cli
+        from hwskill.test_setup import SetupCheck, SetupReport
+
+        args = Namespace(
+            test_target="setup", test_id=None, runner="local", host=None, base=None,
+            check=False, json=True, repo_root=str(self.repo), model="replacement", reasoning="high",
+        )
+        report = SetupReport("READY", (SetupCheck("model-availability", "READY", "available"),))
+        writes = []
+        writer = lambda value: writes.append(value)
+        stdout = StringIO()
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_cli.configure_test_setup", return_value=report
+        ) as configured:
+            code = test_cli.run_test_command(
+                args, self.repo, stdout, StringIO(),
+                setup_writer=writer, setup_prompt=lambda _message: "replace",
+            )
+
+        self.assertEqual(code, 0)
+        configured.assert_called_once()
+        self.assertEqual(configured.call_args.kwargs["replacement"].hosts["codex"].model, "replacement")
+        self.assertIs(configured.call_args.kwargs["write"], writer)
+        self.assertEqual(writes, [])
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["runner"], "local")
+        self.assertEqual(data["host"], "codex")
+        self.assertEqual(data["model"], "replacement")
+        self.assertEqual(data["reasoning"], "high")
+
+    def test_setup_bootstraps_missing_configuration_only_after_ready_inspection(self) -> None:
+        from hwskill import test_cli
+        from hwskill.test_setup import SetupCheck, SetupReport
+
+        args = Namespace(
+            test_target="setup", test_id=None, runner="local", host="codex", base=None,
+            check=False, json=True, repo_root=str(self.repo), model="bootstrap-model", reasoning="high",
+        )
+        ready = SetupReport("READY", (SetupCheck("model-availability", "READY", "available"),))
+        stdout = StringIO()
+        with patch(
+            "hwskill.test_cli.load_test_configuration",
+            side_effect=TestConfigurationError("cannot read test configuration: No such file or directory"),
+        ), patch("hwskill.test_cli.configure_test_setup", return_value=ready) as configured:
+            code = test_cli.run_test_command(args, self.repo, stdout, StringIO())
+
+        self.assertEqual(code, 0)
+        initial = configured.call_args.args[0]
+        self.assertEqual(initial.runner, "local")
+        self.assertEqual(initial.default_host, "codex")
+        self.assertEqual(initial.hosts["codex"], HostModel("bootstrap-model", "high"))
+        self.assertEqual(configured.call_args.kwargs["replacement"], initial)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["model"], "bootstrap-model")
+        self.assertEqual(data["reasoning"], "high")
+
+    def test_interactive_setup_bootstrap_prompts_each_field_once_and_uses_host(self) -> None:
+        from hwskill import test_cli
+        from hwskill.test_setup import SetupCheck, SetupReport
+
+        args = Namespace(
+            test_target="setup", test_id=None, runner=None, host=None, base=None,
+            check=False, json=True, repo_root=str(self.repo), model=None, reasoning=None,
+        )
+        responses = iter(("local", "claude-code", "bootstrap-model", "high"))
+        prompts = []
+        ready = SetupReport("READY", (SetupCheck("model-availability", "READY", "available"),))
+        stdout = StringIO()
+        with patch(
+            "hwskill.test_cli.load_test_configuration",
+            side_effect=TestConfigurationError("cannot read test configuration: No such file or directory"),
+        ), patch("hwskill.test_cli.configure_test_setup", return_value=ready) as configured:
+            code = test_cli.run_test_command(
+                args, self.repo, stdout, StringIO(),
+                setup_prompt=lambda message: prompts.append(message) or next(responses),
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(prompts, [
+            "Test runner [docker]: ", "Test host [codex]: ", "Test model: ", "Test reasoning: ",
+        ])
+        initial = configured.call_args.args[0]
+        self.assertEqual(initial.runner, "local")
+        self.assertEqual(initial.default_host, "claude-code")
+        self.assertEqual(initial.hosts["claude-code"], HostModel("bootstrap-model", "high"))
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["host"], "claude-code")
+
+    def test_setup_check_with_missing_configuration_is_usage_without_prompting(self) -> None:
+        from hwskill import test_cli
+
+        args = Namespace(
+            test_target="setup", test_id=None, runner=None, host=None, base=None,
+            check=True, json=False, repo_root=str(self.repo), model=None, reasoning=None,
+        )
+        prompt = Mock()
+        error = StringIO()
+        with patch(
+            "hwskill.test_cli.load_test_configuration",
+            side_effect=TestConfigurationError("cannot read test configuration: No such file or directory"),
+        ):
+            code = test_cli.run_test_command(args, self.repo, StringIO(), error, setup_prompt=prompt)
+
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read test configuration", error.getvalue())
+        prompt.assert_not_called()
+
+    def test_setup_check_rejects_explicit_replacement_options(self) -> None:
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_cli.configure_test_setup"
+        ) as configured:
+            code, _, error = self.run_cli(*self.command(
+                "setup", "--check", "--model", "replacement", "--reasoning", "high"
+            ))
+
+        self.assertEqual(code, 2)
+        self.assertIn("--check cannot be combined", error)
+        configured.assert_not_called()
+
+    def test_mismatched_credential_material_is_a_usage_error_without_traceback(self) -> None:
+        from hwskill import test_cli
+
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        args = Namespace(
+            test_target=manifest.relative_to(self.repo).as_posix(), test_id=None, runner="local", host=None,
+            base=None, check=False, json=False, model=None, reasoning=None,
+        )
+        error = StringIO()
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code = test_cli.run_test_command(
+                args, self.repo, StringIO(), error,
+                credential_material=test_cli.CredentialMaterial("claude-code"),
+            )
+
+        self.assertEqual(code, 2)
+        self.assertIn("credential material host", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
+
+    def test_local_execution_reports_injected_actual_host_version(self) -> None:
+        from hwskill import test_cli
+
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        args = Namespace(
+            test_target=manifest.relative_to(self.repo).as_posix(), test_id=None, runner="local", host=None,
+            base=None, check=False, json=True, model=None, reasoning=None,
+        )
+
+        class Boundary:
+            def run(self, _collections, environment, artifact_root):
+                return test_cli.TestRunResult(
+                    "PASS", artifact_root, (), "incorrect-runner", "incorrect-host",
+                    "incorrect-model", "not-actual",
+                )
+
+        stdout = StringIO()
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code = test_cli.run_test_command(
+                args, self.repo, stdout, StringIO(), execution_boundary=Boundary(),
+                host_version_probe=lambda _host: "0.147.0",
+            )
+
+        self.assertEqual(code, 0)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["runner"], "local")
+        self.assertEqual(data["host"], "codex")
+        self.assertEqual(data["model"], "test-model")
+        self.assertEqual(data["version"], "0.147.0")
+
+    def test_local_execution_blocks_when_actual_host_version_cannot_be_probed(self) -> None:
+        from hwskill import test_cli
+
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        args = Namespace(
+            test_target=manifest.relative_to(self.repo).as_posix(), test_id=None, runner="local", host=None,
+            base=None, check=False, json=True, model=None, reasoning=None,
+        )
+
+        class Boundary:
+            def run(self, *_args):
+                raise AssertionError("execution must not start without an actual compatible host version")
+
+        stdout = StringIO()
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code = test_cli.run_test_command(
+                args, self.repo, stdout, StringIO(), execution_boundary=Boundary(),
+                host_version_probe=lambda _host: "credential-sentinel",
+            )
+
+        self.assertEqual(code, 3)
+        data = json.loads(stdout.getvalue())
+        self.assertIn("local host CLI version is unavailable or unsupported", data["blocked_reason"])
+        self.assertNotIn("credential-sentinel", json.dumps(data))
+
+    def test_credential_store_path_uses_runtime_or_injected_home(self) -> None:
+        from hwskill.test_cli import _environment_credential_material
+
+        home = Path(self.temporary.name) / "alternate-home"
+        store = home / ".codex/auth.json"
+        store.parent.mkdir(parents=True)
+        store.write_text("{}", encoding="utf-8")
+
+        material = _environment_credential_material("codex", {}, home=home)
+
+        self.assertEqual(material.source, "host-store")
+
+    def test_local_agent_uses_only_selected_environment_credentials_and_redacts_all_artifacts(self) -> None:
+        from hwskill import test_cli
+
+        sentinel = "credential-sentinel"
+        path = self.repo / "tests/skills/team/review/test.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "agent-case",
+                "steps": [{"type": "agent", "id": "agent", "prompt": "reply"}],
+                "post_check": {"type": "command", "id": "post", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+
+        class Process:
+            def __init__(self) -> None:
+                self.stdout = StringIO('{"type":"result","result":"' + sentinel + '"}\n')
+                self.stderr = StringIO(sentinel + "\n")
+                self.returncode = 0
+                self.pid = os.getpid()
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def communicate(self, timeout=None):
+                return "", ""
+
+        captured = {}
+
+        def popen(_command, **kwargs):
+            captured["environment"] = kwargs["env"]
+            return Process()
+
+        completed = type("Completed", (), {"returncode": 0})()
+        from hwskill.test_agent import AgentExecutor
+        executor = AgentExecutor(credential_available=lambda _host: True, setup_runner=lambda *_args, **_kwargs: completed)
+        args = Namespace(
+            test_target=path.relative_to(self.repo).as_posix(), test_id=None, runner="local", host=None,
+            base=None, check=False, json=True,
+        )
+        stdout = StringIO()
+        with patch.dict(os.environ, {"CODEX_API_KEY": sentinel, "UNRELATED_SECRET": "must-not-pass"}, clear=True), patch(
+            "hwskill.test_cli.load_test_configuration", return_value=self.config
+        ), patch("hwskill.test_cli._local_agent_executor", return_value=executor), patch(
+            "hwskill.test_agent.subprocess.Popen", side_effect=popen
+        ):
+            code = test_cli.run_test_command(args, self.repo, stdout, StringIO())
+
+        self.assertEqual(code, 0, stdout.getvalue())
+        self.assertEqual(captured["environment"]["CODEX_API_KEY"], sentinel)
+        self.assertNotIn("UNRELATED_SECRET", captured["environment"])
+        case_dir = Path(json.loads(stdout.getvalue())["collections"][0]["cases"][0]["artifact_dir"])
+        for artifact in case_dir.rglob("*"):
+            if not artifact.is_file():
+                continue
+            self.assertNotIn(sentinel, artifact.read_text(encoding="utf-8"))
+
+    def test_local_agent_without_environment_material_blocks_before_model_spawn(self) -> None:
+        path = self.repo / "tests/skills/team/review/test.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({
+            "schema_version": 1, "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{"id": "agent-case", "steps": [{"type": "agent", "prompt": "reply"}],
+                       "post_check": {"type": "command", "command": "true"}}],
+        }, sort_keys=False), encoding="utf-8")
+        with patch.dict(os.environ, {}, clear=True), patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_agent.subprocess.Popen"
+        ) as popen:
+            code, _, _ = self.run_cli(*self.command(path.relative_to(self.repo).as_posix(), "--runner", "local"))
+
+        self.assertEqual(code, 3)
+        self.assertFalse(any(call.args[0][0] == "codex" for call in popen.call_args_list))
 
 
 if __name__ == "__main__":

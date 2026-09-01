@@ -119,6 +119,7 @@ _HOSTS: dict[str, TestHost] = {
 }
 
 CredentialCheck = Callable[[str], bool]
+CredentialUnavailableReason = Callable[[str], str]
 SetupRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -180,10 +181,12 @@ class AgentExecutor:
         host: TestHost | None = None,
         *,
         credential_available: CredentialCheck = _credentials_unavailable,
+        credential_unavailable_reason: CredentialUnavailableReason | None = None,
         setup_runner: SetupRunner = subprocess.run,
     ) -> None:
         self.host = host
         self._credential_available = credential_available
+        self._credential_unavailable_reason = credential_unavailable_reason
         self._setup_runner = setup_runner
 
     def run(self, action: CommandAction | AgentAction, context: ActionContext) -> ActionResult:
@@ -194,9 +197,14 @@ class AgentExecutor:
         except (KeyError, ValueError) as exc:
             return _blocked_result(action.action_id, context.artifact_dir, str(exc), context.environment)
         if not self._credential_available(host.host_id):
+            reason = (
+                self._credential_unavailable_reason(host.host_id)
+                if self._credential_unavailable_reason is not None
+                else f"credentials are unavailable for Agent host {host.host_id}"
+            )
             return _blocked_result(
                 action.action_id, context.artifact_dir,
-                f"credentials are unavailable for Agent host {host.host_id}", context.environment,
+                reason, context.environment,
             )
         capture = _AgentStreamCapture(host.host_id, context.environment.secret_values)
         try:

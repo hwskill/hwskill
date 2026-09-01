@@ -25,6 +25,7 @@ _OPENCODE_VERSION = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+)\Z")
 SetupStatus = Literal["READY", "BLOCKED"]
 SetupRunner = Callable[..., subprocess.CompletedProcess[str]]
 CredentialInspector = Callable[[str, Mapping[str, str], Path, Callable[[Path], bool], Callable[[Path], bool]], tuple[str, bool]]
+ReplacementFactory = Callable[[TestConfiguration], TestConfiguration]
 
 
 class ImageIdentity(Protocol):
@@ -107,6 +108,7 @@ def configure_test_setup(
     runner: SetupRunner,
     check: bool = False,
     replacement: TestConfiguration | None = None,
+    replacement_factory: ReplacementFactory | None = None,
     prompt: Callable[[str], str] = input,
     image_identity: ImageIdentity | None = None,
     inspection_kwargs: Mapping[str, object] | None = None,
@@ -125,9 +127,14 @@ def configure_test_setup(
     if callable(image_identity):
         raise TypeError("image_identity must be an already-resolved ImageIdentity, not a callable provider")
     identity = image_identity
-    report = _inspect_configuration(current, runner, identity, inspection_kwargs, inspect)
     if check:
-        return report
+        return _inspect_configuration(current, runner, identity, inspection_kwargs, inspect)
+    if replacement is not None:
+        replacement_report = _inspect_configuration(replacement, runner, identity, inspection_kwargs, inspect)
+        if replacement_report.status == "READY":
+            write(replacement)
+        return replacement_report
+    report = _inspect_configuration(current, runner, identity, inspection_kwargs, inspect)
     available = _check_status(report, "model-availability") == "READY"
     if available:
         answer = prompt("Current test model is usable. Keep it? [Y/r] ").strip().lower()
@@ -136,7 +143,9 @@ def configure_test_setup(
         if answer not in {"r", "replace"}:
             raise ValueError("choose keep or replace")
     if replacement is None:
-        raise ValueError("a replacement configuration is required when the current model is unavailable")
+        if replacement_factory is None:
+            raise ValueError("a replacement configuration is required when the current model is unavailable")
+        replacement = replacement_factory(current)
     replacement_report = _inspect_configuration(replacement, runner, identity, inspection_kwargs, inspect)
     if replacement_report.status != "READY":
         return replacement_report
@@ -199,7 +208,7 @@ def _image_check(
 def _host_check(host: str, runner: SetupRunner) -> SetupCheck:
     executable = HOST_SPECS[host].executable
     completed = _run(runner, (executable, "--version"))
-    version = _parse_host_version(host, None if completed is None else completed.stdout)
+    version = parse_host_version(host, None if completed is None else completed.stdout)
     if completed is None or completed.returncode != 0 or version != HOST_SPECS[host].verified_version:
         return SetupCheck("host-cli", "BLOCKED", f"host CLI version is unavailable or unsupported: {host}")
     return SetupCheck("host-cli", "READY", f"host: {host}; version: {version}")
@@ -276,7 +285,7 @@ def _parse_digest(value: str | None) -> str | None:
     return candidate if candidate is not None and _SHA256_DIGEST.fullmatch(candidate) else None
 
 
-def _parse_host_version(host: str, value: str | None) -> str | None:
+def parse_host_version(host: str, value: str | None) -> str | None:
     candidate = _single_line(value)
     if candidate is None:
         return None

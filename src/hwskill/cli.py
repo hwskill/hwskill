@@ -192,6 +192,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     test.add_argument("--host", choices=HOST_CHOICES)
     test.add_argument("--base")
     test.add_argument("--check", action="store_true", help="Inspect setup without changing configuration")
+    test.add_argument("--model", help="Replacement model for test setup")
+    test.add_argument("--reasoning", help="Replacement reasoning effort for test setup")
     test.add_argument("--repo-root")
     test.add_argument("--json", action="store_true")
     registry = _command(commands, "registry", "Manage the skill registry")
