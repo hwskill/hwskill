@@ -40,13 +40,16 @@ Mount that file read-only at `/run/request.json`, then run:
 
 ```sh
 docker run --rm --init --read-only --network none --cap-drop ALL \
-  --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+  --security-opt no-new-privileges --pids-limit 512 \
+  --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=256m \
   --mount type=bind,src="$PWD",dst=/registry,readonly \
   --mount type=bind,src="$PWD/tests",dst=/tests,readonly \
   --mount type=bind,src="$ARTIFACTS",dst=/artifacts \
   --mount type=bind,src="$WORKSPACE",dst=/workspace \
   --mount type=bind,src="$REQUEST",dst=/run/request.json,readonly \
+  --env HOME=/workspace/home \
+  --env HWSKILL_REGISTRY_ROOT=/registry \
   hwskill-test:0.1.0 python -m hwskill.test_worker --request /run/request.json
 ```
 

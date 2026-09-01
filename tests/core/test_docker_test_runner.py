@@ -45,6 +45,13 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
         self.assertIn('1.14.48', entrypoint)
         self.assertIn('exec "$@"', entrypoint)
 
+    def test_documented_worker_smoke_uses_the_production_runtime_environment(self) -> None:
+        readme = (ROOT / "docker/test/README.md").read_text(encoding="utf-8")
+
+        self.assertIn('--env HOME=/workspace/home', readme)
+        self.assertIn('--env HWSKILL_REGISTRY_ROOT=/registry', readme)
+        self.assertIn('--pids-limit 512', readme)
+
     def test_docker_run_mounts_registry_read_only_and_artifacts_writable_without_secrets(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, DockerTestRequest, ImageInfo
         from hwskill.test_configuration import HostModel, TestConfiguration
