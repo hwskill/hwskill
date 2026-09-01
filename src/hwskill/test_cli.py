@@ -58,9 +58,7 @@ stage = Path(sys.argv[1])
 selected = Path(sys.argv[2]) if sys.argv[2] else None
 sys.path.insert(0, str(stage))
 loader = unittest.defaultTestLoader
-if selected is None:
-    suite = loader.discover(str(stage), pattern="test*.py", top_level_dir=str(stage))
-else:
+def load_selected(selected, index):
     source = stage / selected
     package_parts = []
     parent = selected.parent
@@ -71,13 +69,22 @@ else:
         module = importlib.import_module(".".join((*package_parts, selected.stem)))
     else:
         sys.path.insert(0, str(source.parent))
-        spec = importlib.util.spec_from_file_location("_hwskill_exact_core_test", source)
+        spec = importlib.util.spec_from_file_location(f"_hwskill_exact_core_test_{index}", source)
         if spec is None or spec.loader is None:
             raise RuntimeError("selected core test cannot be loaded")
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)
-    suite = loader.loadTestsFromModule(module)
+    return loader.loadTestsFromModule(module)
+if selected is None:
+    selected_files = sorted(
+        source.relative_to(stage)
+        for source in stage.rglob("test_*.py")
+        if source.is_file()
+    )
+    suite = unittest.TestSuite(load_selected(source, index) for index, source in enumerate(selected_files))
+else:
+    suite = load_selected(selected, 0)
 if suite.countTestCases() == 0:
     print("selected core test collection contains no tests", file=sys.stderr)
     raise SystemExit(4)
@@ -201,7 +208,7 @@ class UnavailableDockerExecutionBoundary:
         del collections
         return TestRunResult(
             "BLOCKED", artifact_root, (), environment.runner, environment.host, environment.model,
-            HOST_SPECS[environment.host].verified_version,
+            "unavailable",
             blocked_reason="standard Docker test runner is unavailable; Task 8 has not provided an implementation",
         )
 
@@ -359,14 +366,15 @@ def _run_setup_check(
     if args.json:
         print(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2), file=stdout)
     else:
-        print(f"STATUS      {report.status}", file=stdout)
-        print(f"RUNNER      {effective_configuration.runner}", file=stdout)
-        print(f"HOST        {effective_host}", file=stdout)
-        print(f"MODEL       {effective_model.model}", file=stdout)
-        print(f"VERSION     {HOST_SPECS[effective_host].verified_version}", file=stdout)
-        print("CHECK                 STATUS   DETAIL", file=stdout)
+        print("Test setup", file=stdout)
+        print(f"  Status      {report.status}", file=stdout)
+        print(f"  Runner      {effective_configuration.runner}", file=stdout)
+        print(f"  Host        {effective_host}", file=stdout)
+        print(f"  Model       {effective_model.model}", file=stdout)
+        print(f"  Version     {HOST_SPECS[effective_host].verified_version}", file=stdout)
+        print("  Check                Status   Detail", file=stdout)
         for item in report.checks:
-            print(f"{item.name:<21} {item.status:<8} {item.detail}", file=stdout)
+            print(f"  {item.name:<20} {item.status:<8} {item.detail}", file=stdout)
     return PASS if report.status == "READY" else BLOCKED
 
 
@@ -516,8 +524,7 @@ def _has_core_tests(root: Path) -> bool:
         return False
     if directory.is_symlink() or not directory.is_dir():
         raise TestCliUsageError("tests/core must be a real directory")
-    return any(item.is_file() and not item.is_symlink() and item.name.startswith("test_") and item.suffix == ".py"
-               for item in directory.iterdir())
+    return True
 
 
 def _safe_direct_test_path(value: str, root: Path) -> Path:
@@ -783,27 +790,28 @@ def _write_run(result: TestRunResult, json_output: bool, stdout: TextIO) -> None
     if json_output:
         print(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2), file=stdout)
         return
-    print(f"STATUS      {result.status}", file=stdout)
-    print(f"RUNNER      {result.runner}", file=stdout)
-    print(f"HOST        {result.host}", file=stdout)
-    print(f"MODEL       {result.model}", file=stdout)
-    print(f"VERSION     {result.host_version}", file=stdout)
-    print(f"ARTIFACTS   {result.artifact_root}", file=stdout)
+    print("Test run", file=stdout)
+    print(f"  Status      {result.status}", file=stdout)
+    print(f"  Runner      {result.runner}", file=stdout)
+    print(f"  Host        {result.host}", file=stdout)
+    print(f"  Model       {result.model}", file=stdout)
+    print(f"  Version     {result.host_version}", file=stdout)
+    print(f"  Artifacts   {result.artifact_root}", file=stdout)
     if result.blocked_reason is not None:
-        print(f"BLOCKED     {result.blocked_reason}", file=stdout)
+        print(f"  Blocked     {result.blocked_reason}", file=stdout)
     for collection in data["collections"]:
-        print(f"COLLECTION  {collection['target']:<24} {collection['status']}", file=stdout)
+        print(f"Collection  {collection['target']:<24} {collection['status']}", file=stdout)
         for case in collection["cases"]:
-            print(f"  CASE      {case['id']:<22} {case['status']:<8} {case['artifact_dir']}", file=stdout)
+            print(f"  Case      {case['id']:<22} {case['status']:<8} {case['artifact_dir']}", file=stdout)
             for action in case["actions"]:
                 code = "-" if action["exit_code"] is None else str(action["exit_code"])
-                print(f"    ACTION  {action['id']:<20} {action['status']:<9} exit={code:<3} {action['artifact_dir']}", file=stdout)
+                print(f"    Action  {action['id']:<20} {action['status']:<9} exit={code:<3} {action['artifact_dir']}", file=stdout)
             post = case["post_check"]
             if post is not None:
                 code = "-" if post["exit_code"] is None else str(post["exit_code"])
-                print(f"    POST    {post['id']:<22} {post['status']:<9} exit={code:<3} {post['artifact_dir']}", file=stdout)
+                print(f"    Post    {post['id']:<22} {post['status']:<9} exit={code:<3} {post['artifact_dir']}", file=stdout)
     if result.pending_cleared:
-        print("PENDING     CLEARED", file=stdout)
+        print("Pending     cleared", file=stdout)
 
 
 def _run_data(result: TestRunResult) -> dict[str, object]:

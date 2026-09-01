@@ -78,7 +78,7 @@ class TestCliTest(unittest.TestCase):
             profile_code, profile_output, _ = self.run_cli(*self.command("profiles", "review", "--runner", "local"))
 
         self.assertEqual(all_code, 0)
-        self.assertIn("COLLECTION  skill:team/review", all_output)
+        self.assertIn("Collection  skill:team/review", all_output)
         self.assertEqual(skill_code, 0)
         self.assertIn("skill:team/review", skill_output)
         self.assertEqual(profile_code, 0)
@@ -132,7 +132,7 @@ class TestCliTest(unittest.TestCase):
             code, output, _ = self.run_cli(*self.command("affected", "--base", "HEAD^", "--runner", "local"))
 
         self.assertEqual(code, 0)
-        self.assertIn("PENDING     CLEARED", output)
+        self.assertIn("Pending     cleared", output)
         selected.assert_called_once_with(self.repo.resolve(), "HEAD^")
         cleared.assert_called_once()
 
@@ -312,6 +312,68 @@ class TestCliTest(unittest.TestCase):
         self.assertEqual(code, 1, error)
         action = json.loads(output)["collections"][0]["cases"][0]["actions"][0]
         self.assertEqual(action["status"], "failed")
+
+    def test_all_runs_only_nested_non_package_core_tests(self) -> None:
+        nested = self.repo / "tests/core/nested"
+        nested.mkdir(parents=True)
+        marker = Path(self.temporary.name) / "nested-all-ran"
+        (nested / "test_nested.py").write_text(
+            "import unittest\nfrom pathlib import Path\n"
+            "class Nested(unittest.TestCase):\n"
+            "    def test_nested(self): Path(" + repr(str(marker)) + ").write_text('ran')\n",
+            encoding="utf-8",
+        )
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, output, error = self.run_cli(*self.command("all", "--runner", "local", "--json"))
+
+        self.assertEqual(code, 0, error)
+        self.assertTrue(marker.exists())
+        self.assertEqual(json.loads(output)["collections"][0]["target"], "core")
+
+    def test_core_root_runs_nested_non_package_same_named_files(self) -> None:
+        core = self.repo / "tests/core"
+        markers = []
+        for directory in ("a", "b"):
+            marker = Path(self.temporary.name) / f"{directory}-root-ran"
+            markers.append(marker)
+            test_dir = core / directory
+            test_dir.mkdir(parents=True)
+            (test_dir / "test_same.py").write_text(
+                "import unittest\nfrom pathlib import Path\n"
+                "class Nested(unittest.TestCase):\n"
+                "    def test_nested(self): Path(" + repr(str(marker)) + ").write_text('ran')\n",
+                encoding="utf-8",
+            )
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, _, error = self.run_cli(*self.command("tests/core", "--runner", "local"))
+
+        self.assertEqual(code, 0, error)
+        self.assertTrue(all(marker.exists() for marker in markers))
+
+    def test_docker_placeholder_reports_unavailable_actual_version(self) -> None:
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, output, _ = self.run_cli(*self.command(
+                manifest.relative_to(self.repo).as_posix(), "--runner", "docker", "--json"
+            ))
+
+        self.assertEqual(code, 3)
+        self.assertEqual(json.loads(output)["version"], "unavailable")
+
+    def test_human_test_output_uses_title_case_labels(self) -> None:
+        manifest = self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, output, error = self.run_cli(*self.command(
+                manifest.relative_to(self.repo).as_posix(), "--runner", "local"
+            ))
+
+        self.assertEqual(code, 0, error)
+        self.assertIn("Test run", output)
+        self.assertIn("  Status", output)
+        self.assertIn("Collection", output)
+        self.assertNotIn("STATUS", output)
 
     def test_repeated_core_runs_close_the_anchored_descriptors(self) -> None:
         core = self.repo / "tests/core"
