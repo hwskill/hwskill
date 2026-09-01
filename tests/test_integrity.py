@@ -142,6 +142,49 @@ class IntegrityTest(unittest.TestCase):
             1,
         )
 
+    def test_symlinked_repo_root_does_not_read_external_invalid_catalog(self) -> None:
+        """The entrypoint itself must not resolve a linked repository root."""
+        from hwskill.integrity import IntegrityError, check_integrity, require_integrity
+
+        (self.repo / "registry/catalog.json").write_text("{ invalid json", encoding="utf-8")
+        linked_root = Path(self.external.name) / "linked-repository"
+        linked_root.symlink_to(self.repo, target_is_directory=True)
+
+        report = check_integrity(linked_root)
+
+        self.assertEqual((report.skill_count, report.source_count, report.profile_count), (0, 0, 0))
+        self.assertEqual([issue.code for issue in report.issues], ["unsafe-path"])
+        self.assertEqual(report.issues[0].path, ".")
+        with self.assertRaises(IntegrityError) as raised:
+            require_integrity(linked_root)
+        self.assertEqual(raised.exception.report, report)
+
+    def test_broken_repo_root_link_is_a_stable_unsafe_issue(self) -> None:
+        """A broken root link is rejected without any parser traceback."""
+        from hwskill.integrity import check_integrity
+
+        linked_root = Path(self.external.name) / "broken-repository"
+        linked_root.symlink_to(Path(self.external.name) / "missing-target", target_is_directory=True)
+
+        report = check_integrity(linked_root)
+
+        self.assertEqual((report.skill_count, report.source_count, report.profile_count), (0, 0, 0))
+        self.assertEqual([issue.code for issue in report.issues], ["unsafe-path"])
+        self.assertEqual(report.issues[0].path, ".")
+
+    def test_non_directory_repo_root_is_a_stable_unsafe_issue(self) -> None:
+        """A regular file cannot be treated as an empty repository inventory."""
+        from hwskill.integrity import check_integrity
+
+        root_file = Path(self.external.name) / "not-a-repository"
+        root_file.write_text("not a directory", encoding="utf-8")
+
+        report = check_integrity(root_file)
+
+        self.assertEqual((report.skill_count, report.source_count, report.profile_count), (0, 0, 0))
+        self.assertEqual([issue.code for issue in report.issues], ["unsafe-path"])
+        self.assertEqual(report.issues[0].path, ".")
+
 
 if __name__ == "__main__":
     unittest.main()

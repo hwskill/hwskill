@@ -51,6 +51,8 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
     """Collect offline inventory problems without stopping at the first one."""
     root = Path(repo_root).absolute()
     issues: list[IntegrityIssue] = []
+    if not _repository_root_is_safe(root, issues):
+        return IntegrityReport(tuple(sorted(issues)), 0, 0, 0)
 
     skill_tree_safe = _inventory_tree_is_safe(root / "skills-src", root, issues)
     skill_markdown = tuple(_inventory_files(root / "skills-src", "SKILL.md", root, issues))
@@ -264,6 +266,22 @@ def _regular_file(path: Path) -> bool:
         return stat.S_ISREG(path.lstat().st_mode)
     except OSError:
         return False
+
+
+def _repository_root_is_safe(root: Path, issues: list[IntegrityIssue]) -> bool:
+    """Reject an unsafe root before inventory construction can traverse it."""
+    try:
+        mode = root.lstat().st_mode
+    except OSError as exc:
+        _unsafe_path(root, root, issues, f"cannot inspect repository root: {exc}")
+        return False
+    if stat.S_ISLNK(mode):
+        _unsafe_path(root, root, issues, "repository root must not be a symlink")
+        return False
+    if not stat.S_ISDIR(mode):
+        _unsafe_path(root, root, issues, "repository root must be a real directory")
+        return False
+    return True
 
 
 def _path_components_are_safe(root: Path, path: Path, issues: list[IntegrityIssue]) -> bool:
