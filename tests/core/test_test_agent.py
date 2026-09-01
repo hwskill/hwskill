@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+import io
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -20,11 +21,11 @@ class _Process:
     returncode = 0
 
     def __init__(self, stdout: str, stderr: str = "") -> None:
-        self.stdout = stdout
-        self.stderr = stderr
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
 
-    def communicate(self, timeout=None):
-        return self.stdout, self.stderr
+    def wait(self, timeout=None):
+        return self.returncode
 
 
 def adjacent_pairs(values):
@@ -66,7 +67,8 @@ class TestAgentHostTest(unittest.TestCase):
         self.assertIn(("-c", 'model_reasoning_effort="high"'), adjacent_pairs(command))
         self.assertIn("--json", command)
         self.assertIn(("--cd", str(self.workspace / "project")), adjacent_pairs(command))
-        self.assertIn("--output-last-message", command)
+        self.assertIn("--skip-git-repo-check", command)
+        self.assertNotIn("--output-last-message", command)
         self.assertEqual(command[-1], self.action.prompt)
         self.assertNotIn("dangerously-bypass-approvals-and-sandbox", " ".join(command))
 
@@ -78,9 +80,21 @@ class TestAgentHostTest(unittest.TestCase):
             rendered = " ".join(command)
             self.assertIn("configured-model", command)
             self.assertNotIn("dangerously", rendered)
+            self.assertNotIn(str(self.workspace), rendered)
             self.assertEqual(command[-1], self.action.prompt)
 
-    def test_executor_sets_up_project_and_persists_only_observable_redacted_events(self) -> None:
+    def test_non_git_workspace_codex_command_skips_only_the_git_precondition(self) -> None:
+        from hwskill.test_agent import CodexTestHost
+
+        self.assertFalse((self.workspace / ".git").exists())
+        command = CodexTestHost().build_command(
+            self.context, self.action, model="model", reasoning="low",
+        )
+
+        self.assertIn("--skip-git-repo-check", command)
+        self.assertNotIn("dangerously-bypass-approvals-and-sandbox", " ".join(command))
+
+    def test_executor_streams_only_observable_redacted_events_and_final_response(self) -> None:
         from hwskill.test_agent import AgentExecutor
 
         raw_events = "\n".join((
@@ -88,6 +102,9 @@ class TestAgentHostTest(unittest.TestCase):
             json.dumps({"type": "item.completed", "item": {
                 "type": "command_execution", "command": "printf super-secret",
                 "exit_code": 0, "status": "completed", "aggregated_output": "super-secret",
+            }}),
+            json.dumps({"type": "item.completed", "item": {
+                "type": "agent_message", "text": "final super-secret",
             }}),
         )) + "\n"
         setup_calls = []
@@ -98,9 +115,16 @@ class TestAgentHostTest(unittest.TestCase):
             credential_available=lambda _host: True,
             setup_runner=lambda command, **kwargs: setup_calls.append((command, kwargs)) or _CompletedProcess(),
         )
-        executor.host.response_path(self.context).write_text("final super-secret\n", encoding="utf-8")
 
-        with patch("hwskill.test_agent.subprocess.Popen", return_value=_Process(raw_events)):
+        original_write_text = Path.write_text
+
+        def reject_raw_path(path, *args, **kwargs):
+            self.assertNotEqual(path.suffix, ".raw")
+            return original_write_text(path, *args, **kwargs)
+
+        with patch.object(Path, "write_text", new=reject_raw_path), patch(
+            "hwskill.test_agent.subprocess.Popen", return_value=_Process(raw_events)
+        ):
             result = executor.run(self.action, self.context)
 
         self.assertEqual(result.status, "completed")
@@ -114,7 +138,44 @@ class TestAgentHostTest(unittest.TestCase):
         self.assertNotIn("reasoning", event_text)
         self.assertNotIn("super-secret", event_text)
         final = (self.artifact_dir / "final-response.md").read_text(encoding="utf-8")
-        self.assertEqual(final, "final [REDACTED]\n")
+        self.assertEqual(final, "final [REDACTED]")
+        self.assertFalse(any(path.suffix == ".raw" for path in self.artifact_dir.iterdir()))
+        for path in self.artifact_dir.iterdir():
+            self.assertNotIn("super-secret", path.read_text(encoding="utf-8"))
+
+    def test_codex_cd_uses_the_opened_workdir_fd_after_path_swap(self) -> None:
+        from hwskill.test_agent import AgentExecutor
+
+        safe_workdir = self.workspace / "project-safe"
+        external = Path(self.temp.name) / "external"
+        external.mkdir()
+
+        def swap_after_anchor(_workspace, _configured):
+            (self.workspace / "project").rename(safe_workdir)
+            (self.workspace / "project").symlink_to(external, target_is_directory=True)
+
+        captured = {}
+
+        def fake_popen(command, **_kwargs):
+            captured["command"] = command
+            cd_path = command[command.index("--cd") + 1]
+            Path(cd_path, "anchored-write").write_text("inside", encoding="utf-8")
+            return _Process("")
+
+        executor = AgentExecutor(
+            credential_available=lambda _host: True,
+            setup_runner=lambda *_args, **_kwargs: _CompletedProcess(),
+        )
+        with patch("hwskill.test_agent._after_workdir_opened", side_effect=swap_after_anchor), patch(
+            "hwskill.test_agent.subprocess.Popen", side_effect=fake_popen
+        ):
+            result = executor.run(self.action, self.context)
+
+        self.assertEqual(result.status, "completed")
+        command = captured["command"]
+        self.assertTrue(command[command.index("--cd") + 1].startswith("/proc/self/fd/"))
+        self.assertTrue((safe_workdir / "anchored-write").is_file())
+        self.assertFalse((external / "anchored-write").exists())
 
     def test_missing_credentials_blocks_without_setup_or_model_process(self) -> None:
         from hwskill.test_agent import AgentExecutor
@@ -167,11 +228,11 @@ class TestAgentHostTest(unittest.TestCase):
                 super().__init__("")
                 self.calls = 0
 
-            def communicate(self, timeout=None):
+            def wait(self, timeout=None):
                 self.calls += 1
                 if self.calls == 1:
                     raise subprocess.TimeoutExpired("agent", timeout)
-                return "", ""
+                return self.returncode
 
         process = TimeoutProcess()
         executor = AgentExecutor(
@@ -186,6 +247,22 @@ class TestAgentHostTest(unittest.TestCase):
         self.assertEqual(result.status, "blocked")
         self.assertIsNone(result.exit_code)
         terminate.assert_called_once_with(process)
+
+    def test_repeated_agent_actions_do_not_leak_anchored_workdir_descriptors(self) -> None:
+        from hwskill.test_agent import AgentExecutor
+
+        executor = AgentExecutor(
+            credential_available=lambda _host: True,
+            setup_runner=lambda *_args, **_kwargs: _CompletedProcess(),
+        )
+        before = len(list(Path("/proc/self/fd").iterdir()))
+        with patch("hwskill.test_agent.subprocess.Popen", return_value=_Process("")):
+            for _ in range(32):
+                result = executor.run(self.action, self.context)
+
+        after = len(list(Path("/proc/self/fd").iterdir()))
+        self.assertEqual(result.status, "completed")
+        self.assertLessEqual(after, before + 1)
 
 
 class AgentPostCheckTest(unittest.TestCase):
@@ -239,6 +316,38 @@ class AgentPostCheckTest(unittest.TestCase):
         self.assertIn("HWSKILL_TEST_CONTEXT=", executor.prompt)
         self.assertIn("HWSKILL_TEST_ARTIFACTS=", executor.prompt)
         self.assertIn("HWSKILL_TEST_WORKSPACE=", executor.prompt)
+
+    def test_failed_agent_post_check_cannot_turn_partial_pass_response_into_case_pass(self) -> None:
+        from hwskill.test_artifacts import ActionResult
+        from hwskill.test_manifest import AgentAction, CommandAction, TestCase
+        from hwskill.test_runner import TestEnvironment, run_case
+
+        class FailedPostCheckExecutor:
+            def run(self, action, context):
+                (context.artifact_dir / "final-response.md").write_text(
+                    '{"result":"pass","evidence":["partial response"]}', encoding="utf-8"
+                )
+                return ActionResult(action.action_id, "failed", 1, context.artifact_dir)
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = root / "fixtures"
+            fixtures.mkdir()
+            case = TestCase(
+                case_id="failed-agent-post-check", description=None, workdir=None, prepare=None,
+                steps=(CommandAction("step", "true"),),
+                post_check=AgentAction("post-check", "judge the result"),
+            )
+            environment = TestEnvironment(
+                repo_root=Path(__file__).parents[2], runner="local", host="codex",
+                model="model", reasoning="low", fixtures_dir=fixtures,
+            )
+
+            result = run_case(
+                case, environment, root / "artifacts", agent_executor=FailedPostCheckExecutor(),
+            )
+
+        self.assertEqual(result.status, "BLOCKED")
 
 
 if __name__ == "__main__":

@@ -195,16 +195,88 @@ def _codex(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+class EventStreamNormalizer:
+    """Incrementally normalize a host event stream without retaining raw records."""
+
+    def __init__(self, host: str) -> None:
+        self.host = host.replace("_", "-")
+        if self.host not in {"codex", "claude-code", "opencode"}:
+            raise ValueError(f"unsupported event host: {host}")
+        self._pending: dict[str, dict[str, Any]] = {}
+        self._normalized: list[tuple[int, dict[str, Any]]] = []
+        self._position = 0
+
+    def consume(self, event: dict[str, Any]) -> None:
+        if self.host == "codex":
+            self._append(_codex([event]))
+        elif self.host == "opencode":
+            self._append(_opencode([event]))
+        else:
+            self._consume_claude(event)
+
+    def finish(self) -> list[dict[str, Any]]:
+        return [item for _, item in sorted(self._normalized, key=lambda entry: entry[0])]
+
+    def _append(self, items: list[dict[str, Any]]) -> None:
+        for item in items:
+            self._normalized.append((self._position, item))
+            self._position += 1
+
+    def _consume_claude(self, event: dict[str, Any]) -> None:
+        content = (event.get("message") or {}).get("content") or []
+        if not isinstance(content, list):
+            return
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            current_position = self._position
+            self._position += 1
+            if block.get("type") == "tool_use":
+                self._pending[str(block.get("id"))] = {
+                    "name": _tool_name(str(block.get("name", ""))),
+                    "input": block.get("input") or {},
+                    "call_position": current_position,
+                }
+                continue
+            if block.get("type") != "tool_result":
+                continue
+            call = self._pending.pop(str(block.get("tool_use_id")), None)
+            if call is None:
+                continue
+            output = _text(block.get("content"))
+            observation = {
+                "call_position": call["call_position"],
+                "result_position": current_position,
+            }
+            if call["name"] == "command_execution":
+                item = _completed({
+                    "type": "command_execution",
+                    "command": str(call["input"].get("command", "")),
+                    "exit_code": 1 if block.get("is_error") else 0,
+                    "status": "failed" if block.get("is_error") else "completed",
+                    "aggregated_output": output,
+                    "_observation": observation,
+                })
+            elif call["name"] in {"hwskill_search", "hwskill_load"}:
+                item = _completed({
+                    "type": "mcp_tool_call",
+                    "tool": call["name"],
+                    "arguments": call["input"],
+                    "status": "failed" if block.get("is_error") else "completed",
+                    "result": {"structured_content": _structured(block.get("content"))},
+                    "_observation": observation,
+                })
+            else:
+                continue
+            self._normalized.append((call["call_position"], item))
+
+
 def normalize_event_records(events: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
     """Normalize in-memory host records so raw streams never reach artifacts."""
-    host = host.replace("_", "-")
-    if host == "codex":
-        return _codex(events)
-    if host == "claude-code":
-        return _claude(events)
-    if host == "opencode":
-        return _opencode(events)
-    raise ValueError(f"unsupported event host: {host}")
+    normalizer = EventStreamNormalizer(host)
+    for event in events:
+        normalizer.consume(event)
+    return normalizer.finish()
 
 
 def normalize_events(path: Path, host: str) -> list[dict[str, Any]]:

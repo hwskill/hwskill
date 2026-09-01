@@ -167,12 +167,15 @@ def run_case(
             status = _post_check_status(post_result.exit_code)
         else:
             from .test_agent import parse_agent_post_check
-            try:
-                response = (post_result.artifact_dir / "final-response.md").read_text(encoding="utf-8")
-            except OSError:
+            if post_result.status != "completed":
                 status = "BLOCKED"
             else:
-                status = parse_agent_post_check(response)
+                try:
+                    response = (post_result.artifact_dir / "final-response.md").read_text(encoding="utf-8")
+                except OSError:
+                    status = "BLOCKED"
+                else:
+                    status = parse_agent_post_check(response)
         return _finish_case(case, case_dir, workspace, baseline, environment, tuple(actions), status)
     except (OSError, ValueError):
         return _finish_case(case, case_dir, workspace, {}, environment, tuple(actions), "BLOCKED")

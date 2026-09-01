@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Callable, Literal, Protocol, Sequence
+import threading
+from typing import Callable, Literal, Protocol
 
-from .eval_events import normalize_event_records
+from .eval_events import EventStreamNormalizer
 from .hosts import canonical_host
-from .test_artifacts import ActionResult, write_json, write_text
+from .test_artifacts import ActionResult, redact_text, redact_value, write_json, write_text
 from .test_manifest import AgentAction, CommandAction
 from .test_runner import (
     ActionContext,
+    _after_workdir_opened,
     _blocked_result,
     _command_environment,
     _open_anchored_workdir,
@@ -31,10 +34,8 @@ class TestHost(Protocol):
         *,
         model: str,
         reasoning: str,
+        anchored_cwd: str | None = None,
     ) -> tuple[str, ...]:
-        raise NotImplementedError
-
-    def response_path(self, context: ActionContext) -> Path:
         raise NotImplementedError
 
 
@@ -55,16 +56,21 @@ def _action_workdir(context: ActionContext, action: AgentAction | None) -> Path:
 class CodexTestHost:
     host_id = "codex"
 
-    def response_path(self, context: ActionContext) -> Path:
-        return context.artifact_dir / "final-response.raw"
-
-    def build_command(self, context: ActionContext, action: AgentAction | None = None, *, model: str, reasoning: str) -> tuple[str, ...]:
+    def build_command(
+        self,
+        context: ActionContext,
+        action: AgentAction | None = None,
+        *,
+        model: str,
+        reasoning: str,
+        anchored_cwd: str | None = None,
+    ) -> tuple[str, ...]:
         action = _host_action(context, action)
         return (
             "codex", "exec", "--model", model,
             "-c", f'model_reasoning_effort="{reasoning}"',
-            "--json", "--cd", str(_action_workdir(context, action)),
-            "--output-last-message", str(self.response_path(context)),
+            "--json", "--skip-git-repo-check", "--cd",
+            anchored_cwd or str(_action_workdir(context, action)),
             action.prompt,
         )
 
@@ -72,12 +78,17 @@ class CodexTestHost:
 class ClaudeCodeTestHost:
     host_id = "claude-code"
 
-    def response_path(self, context: ActionContext) -> Path:
-        return context.artifact_dir / "final-response.raw"
-
-    def build_command(self, context: ActionContext, action: AgentAction | None = None, *, model: str, reasoning: str) -> tuple[str, ...]:
+    def build_command(
+        self,
+        context: ActionContext,
+        action: AgentAction | None = None,
+        *,
+        model: str,
+        reasoning: str,
+        anchored_cwd: str | None = None,
+    ) -> tuple[str, ...]:
         action = _host_action(context, action)
-        del context, reasoning
+        del context, reasoning, anchored_cwd
         return (
             "claude", "--print", "--output-format", "stream-json", "--verbose",
             "--model", model, action.prompt,
@@ -87,12 +98,17 @@ class ClaudeCodeTestHost:
 class OpenCodeTestHost:
     host_id = "opencode"
 
-    def response_path(self, context: ActionContext) -> Path:
-        return context.artifact_dir / "final-response.raw"
-
-    def build_command(self, context: ActionContext, action: AgentAction | None = None, *, model: str, reasoning: str) -> tuple[str, ...]:
+    def build_command(
+        self,
+        context: ActionContext,
+        action: AgentAction | None = None,
+        *,
+        model: str,
+        reasoning: str,
+        anchored_cwd: str | None = None,
+    ) -> tuple[str, ...]:
         action = _host_action(context, action)
-        del context, reasoning
+        del context, reasoning, anchored_cwd
         return ("opencode", "run", "--format", "json", "--model", model, action.prompt)
 
 
@@ -101,7 +117,6 @@ _HOSTS: dict[str, TestHost] = {
     "claude-code": ClaudeCodeTestHost(),
     "opencode": OpenCodeTestHost(),
 }
-
 
 CredentialCheck = Callable[[str], bool]
 SetupRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -112,8 +127,53 @@ def _credentials_unavailable(_host: str) -> bool:
     return False
 
 
+class _AgentStreamCapture:
+    """Store only redacted final text and normalized observable events."""
+
+    def __init__(self, host: str, secret_values: tuple[str, ...]) -> None:
+        self._normalizer = EventStreamNormalizer(host)
+        self._secret_values = secret_values
+        self._final_parts: list[str] = []
+        self._stderr_parts: list[str] = []
+        self._errors: list[Exception] = []
+        self._lock = threading.Lock()
+
+    def consume_stdout(self, line: str) -> None:
+        try:
+            value = json.loads(line)
+            safe_value = redact_value(value, self._secret_values)
+            if not isinstance(safe_value, dict):
+                return
+            final = _final_response_from_event(safe_value)
+            with self._lock:
+                if final:
+                    self._final_parts.append(final)
+                self._normalizer.consume(safe_value)
+        except Exception as exc:  # malformed records must not retain or emit raw text
+            with self._lock:
+                self._errors.append(exc)
+
+    def consume_stderr(self, line: str) -> None:
+        with self._lock:
+            self._stderr_parts.append(redact_text(line, self._secret_values))
+
+    def persist(self, artifact_dir: Path, secret_values: tuple[str, ...]) -> None:
+        with self._lock:
+            if self._errors:
+                raise ValueError("cannot normalize Agent event stream")
+            events = self._normalizer.finish()
+            final = "\n".join(self._final_parts)
+            stderr = "".join(self._stderr_parts)
+        event_text = "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in events)
+        write_text(artifact_dir / "events.jsonl", event_text, secret_values)
+        # stdout is intentionally the filtered observable stream, never raw JSONL.
+        write_text(artifact_dir / "stdout.log", event_text, secret_values)
+        write_text(artifact_dir / "stderr.log", stderr, secret_values)
+        write_text(artifact_dir / "final-response.md", final, secret_values)
+
+
 class AgentExecutor:
-    """Run an Agent action without persisting raw model output or hidden reasoning."""
+    """Run an Agent action without retaining raw host output or hidden reasoning."""
 
     def __init__(
         self,
@@ -138,15 +198,18 @@ class AgentExecutor:
                 action.action_id, context.artifact_dir,
                 f"credentials are unavailable for Agent host {host.host_id}", context.environment,
             )
+        capture = _AgentStreamCapture(host.host_id, context.environment.secret_values)
         try:
             self._setup(host.host_id, context)
             workdir_fd, cwd = _open_anchored_workdir(context.workspace, action.workdir)
             try:
+                _after_workdir_opened(context.workspace, action.workdir)
                 process = subprocess.Popen(
                     host.build_command(
                         context, action,
                         model=context.environment.model,
                         reasoning=context.environment.reasoning,
+                        anchored_cwd=cwd,
                     ),
                     cwd=cwd,
                     env=_command_environment(context.environment, context.workspace),
@@ -159,21 +222,18 @@ class AgentExecutor:
                     pass_fds=(workdir_fd,),
                 )
             finally:
-                # The child inherited the descriptor; retaining it in the runner leaks one fd/action.
-                import os
+                # Codex inherits this descriptor for its own --cd resolution.
                 os.close(workdir_fd)
-            try:
-                stdout, stderr = process.communicate(timeout=context.environment.timeout_seconds)
-            except subprocess.TimeoutExpired:
-                _terminate_process_group(process)
-                stdout, stderr = process.communicate()
-                return self._blocked(action, context, host, stdout, stderr, "timeout")
+            timed_out = _capture_process_output(process, capture, context.environment.timeout_seconds)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             return _blocked_result(action.action_id, context.artifact_dir, str(exc), context.environment)
 
-        raw_records = _json_records(stdout)
-        normalized = _normalize_records(raw_records, host.host_id)
-        _persist_agent_artifacts(context, action, host, raw_records, normalized, stderr)
+        try:
+            capture.persist(context.artifact_dir, context.environment.secret_values)
+        except ValueError as exc:
+            return _blocked_result(action.action_id, context.artifact_dir, str(exc), context.environment)
+        if timed_out:
+            return self._blocked(action, context, host, "timeout")
         status: Literal["completed", "failed"] = "completed" if process.returncode == 0 else "failed"
         payload = {
             "action_id": action.action_id,
@@ -181,7 +241,7 @@ class AgentExecutor:
             "host": host.host_id,
             "model": context.environment.model,
             "reasoning": context.environment.reasoning,
-            "workdir": str(_action_workdir(context, action)),
+            "workdir": cwd,
             "status": status,
             "exit_code": process.returncode,
         }
@@ -206,10 +266,7 @@ class AgentExecutor:
         if completed.returncode != 0:
             raise ValueError(f"hwskill project setup failed for {host}")
 
-    def _blocked(self, action: AgentAction, context: ActionContext, host: TestHost, stdout: str, stderr: str, reason: str) -> ActionResult:
-        raw_records = _json_records(stdout)
-        normalized = _normalize_records(raw_records, host.host_id)
-        _persist_agent_artifacts(context, action, host, raw_records, normalized, stderr)
+    def _blocked(self, action: AgentAction, context: ActionContext, host: TestHost, reason: str) -> ActionResult:
         payload = {
             "action_id": action.action_id,
             "kind": "agent",
@@ -222,71 +279,61 @@ class AgentExecutor:
         return ActionResult(action.action_id, "blocked", None, context.artifact_dir)
 
 
-def _json_records(stdout: str) -> tuple[dict[str, object], ...]:
-    records: list[dict[str, object]] = []
-    for line in stdout.splitlines():
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            records.append(value)
-    return tuple(records)
-
-
-def _normalize_records(records: Sequence[dict[str, object]], host: str) -> tuple[dict[str, object], ...]:
-    return tuple(normalize_event_records(list(records), host))
-
-
-def _persist_agent_artifacts(
-    context: ActionContext,
-    action: AgentAction,
-    host: TestHost,
-    raw_records: Sequence[dict[str, object]],
-    normalized: Sequence[dict[str, object]],
-    stderr: str,
-) -> None:
-    event_text = "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in normalized)
-    write_text(context.artifact_dir / "events.jsonl", event_text, context.environment.secret_values)
-    # stdout is deliberately the same filtered observable stream, never the raw host JSONL.
-    write_text(context.artifact_dir / "stdout.log", event_text, context.environment.secret_values)
-    write_text(context.artifact_dir / "stderr.log", stderr, context.environment.secret_values)
-    raw_path = host.response_path(context)
+def _capture_process_output(
+    process: subprocess.Popen[str],
+    capture: _AgentStreamCapture,
+    timeout_seconds: float,
+) -> bool:
+    """Drain both pipes concurrently so timeout handling cannot deadlock on full stderr."""
+    assert process.stdout is not None
+    assert process.stderr is not None
+    readers = (
+        threading.Thread(target=_read_lines, args=(process.stdout, capture.consume_stdout), daemon=True),
+        threading.Thread(target=_read_lines, args=(process.stderr, capture.consume_stderr), daemon=True),
+    )
+    for reader in readers:
+        reader.start()
+    timed_out = False
     try:
-        response = raw_path.read_text(encoding="utf-8") if raw_path.is_file() else _final_response(raw_records)
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _terminate_process_group(process)
+        process.wait()
     finally:
-        # Codex writes this directly. Do not retain an unfiltered transient response alongside artifacts.
-        raw_path.unlink(missing_ok=True)
-    write_text(context.artifact_dir / "final-response.md", response, context.environment.secret_values)
-    del action
+        for reader in readers:
+            reader.join()
+    return timed_out
 
 
-def _final_response(events: Sequence[dict[str, object]]) -> str:
-    messages: list[str] = []
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        # Codex final messages and Claude's documented stream-json result are
-        # both final-answer channels rather than reasoning content.
-        if event.get("type") == "result" and isinstance(event.get("result"), str):
-            messages.append(event["result"])
-            continue
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
-            messages.append(item["text"])
-            continue
-        message = event.get("message")
-        if event.get("type") == "assistant" and isinstance(message, dict):
-            content = message.get("content")
-            if isinstance(content, list):
-                messages.extend(
-                    block["text"] for block in content
-                    if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
-                )
-        part = event.get("part")
-        if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
-            messages.append(part["text"])
-    return "\n".join(messages)
+def _read_lines(stream, consume: Callable[[str], None]) -> None:
+    for line in iter(stream.readline, ""):
+        consume(line)
+
+
+def _final_response_from_event(event: dict[str, object]) -> str:
+    if event.get("type") == "result" and isinstance(event.get("result"), str):
+        return event["result"]
+    item = event.get("item")
+    if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+        return item["text"]
+    message = event.get("message")
+    if event.get("type") == "assistant" and isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            return "\n".join(
+                block["text"] for block in content
+                if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+            )
+    part = event.get("part")
+    if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+        return part["text"]
+    return ""
+
+
+def _final_response(events) -> str:
+    """Compatibility helper for focused final-answer classification tests."""
+    return "\n".join(filter(None, (_final_response_from_event(event) for event in events)))
 
 
 def append_agent_post_check_metadata(prompt: str, context_path: Path, artifact_dir: Path, workspace: Path) -> str:
