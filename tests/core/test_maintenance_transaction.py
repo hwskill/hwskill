@@ -256,6 +256,52 @@ class RepositoryTransactionTest(unittest.TestCase):
         self.assertIsNotNone(pending)
         self.assertEqual(pending.identity, verification_identity(selection, plan.candidate_digests))
 
+    def test_normal_plan_fails_closed_for_present_but_unresolvable_git_markers(self) -> None:
+        """Only a truly absent marker may use the non-Git mutation boundary."""
+        selection = TestSelection(core=True)
+        evidence = VerificationResult(selection, {}, (("core", "PASS"),))
+
+        def plan() -> tuple[RepositoryTransaction, object]:
+            tx = RepositoryTransaction(self.repo)
+            tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+            return tx, validated_plan(
+                tx, MaintenanceSummary("test"), lambda root: None,
+                selection=selection, candidate_digests={},
+                verify_affected=lambda _: evidence,
+            )
+
+        markers = (
+            ("malformed-file", lambda: (self.repo / ".git").write_text("not a gitdir\n", encoding="utf-8")),
+            ("dangling-link", lambda: (self.repo / ".git").symlink_to("missing-gitdir")),
+        )
+        for label, install_marker in markers:
+            with self.subTest(marker=label):
+                install_marker()
+                tx, candidate = plan()
+                try:
+                    with self.assertRaises(pending.PendingVerificationError):
+                        candidate.apply()
+                    self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+                finally:
+                    tx.discard()
+                    (self.repo / ".git").unlink()
+
+        tx, candidate = plan()
+        original_run = pending.subprocess.run
+
+        def swap_marker(*args: object, **kwargs: object) -> object:
+            completed = original_run(*args, **kwargs)
+            (self.repo / ".git").symlink_to("missing-gitdir")
+            return completed
+
+        try:
+            with patch("hwskill.pending_verification.subprocess.run", side_effect=swap_marker):
+                with self.assertRaises(pending.PendingVerificationError):
+                    candidate.apply()
+            self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+        finally:
+            tx.discard()
+
     def test_normal_plan_waits_for_clear_inventory_check_before_repository_mutation(self) -> None:
         """A verified apply cannot slip between clear's inventory check and unlink."""
         self._init_git()

@@ -289,6 +289,71 @@ class PendingVerificationTest(unittest.TestCase):
             write_pending_verification(self.repo, self.selection, self.digests)
         self.assertFalse(any(target.iterdir()))
 
+    def test_concurrent_first_pending_directory_creation_serializes_both_writers(self) -> None:
+        """A valid creator winning mkdir must not make another valid writer fail."""
+        barrier = threading.Barrier(2)
+        original_mkdir = pending.os.mkdir
+        original_acquire = pending._acquire_pending_lock
+        paths: list[Path] = []
+        failures: list[BaseException] = []
+        opened_fds: list[tuple[int, int]] = []
+
+        def synchronize_mkdir(name: object, *args: object, **kwargs: object) -> object:
+            if name == "hwskill" and kwargs.get("dir_fd") is not None:
+                barrier.wait(timeout=3)
+            return original_mkdir(name, *args, **kwargs)
+
+        def writer() -> None:
+            try:
+                paths.append(write_pending_verification(self.repo, self.selection, self.digests))
+            except BaseException as exc:
+                failures.append(exc)
+
+        def track_lock(directory_fd: int) -> int:
+            lock_fd = original_acquire(directory_fd)
+            opened_fds.append((directory_fd, lock_fd))
+            return lock_fd
+
+        with patch("hwskill.pending_verification.os.mkdir", side_effect=synchronize_mkdir), patch(
+            "hwskill.pending_verification._acquire_pending_lock", side_effect=track_lock,
+        ):
+            first = threading.Thread(target=writer)
+            second = threading.Thread(target=writer)
+            first.start()
+            second.start()
+            first.join(timeout=3)
+            second.join(timeout=3)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(paths), 2)
+        self.assertTrue(all(path.is_file() for path in paths))
+        self.assertEqual(len(opened_fds), 2)
+        for directory_fd, lock_fd in opened_fds:
+            with self.assertRaises(OSError):
+                os.fstat(directory_fd)
+            with self.assertRaises(OSError):
+                os.fstat(lock_fd)
+        self.assertIsNotNone(load_pending_verification(self.repo))
+
+    def test_first_pending_directory_creation_rejects_a_malicious_race_winner(self) -> None:
+        gitdir = self.repo / ".git"
+        outside = Path(self.temporary.name) / "outside"
+        outside.mkdir()
+        original_mkdir = pending.os.mkdir
+
+        def install_symlink_then_lose(name: object, *args: object, **kwargs: object) -> object:
+            if name == "hwskill" and kwargs.get("dir_fd") is not None:
+                (gitdir / "hwskill").symlink_to(outside, target_is_directory=True)
+                raise FileExistsError("malicious winner")
+            return original_mkdir(name, *args, **kwargs)
+
+        with patch("hwskill.pending_verification.os.mkdir", side_effect=install_symlink_then_lose):
+            with self.assertRaises(pending.PendingVerificationError):
+                write_pending_verification(self.repo, self.selection, self.digests)
+        self.assertFalse(any(outside.iterdir()))
+
     def test_open_fd_survives_directory_swap_without_external_write(self) -> None:
         prepared = prepare_pending_verification(self.repo, self.selection, self.digests)
         gitdir = self.repo / ".git"

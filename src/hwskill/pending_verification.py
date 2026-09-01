@@ -143,7 +143,7 @@ def acquire_repository_mutation_guard(repo_root: Path) -> RepositoryMutationGuar
     try:
         return _acquire_repository_guard(repo_root, create=True)
     except PendingVerificationError:
-        if not (Path(repo_root) / ".git").exists():
+        if _git_marker_is_absent(repo_root):
             return RepositoryMutationGuard(None, None, None)
         raise
 
@@ -246,13 +246,27 @@ def _open_pending_directory(repo_root: Path, *, create: bool) -> tuple[int, Path
         except FileNotFoundError:
             if not create:
                 raise PendingVerificationError("pending verification directory is missing")
-            os.mkdir("hwskill", 0o700, dir_fd=git_fd)
+            try:
+                os.mkdir("hwskill", 0o700, dir_fd=git_fd)
+            except FileExistsError:
+                pass
             pending_fd = os.open("hwskill", _directory_flags(), dir_fd=git_fd)
     except OSError as exc:
         raise PendingVerificationError("pending verification directory is unsafe") from exc
     finally:
         os.close(git_fd)
     return pending_fd, git_path / "hwskill"
+
+
+def _git_marker_is_absent(repo_root: Path) -> bool:
+    """Only a missing directory entry is the supported non-Git boundary."""
+    try:
+        os.lstat(Path(repo_root) / ".git")
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
 
 
 def _open_git_directory(repo_root: Path) -> tuple[int, Path]:
