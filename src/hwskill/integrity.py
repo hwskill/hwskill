@@ -23,6 +23,14 @@ from .profiles import ProfileDefinition, _lock_data
 from .source_manifest import load_source_manifest
 
 
+# Repository-owned bindings may live at the root or in checked-in project trees
+# such as examples/.  Generated and tool-owned directories are never projects.
+_REPOSITORY_PROFILE_SCAN_IGNORED_DIRECTORY_NAMES = frozenset({
+    ".git", ".venv", ".superpowers", "__pycache__",
+})
+_REPOSITORY_PROFILE_SCAN_IGNORED_TOP_LEVEL = frozenset({"artifacts"})
+
+
 @dataclass(frozen=True, order=True)
 class IntegrityIssue:
     path: str
@@ -225,39 +233,54 @@ def _inventory_tree_is_safe(directory: Path, root: Path, issues: list[IntegrityI
 
 def _inventory_repository_profile_pairs(
     root: Path, issues: list[IntegrityIssue],
-) -> Iterator[tuple[Path | None, Path | None]]:
+) -> Iterator[tuple[Path | None, bool, Path | None, bool]]:
     """Yield repository-owned profile/lock pairs without following links."""
     for current, directories, files in os.walk(root, followlinks=False):
         current_path = Path(current)
         retained_directories = []
         for name in directories:
             candidate = current_path / name
-            if name in {".git", ".venv", "__pycache__"}:
+            if (
+                name in _REPOSITORY_PROFILE_SCAN_IGNORED_DIRECTORY_NAMES
+                or (current_path == root and name in _REPOSITORY_PROFILE_SCAN_IGNORED_TOP_LEVEL)
+            ):
                 continue
             if _path_components_are_safe(root, candidate, issues):
                 retained_directories.append(name)
         directories[:] = retained_directories
         if current_path.name != ".hwskills":
             continue
-        profile = current_path / "profile.yaml" if "profile.yaml" in files else None
-        lock = current_path / "lock.yaml" if "lock.yaml" in files else None
-        safe_profile = _repository_pair_file(root, profile, issues, "repository profile")
-        safe_lock = _repository_pair_file(root, lock, issues, "repository lock")
-        if safe_profile is not None or safe_lock is not None:
-            yield safe_profile, safe_lock
+        profile, profile_regular = _repository_binding_file(
+            current_path / "profile.yaml", root, issues,
+            "invalid-profile-selection", "repository profile",
+        )
+        lock, lock_regular = _repository_binding_file(
+            current_path / "lock.yaml", root, issues,
+            "invalid-lock", "repository lock",
+        )
+        if profile is not None or lock is not None:
+            yield profile, profile_regular, lock, lock_regular
 
 
-def _repository_pair_file(
-    root: Path, path: Path | None, issues: list[IntegrityIssue], label: str,
-) -> Path | None:
-    if path is None:
-        return None
-    if not _path_components_are_safe(root, path, issues):
-        return None
-    if _regular_file(path):
-        return path
-    _unsafe_path(root, path, issues, f"{label} must be a regular file")
-    return None
+def _repository_binding_file(
+    path: Path,
+    root: Path,
+    issues: list[IntegrityIssue],
+    code: str,
+    label: str,
+) -> tuple[Path | None, bool]:
+    """Inspect a fixed binding name with lstat so links and directories stay local."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return None, False
+    except OSError as exc:
+        issues.append(_issue(code, root, path, f"cannot inspect {label}: {exc}"))
+        return path, False
+    if stat.S_ISREG(mode):
+        return path, True
+    issues.append(_issue(code, root, path, f"{label} must be a regular file"))
+    return path, False
 
 
 def _read_yaml_mapping(
@@ -336,22 +359,26 @@ def _validate_repository_profile_locks(
     """Compare every checked-in project binding to the canonical lock payload."""
     by_skill_id = {item.record.skill_id: item.record for item in governed_skills}
     profile_pairs = tuple(_inventory_repository_profile_pairs(root, issues))
-    for profile_path, lock_path in sorted(
+    for profile_path, profile_regular, lock_path, lock_regular in sorted(
         profile_pairs,
-        key=lambda pair: _relative_path(root, pair[0] or pair[1]),
+        key=lambda pair: _relative_path(root, pair[0] or pair[2]),
     ):
         if profile_path is None:
-            if lock_path is not None:
+            if lock_path is not None and lock_regular:
                 issues.append(_issue(
                     "missing-profile-selection", root, lock_path,
                     "repository lock has no sibling profile.yaml",
                 ))
+            continue
+        if not profile_regular:
             continue
         if lock_path is None:
             issues.append(_issue(
                 "missing-profile-lock", root, profile_path,
                 "repository profile.yaml has no sibling lock.yaml",
             ))
+            continue
+        if not lock_regular:
             continue
         profile_data = _read_yaml_mapping(
             profile_path, root, issues, "invalid-profile-selection", "repository profile selection",

@@ -461,6 +461,82 @@ class IntegrityTest(unittest.TestCase):
 
         self.assertIn("unknown-profile-skill", {issue.code for issue in report.issues})
 
+    def test_repository_profile_scan_ignores_artifacts_but_checks_examples(self) -> None:
+        """Generated artifacts are not bindings, while checked-in examples remain bindings."""
+        from hwskill.integrity import check_integrity
+
+        artifact_project = self.repo / "artifacts/run-1"
+        artifact_project.mkdir(parents=True)
+        set_profiles(project_scope(artifact_project), self.repo, ("codex-demo",))
+        artifact_lock = artifact_project / ".hwskills/lock.yaml"
+        artifact_data = yaml.safe_load(artifact_lock.read_text(encoding="utf-8"))
+        artifact_data["catalog_digest"] = "sha256:stale"
+        artifact_lock.write_text(
+            yaml.safe_dump(artifact_data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+        example_project = self.repo / "examples/stale-example"
+        example_project.mkdir(parents=True)
+        set_profiles(project_scope(example_project), self.repo, ("codex-demo",))
+        example_lock = example_project / ".hwskills/lock.yaml"
+        example_data = yaml.safe_load(example_lock.read_text(encoding="utf-8"))
+        example_data["catalog_digest"] = "sha256:stale"
+        example_lock.write_text(
+            yaml.safe_dump(example_data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+        report = check_integrity(self.repo)
+
+        stale_paths = [
+            issue.path for issue in report.issues if issue.code == "stale-profile-lock"
+        ]
+        self.assertEqual(stale_paths, ["examples/stale-example/.hwskills/lock.yaml"])
+
+    def test_repository_profile_binding_types_are_invalid_not_missing(self) -> None:
+        """Directories and links named as bindings never masquerade as absent files."""
+        from hwskill.integrity import check_integrity
+
+        profile_directory = self.repo / "examples/profile-directory/.hwskills"
+        profile_directory.mkdir(parents=True)
+        (profile_directory / "profile.yaml").mkdir()
+        (profile_directory / "lock.yaml").write_text("skills: []\n", encoding="utf-8")
+
+        lock_directory = self.repo / "examples/lock-directory/.hwskills"
+        lock_directory.mkdir(parents=True)
+        (lock_directory / "profile.yaml").write_text(
+            "schema_version: 1\nprofiles:\n- codex-demo\n", encoding="utf-8"
+        )
+        (lock_directory / "lock.yaml").mkdir()
+
+        external_profile = Path(self.external.name) / "profile.yaml"
+        external_profile.write_text("schema_version: 1\nprofiles: []\n", encoding="utf-8")
+        linked_profile = self.repo / "examples/profile-link/.hwskills"
+        linked_profile.mkdir(parents=True)
+        (linked_profile / "profile.yaml").symlink_to(external_profile)
+        (linked_profile / "lock.yaml").write_text("skills: []\n", encoding="utf-8")
+
+        report = check_integrity(self.repo)
+
+        codes_by_path = {
+            path: {issue.code for issue in report.issues if issue.path == path}
+            for path in (
+                "examples/profile-directory/.hwskills/profile.yaml",
+                "examples/lock-directory/.hwskills/lock.yaml",
+                "examples/profile-link/.hwskills/profile.yaml",
+            )
+        }
+        self.assertEqual(codes_by_path["examples/profile-directory/.hwskills/profile.yaml"], {
+            "invalid-profile-selection",
+        })
+        self.assertEqual(codes_by_path["examples/lock-directory/.hwskills/lock.yaml"], {
+            "invalid-lock",
+        })
+        self.assertEqual(codes_by_path["examples/profile-link/.hwskills/profile.yaml"], {
+            "invalid-profile-selection",
+        })
+        self.assertNotIn("missing-profile-lock", {issue.code for issue in report.issues})
+        self.assertNotIn("missing-profile-selection", {issue.code for issue in report.issues})
+
     def test_test_manifest_reference_headers_report_unknown_duplicate_and_malformed_targets(self) -> None:
         """Reference validation catches stale rename targets without parsing or running cases."""
         from hwskill.integrity import validate_test_manifest_references
