@@ -181,6 +181,42 @@ class MaintenanceCliTest(unittest.TestCase):
             args=self._update_args(select_track=True, yes=True)
             self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 2)
 
+    def test_interactive_skill_create_json_prompts_only_stderr(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+        args = SimpleNamespace(command="skill", skill_command="create", skill_id="team/demo", layer="l1", description=None, license_name=None, repo_root=str(self.repo), yes=False, json=True)
+        plan = SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("skill-create", added_skill_ids=("team/demo",)))
+        with patch("hwskill.maintenance_cli.plan_create_manual", return_value=plan):
+            stdin, stdout, stderr = self._streams("demo\nMIT\ny\n")
+            self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        self.assertIsInstance(json.loads(stdout.getvalue()), dict)
+        self.assertIn("Description", stderr.getvalue()); self.assertNotIn("Description", stdout.getvalue())
+
+    def test_invalid_add_selection_returns_usage_without_writing_manifest(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+        args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/team.git\n\n\n99\n")
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 2)
+        self.assertIn("usage:", stderr.getvalue()); self.assertNotIn("Traceback", stderr.getvalue()); self.assertFalse((self.repo / "sources/team.yaml").exists())
+
+    def test_single_skill_wizard_applies_parent_path_and_resolved_payload(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+        single = Path(self.temp.name) / "only-remote"; payload = single / "skills" / "only"; payload.mkdir(parents=True); (payload / "SKILL.md").write_text("---\nname: only\ndescription: only\n---\n")
+        args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/only.git\n\n\n\n\n\n\ny\n")
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, FakeGitSourceClient(single)), 0)
+        source = load_source_manifest(self.repo / "sources/only.yaml")
+        self.assertEqual((source.upstream.skills_path, len(source.skills), source.skills[0].path), ("skills", 1, "only")); self.assertTrue((self.repo / "skills-src/l1/only/only/SKILL.md").exists())
+
+    def test_real_source_update_json_applies_details_and_catalog(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+        add = self._add_args(); stdin, stdout, stderr = self._streams("https://x/team.git\n\n\n\n\n\n\ny\n")
+        self.assertEqual(run_maintenance_command(add, self.repo, stdin, stdout, stderr, self.git), 0)
+        (self.remote / "library" / "one" / "SKILL.md").write_text("---\nname: one\ndescription: changed\n---\n", encoding="utf-8")
+        args = self._update_args()
+        stdin, stdout, stderr = self._streams()
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        payload = json.loads(stdout.getvalue()); row = payload["sources"][0]
+        self.assertEqual((row["repository"], row["track"]), ("https://x/team.git", "refs/heads/main")); self.assertIsNotNone(row["old_revision"]); self.assertIsNotNone(row["new_revision"]); self.assertIn("updated", row["deltas"])
+        self.assertTrue((self.repo / "registry/catalog.json").is_file())
+
     def test_source_add_retries_duplicate_source_id(self):
         from hwskill.maintenance_cli import run_maintenance_command
         write_source_manifest(self.repo / "sources/team.yaml", UpstreamSource("team", UpstreamConfig("https://x/old.git", "refs/heads/main", "library", ()), SourceDefaults("old", "l1", "MIT"), "a" * 40, ()))

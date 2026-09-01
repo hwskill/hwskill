@@ -212,8 +212,8 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
         if args.command == "skill":
             if args.skill_command == "create":
                 if not args.description and not _interactive(stdin): raise UsageError("non-interactive skill create requires --description")
-                description = args.description or _ask(stdin, stdout, "Description")
-                license_name = args.license_name or (_ask(stdin, stdout, "License", "MIT") if _interactive(stdin) else "MIT")
+                description = args.description or _ask(stdin, interaction, "Description")
+                license_name = args.license_name or (_ask(stdin, interaction, "License", "MIT") if _interactive(stdin) else "MIT")
                 plan = plan_create_manual(root, args.skill_id, args.layer, description, license_name)
             elif args.skill_command == "update": plan = plan_update_manual(root, args.skill_id)
             elif args.skill_command == "move": plan = plan_move_skill(root, args.skill_id, args.layer)
