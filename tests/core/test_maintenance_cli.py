@@ -232,10 +232,17 @@ class MaintenanceCliTest(unittest.TestCase):
         self.assertEqual(run_maintenance_command(explicit, self.repo, stdin, stdout, stderr, self.git), 2)
         self.assertEqual(self.git.calls, [])
 
-    def test_source_add_rejects_local_repository_arguments_before_git_work(self):
+    def test_source_add_rejects_unsafe_repository_arguments_before_git_work(self):
         from hwskill.maintenance_cli import run_maintenance_command
 
-        for repository in ("/tmp/upstream", "../upstream", "file:///tmp/upstream"):
+        for repository in (
+            "/tmp/upstream", "../upstream", "file:///tmp/upstream",
+            "https://localhost/repo.git", "https://localhost./repo.git",
+            "ssh://localhost/repo.git", "git://localhost/repo.git",
+            "localhost:repo.git", "git@localhost:repo.git",
+            "https://127.0.0.1/repo.git", "ssh://[::1]/repo.git",
+            "https://@/repo.git", "https://:443/repo.git",
+        ):
             with self.subTest(repository=repository):
                 self.git.calls.clear()
                 args = self._add_args(
@@ -246,10 +253,17 @@ class MaintenanceCliTest(unittest.TestCase):
                 self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 2)
                 self.assertEqual(self.git.calls, [])
 
-    def test_source_add_rejects_prompted_local_repository_before_git_work(self):
+    def test_source_add_rejects_prompted_unsafe_repository_before_git_work(self):
         from hwskill.maintenance_cli import run_maintenance_command
 
-        for repository in ("/tmp/upstream", "../upstream", "file:///tmp/upstream"):
+        for repository in (
+            "/tmp/upstream", "../upstream", "file:///tmp/upstream",
+            "https://localhost/repo.git", "https://localhost./repo.git",
+            "ssh://localhost/repo.git", "git://localhost/repo.git",
+            "localhost:repo.git", "git@localhost:repo.git",
+            "https://127.0.0.1/repo.git", "ssh://[::1]/repo.git",
+            "https://@/repo.git", "https://:443/repo.git",
+        ):
             with self.subTest(repository=repository):
                 self.git.calls.clear()
                 args = self._add_args(yes=True)

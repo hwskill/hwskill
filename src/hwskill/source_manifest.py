@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Mapping
@@ -56,7 +57,9 @@ class UpstreamSource:
 # resolver will later reject.
 _SHA1_RE = re.compile(r"[0-9a-f]{40}")
 _SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
-_SCP_GIT_URL_RE = re.compile(r"(?:[^@/:\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]*:[^/\s].+")
+_SCP_GIT_URL_RE = re.compile(
+    r"(?:(?:[^@/:\s]+)@)?(?P<host>[A-Za-z0-9][A-Za-z0-9.-]*):[^/\s].+"
+)
 
 
 def load_source_manifest(path: Path) -> UpstreamSource:
@@ -239,13 +242,36 @@ def _safe_relative_path(data: Any, label: str) -> str:
     return value
 
 
-def is_remote_git_url(repository: str) -> bool:
+def is_remote_git_url(repository: object) -> bool:
+    """Return whether ``repository`` is a non-local supported Git URL."""
+    if not isinstance(repository, str):
+        return False
     if _is_local_repository_path(repository):
         return False
-    parsed = urlsplit(repository)
+    try:
+        parsed = urlsplit(repository)
+    except ValueError:
+        return False
     if parsed.scheme in {"https", "ssh", "git"}:
-        return bool(parsed.netloc and parsed.path and not parsed.query and not parsed.fragment)
-    return bool(_SCP_GIT_URL_RE.fullmatch(repository))
+        try:
+            host = parsed.hostname
+        except ValueError:
+            return False
+        return bool(parsed.path and not parsed.query and not parsed.fragment and _is_nonlocal_remote_host(host))
+    scp_match = _SCP_GIT_URL_RE.fullmatch(repository)
+    return bool(scp_match and _is_nonlocal_remote_host(scp_match.group("host")))
+
+
+def _is_nonlocal_remote_host(host: str | None) -> bool:
+    if not host:
+        return False
+    canonical = host.rstrip(".").lower()
+    if not canonical or canonical == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(canonical).is_loopback
+    except ValueError:
+        return True
 
 
 def _is_local_repository_path(repository: str) -> bool:

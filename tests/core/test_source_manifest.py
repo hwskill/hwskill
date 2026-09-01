@@ -73,12 +73,29 @@ class SourceManifestTest(unittest.TestCase):
             "C:skills",
             "D:relative/repo",
             r"\\server\share\skills",
+            "https://localhost/repo.git",
+            "https://localhost./repo.git",
+            "ssh://localhost/repo.git",
+            "git://localhost/repo.git",
+            "localhost:repo.git",
+            "git@localhost:repo.git",
+            "https://127.0.0.1/repo.git",
+            "ssh://[::1]/repo.git",
+            "https://@/repo.git",
+            "https://:443/repo.git",
         ):
             with self.subTest(repository=repository):
                 data = self.source_data()
                 data["upstream"]["repository"] = repository
                 with self.assertRaisesRegex(SourceManifestError, "repository"):
                     load_source_manifest(self.write_source(data))
+
+    def test_remote_repository_predicate_rejects_non_string_input(self):
+        from hwskill.source_manifest import is_remote_git_url
+
+        for repository in (None, 42, Path("/tmp/upstream")):
+            with self.subTest(repository=repository):
+                self.assertFalse(is_remote_git_url(repository))
 
     def test_accepts_supported_remote_git_url_forms(self):
         for repository in (

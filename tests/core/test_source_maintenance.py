@@ -259,10 +259,17 @@ class SourceMaintenanceTest(unittest.TestCase):
                 {"team": "D" * 40},
             )
 
-    def test_plan_add_source_rejects_local_repository_before_materializing(self) -> None:
+    def test_plan_add_source_rejects_unsafe_repository_before_materializing(self) -> None:
         from hwskill.source_maintenance import SourceAddRequest, SourceMaintenanceError, SourceSelection, plan_add_source
 
-        for repository in ("/tmp/upstream", "../upstream", "file:///tmp/upstream"):
+        for repository in (
+            "/tmp/upstream", "../upstream", "file:///tmp/upstream",
+            "https://localhost/repo.git", "https://localhost./repo.git",
+            "ssh://localhost/repo.git", "git://localhost/repo.git",
+            "localhost:repo.git", "git@localhost:repo.git",
+            "https://127.0.0.1/repo.git", "ssh://[::1]/repo.git",
+            "https://@/repo.git", "https://:443/repo.git",
+        ):
             with self.subTest(repository=repository):
                 self.git.calls = 0
                 request = SourceAddRequest(
