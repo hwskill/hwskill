@@ -402,6 +402,34 @@ class TestCliTest(unittest.TestCase):
         self.assertIn("changed before read", error)
         self.assertFalse(marker.exists())
 
+    def test_fixture_parent_swap_after_selection_blocks_without_executing_external_script(self) -> None:
+        path = self.manifest(
+            "tests/skills/team/review/test.yaml", kind="skill", target_id="team/review", post_check="true",
+        )
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["cases"][0]["steps"] = [{"type": "command", "command": "sh run.sh"}]
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        fixtures = path.parent / "fixtures"
+        fixtures.mkdir()
+        (fixtures / "run.sh").write_text("true\n", encoding="utf-8")
+        marker = Path(self.temporary.name) / "external-fixture-executed"
+        outside_review = Path(self.temporary.name) / "outside-review"
+        (outside_review / "fixtures").mkdir(parents=True)
+        (outside_review / "fixtures/run.sh").write_text(f"touch {marker}\n", encoding="utf-8")
+
+        def swap_before_fixture_open(_source) -> None:
+            review = path.parent
+            review.rename(review.with_name("review-original"))
+            review.symlink_to(outside_review, target_is_directory=True)
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_runner._before_fixture_source_opened", side_effect=swap_before_fixture_open,
+        ):
+            code, _, _ = self.run_cli(*self.command(path.relative_to(self.repo).as_posix(), "--runner", "local"))
+
+        self.assertEqual(code, 3)
+        self.assertFalse(marker.exists())
+
     def test_repeated_core_runs_close_the_anchored_descriptors(self) -> None:
         core = self.repo / "tests/core"
         core.mkdir(parents=True)

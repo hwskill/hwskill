@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import stat
@@ -84,11 +85,32 @@ class TestCase:
 
 
 @dataclass(frozen=True)
+class FixtureIdentity:
+    relative: tuple[str, ...]
+    device: int
+    inode: int
+    mode: int
+    size: int = 0
+    content_digest: str | None = None
+
+
+@dataclass(frozen=True)
+class FixtureSource:
+    """Descriptor-free identity snapshot for fixture copying at execution time."""
+
+    repository: FixtureIdentity
+    anchors: tuple[FixtureIdentity, ...]
+    entries: tuple[FixtureIdentity, ...]
+    missing_component: str | None = None
+
+
+@dataclass(frozen=True)
 class TestCollection:
     manifest_path: Path
     target: TestTarget
     cases: tuple[TestCase, ...]
     fixtures_dir: Path
+    fixture_source: FixtureSource | None = None
 
 
 def load_test_collection(path: Path, repo_root: Path) -> TestCollection:
@@ -115,11 +137,13 @@ def load_test_collection(path: Path, repo_root: Path) -> TestCollection:
     _validate_unique((case.case_id for case in cases), "case id")
     fixtures_dir = manifest_path.parent / "fixtures"
     _validate_fixtures_dir(fixtures_dir, root)
+    fixture_source = _snapshot_fixture_source(root, fixtures_dir)
     return TestCollection(
         manifest_path=manifest_path,
         target=target,
         cases=cases,
         fixtures_dir=fixtures_dir,
+        fixture_source=fixture_source,
     )
 
 
@@ -190,6 +214,104 @@ def _read_manifest_bytes(file_fd: int, manifest_path: Path) -> bytes:
             raise TestManifestError(f"test manifest exceeds maximum size: {manifest_path}")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+def _snapshot_fixture_source(root: Path, fixtures_dir: Path) -> FixtureSource:
+    """Capture fixture identities without retaining descriptors beyond collection load."""
+    relative = fixtures_dir.relative_to(root)
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise TestManifestError("fixtures require O_NOFOLLOW support")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open(root, directory_flags)
+    descriptors = [root_fd]
+    try:
+        repository = _fixture_identity((), os.fstat(root_fd))
+        parent_fd = root_fd
+        anchors: list[FixtureIdentity] = []
+        for index, component in enumerate(relative.parts):
+            try:
+                child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            except FileNotFoundError:
+                if index == len(relative.parts) - 1:
+                    return FixtureSource(repository, tuple(anchors), (), component)
+                raise TestManifestError("fixture source disappeared while loading collection") from None
+            descriptors.append(child_fd)
+            identity = _fixture_identity(relative.parts[:index + 1], os.fstat(child_fd))
+            anchors.append(identity)
+            parent_fd = child_fd
+        entries: list[FixtureIdentity] = []
+        _snapshot_fixture_entries(parent_fd, (), entries)
+        return FixtureSource(repository, tuple(anchors), tuple(entries))
+    except OSError as exc:
+        raise TestManifestError(f"cannot safely snapshot fixtures: {exc}") from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _snapshot_fixture_entries(
+    directory_fd: int,
+    relative: tuple[str, ...],
+    entries: list[FixtureIdentity],
+) -> None:
+    current = os.fstat(directory_fd)
+    if not stat.S_ISDIR(current.st_mode):
+        raise TestManifestError("fixtures must be a real directory")
+    entries.append(_fixture_identity(relative, current))
+    for name in sorted(os.listdir(directory_fd)):
+        candidate = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        child_relative = (*relative, name)
+        if stat.S_ISLNK(candidate.st_mode):
+            raise TestManifestError(f"fixtures must not contain a symlink: {'/'.join(child_relative)}")
+        if stat.S_ISDIR(candidate.st_mode):
+            child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(child_fd)
+                _assert_fixture_stat_matches(candidate, opened, child_relative)
+                _snapshot_fixture_entries(child_fd, child_relative, entries)
+            finally:
+                os.close(child_fd)
+        elif stat.S_ISREG(candidate.st_mode):
+            file_fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(file_fd)
+                _assert_fixture_stat_matches(candidate, opened, child_relative)
+                digest = _fixture_digest(file_fd)
+                after = os.fstat(file_fd)
+                _assert_fixture_stat_matches(opened, after, child_relative)
+                entries.append(_fixture_identity(child_relative, after, digest))
+            finally:
+                os.close(file_fd)
+        else:
+            raise TestManifestError(
+                f"fixtures contains unsupported fixture {'/'.join(child_relative)} ({_fixture_entry_type(candidate.st_mode)})"
+            )
+
+
+def _fixture_identity(
+    relative: tuple[str, ...],
+    value: os.stat_result,
+    content_digest: str | None = None,
+) -> FixtureIdentity:
+    return FixtureIdentity(relative, value.st_dev, value.st_ino, value.st_mode, value.st_size, content_digest)
+
+
+def _fixture_digest(file_fd: int) -> str:
+    digest = hashlib.sha256()
+    while block := os.read(file_fd, 1024 * 1024):
+        digest.update(block)
+    return digest.hexdigest()
+
+
+def _assert_fixture_stat_matches(
+    expected: os.stat_result,
+    actual: os.stat_result,
+    relative: tuple[str, ...],
+) -> None:
+    if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+        raise TestManifestError(f"fixture changed while snapshotting: {'/'.join(relative)}")
+    if stat.S_IFMT(expected.st_mode) != stat.S_IFMT(actual.st_mode):
+        raise TestManifestError(f"fixture changed while snapshotting: {'/'.join(relative)}")
 
 
 def discover_test_collections(repo_root: Path) -> tuple[TestCollection, ...]:

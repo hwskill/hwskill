@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+
+import yaml
 
 from hwskill.test_manifest import CommandAction, TestCase, TestCollection, TestTarget
 
@@ -195,6 +198,184 @@ class TestLocalCaseRunner(unittest.TestCase):
             ), self.environment(), self.artifacts)
 
         self.assertEqual(result.status, "PASS")
+
+    def test_loaded_collection_snapshots_nested_fixtures_and_preserves_executable_mode(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": 'test -x run.sh && test "$(cat nested/value.txt)" = trusted && ./run.sh'}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        nested = self.fixtures / "nested"
+        nested.mkdir()
+        (nested / "value.txt").write_text("trusted\n", encoding="utf-8")
+        script = self.fixtures / "run.sh"
+        script.write_text("true\n", encoding="utf-8")
+        script.chmod(0o755)
+
+        collection = load_test_collection(manifest, self.repo)
+        self.assertIsNotNone(collection.fixture_source)
+        result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+
+    def test_loaded_collection_rejects_leaf_fixture_symlink_replacement_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "sh run.sh"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        script = self.fixtures / "run.sh"
+        script.write_text("true\n", encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+        self.assertIsNotNone(collection.fixture_source)
+        marker = self.root / "external-leaf-executed"
+        outside = self.root / "outside.sh"
+        outside.write_text(f"touch {marker}\n", encoding="utf-8")
+        script.unlink()
+        script.symlink_to(outside)
+
+        result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+        self.assertFalse(marker.exists())
+
+    def test_loaded_collection_rejects_in_place_fixture_content_rewrite_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "sh run.sh"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        script = self.fixtures / "run.sh"
+        script.write_text("true\n", encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+        marker = self.root / "rewritten-fixture-executed"
+        script.write_text(f"touch {marker}\n", encoding="utf-8")
+
+        result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+        self.assertFalse(marker.exists())
+
+    def test_loaded_collection_rejects_fixture_mode_change_during_copy(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{"id": "case-one", "steps": [{"type": "command", "command": "sh run.sh"}],
+                       "post_check": {"type": "command", "command": "true"}}],
+        }, sort_keys=False), encoding="utf-8")
+        script = self.fixtures / "run.sh"
+        script.write_text("true\n", encoding="utf-8")
+        script.chmod(0o755)
+        collection = load_test_collection(manifest, self.repo)
+
+        def chmod_after_open(relative: tuple[str, ...]) -> None:
+            if relative == ("run.sh",):
+                script.chmod(0o644)
+
+        with patch("hwskill.test_runner._after_snapshot_fixture_file_opened", side_effect=chmod_after_open):
+            result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+
+    def test_loaded_collection_rejects_fixtures_created_after_absent_snapshot_before_actions(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "sh run.sh"}],
+                "post_check": {"type": "command", "command": "true"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        shutil.rmtree(self.fixtures)
+        collection = load_test_collection(manifest, self.repo)
+        self.assertIsNotNone(collection.fixture_source)
+        marker = self.root / "late-fixture-executed"
+        self.fixtures.mkdir()
+        (self.fixtures / "run.sh").write_text(f"touch {marker}\n", encoding="utf-8")
+
+        result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].actions, ())
+        self.assertFalse(marker.exists())
+
+    def test_loaded_collection_with_absent_fixtures_runs_in_an_empty_workspace(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{
+                "id": "case-one",
+                "steps": [{"type": "command", "command": "test ! -e run.sh && touch output.txt"}],
+                "post_check": {"type": "command", "command": "test -f output.txt"},
+            }],
+        }, sort_keys=False), encoding="utf-8")
+        shutil.rmtree(self.fixtures)
+        collection = load_test_collection(manifest, self.repo)
+
+        result = run_collection(collection, self.environment(), self.artifacts)
+
+        self.assertIsNotNone(collection.fixture_source)
+        self.assertEqual(result.status, "PASS")
+
+    def test_loaded_collection_fixture_snapshot_closes_descriptors_across_runs(self) -> None:
+        from hwskill.test_manifest import load_test_collection
+        from hwskill.test_runner import run_collection
+
+        manifest = self.repo / "tests/skills/team/review/test.yaml"
+        manifest.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "target": {"kind": "skill", "id": "team/review"},
+            "cases": [{"id": "case-one", "steps": [{"type": "command", "command": "true"}],
+                       "post_check": {"type": "command", "command": "true"}}],
+        }, sort_keys=False), encoding="utf-8")
+        collection = load_test_collection(manifest, self.repo)
+        self.assertIsNotNone(collection.fixture_source)
+        before = len(list(Path("/proc/self/fd").iterdir()))
+        for index in range(8):
+            result = run_collection(collection, self.environment(), self.artifacts / str(index))
+            self.assertEqual(result.status, "PASS")
+        after = len(list(Path("/proc/self/fd").iterdir()))
+        self.assertLessEqual(after, before + 1)
 
     def test_case_workdir_applies_when_action_has_no_override(self) -> None:
         from hwskill.test_runner import run_case

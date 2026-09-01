@@ -21,7 +21,7 @@ from .test_artifacts import (
     write_json,
     write_text,
 )
-from .test_manifest import AgentAction, CommandAction, TestAction, TestCase, TestCollection
+from .test_manifest import AgentAction, CommandAction, FixtureIdentity, FixtureSource, TestAction, TestCase, TestCollection
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,7 @@ class TestEnvironment:
     environment_variables: tuple[tuple[str, str], ...] = ()
     timeout_seconds: float = 30.0
     fixtures_dir: Path | None = None
+    fixture_source: FixtureSource | None = None
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,10 @@ def run_case(
     actions: list[ActionResult] = []
     try:
         try:
-            _copy_fixtures(_fixtures_dir(case, environment), workspace)
+            if environment.fixture_source is not None:
+                _copy_snapshot_fixtures(environment.fixture_source, environment.repo_root, workspace)
+            else:
+                _copy_fixtures(_fixtures_dir(case, environment), workspace)
         except (OSError, ValueError):
             return _finish_case(case, case_dir, workspace, {}, environment, tuple(actions), "BLOCKED")
 
@@ -196,7 +200,11 @@ def run_collection(
         try:
             results.append(run_case(
                 case,
-                replace(environment, fixtures_dir=collection.fixtures_dir),
+                replace(
+                    environment,
+                    fixtures_dir=collection.fixtures_dir,
+                    fixture_source=collection.fixture_source,
+                ),
                 artifact_root,
                 agent_executor=agent_executor,
             ))
@@ -445,6 +453,138 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def _copy_snapshot_fixtures(source: FixtureSource, repo_root: Path, destination: Path) -> None:
+    """Re-open and verify a collection's fixture snapshot before copying via FDs."""
+    _before_fixture_source_opened(source)
+    source_fd = _open_directory(repo_root)
+    descriptors = [source_fd]
+    try:
+        _assert_fixture_identity(os.fstat(source_fd), source.repository, "repository")
+        for expected in source.anchors:
+            name = expected.relative[-1]
+            child_fd = _open_directory(name, dir_fd=source_fd)
+            descriptors.append(child_fd)
+            _assert_fixture_identity(os.fstat(child_fd), expected, "/".join(expected.relative))
+            source_fd = child_fd
+        if source.missing_component is not None:
+            try:
+                os.stat(source.missing_component, dir_fd=source_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            raise ValueError(f"fixture source was created after selection: {source.missing_component}")
+        destination_fd = _open_directory(destination)
+        try:
+            expected_entries = {identity.relative: identity for identity in source.entries}
+            seen: set[tuple[str, ...]] = set()
+            _copy_snapshot_fixture_directory(source_fd, destination_fd, expected_entries, (), seen)
+            if seen != set(expected_entries):
+                raise ValueError("fixture tree changed before copying")
+        finally:
+            os.close(destination_fd)
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _before_fixture_source_opened(_source: FixtureSource) -> None:
+    """Deterministic seam between collection selection and fixture descriptor anchoring."""
+
+
+def _assert_fixture_identity(current: os.stat_result, expected: FixtureIdentity, label: str) -> None:
+    if (current.st_dev, current.st_ino) != (expected.device, expected.inode):
+        raise ValueError(f"fixture source changed before copying: {label}")
+    if stat.S_IFMT(current.st_mode) != stat.S_IFMT(expected.mode):
+        raise ValueError(f"fixture source changed before copying: {label}")
+    if stat.S_IMODE(current.st_mode) != stat.S_IMODE(expected.mode):
+        raise ValueError(f"fixture source changed before copying: {label}")
+    if current.st_size != expected.size:
+        raise ValueError(f"fixture source changed before copying: {label}")
+
+
+def _copy_snapshot_fixture_directory(
+    source_fd: int,
+    destination_fd: int,
+    expected_entries: dict[tuple[str, ...], FixtureIdentity],
+    relative: tuple[str, ...],
+    seen: set[tuple[str, ...]],
+) -> None:
+    expected_directory = expected_entries.get(relative)
+    if expected_directory is None:
+        raise ValueError("fixture tree changed before copying")
+    _assert_fixture_identity(os.fstat(source_fd), expected_directory, "/".join(relative) or ".")
+    seen.add(relative)
+    for name in sorted(os.listdir(source_fd)):
+        entry_relative = (*relative, name)
+        expected = expected_entries.get(entry_relative)
+        if expected is None:
+            raise ValueError("fixture tree changed before copying")
+        entry_stat = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        _assert_fixture_identity(entry_stat, expected, "/".join(entry_relative))
+        if stat.S_ISDIR(entry_stat.st_mode):
+            child_source_fd = _open_directory(name, dir_fd=source_fd)
+            try:
+                _assert_fixture_identity(os.fstat(child_source_fd), expected, "/".join(entry_relative))
+                os.mkdir(name, stat.S_IMODE(expected.mode), dir_fd=destination_fd)
+                child_destination_fd = _open_directory(name, dir_fd=destination_fd)
+                try:
+                    _copy_snapshot_fixture_directory(
+                        child_source_fd, child_destination_fd, expected_entries, entry_relative, seen,
+                    )
+                finally:
+                    os.close(child_destination_fd)
+            finally:
+                os.close(child_source_fd)
+        elif stat.S_ISREG(entry_stat.st_mode):
+            _copy_snapshot_regular_fixture(source_fd, destination_fd, name, expected, entry_relative)
+            seen.add(entry_relative)
+        else:
+            raise ValueError(f"fixtures contains unsupported fixture: {'/'.join(entry_relative)}")
+
+
+def _copy_snapshot_regular_fixture(
+    source_directory_fd: int,
+    destination_directory_fd: int,
+    name: str,
+    expected: FixtureIdentity,
+    relative: tuple[str, ...],
+) -> None:
+    source_fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0), dir_fd=source_directory_fd)
+    try:
+        _assert_fixture_identity(os.fstat(source_fd), expected, "/".join(relative))
+        _after_snapshot_fixture_file_opened(relative)
+        if expected.content_digest is None:
+            raise ValueError(f"fixture source digest is unavailable: {'/'.join(relative)}")
+        destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        destination_fd = os.open(name, destination_flags, stat.S_IMODE(expected.mode), dir_fd=destination_directory_fd)
+        try:
+            digest = hashlib.sha256()
+            size = 0
+            while block := os.read(source_fd, 1024 * 1024):
+                digest.update(block)
+                size += len(block)
+                _write_fixture_block(destination_fd, block)
+            _assert_fixture_identity(os.fstat(source_fd), expected, "/".join(relative))
+            if size != expected.size or digest.hexdigest() != expected.content_digest:
+                raise ValueError(f"fixture content changed before copying: {'/'.join(relative)}")
+        finally:
+            os.close(destination_fd)
+    finally:
+        os.close(source_fd)
+
+
+def _write_fixture_block(destination_fd: int, block: bytes) -> None:
+    view = memoryview(block)
+    while view:
+        written = os.write(destination_fd, view)
+        if written <= 0:
+            raise OSError("cannot write fixture copy")
+        view = view[written:]
+
+
+def _after_snapshot_fixture_file_opened(_relative: tuple[str, ...]) -> None:
+    """Deterministic seam after a snapshot file FD is anchored and before copying."""
 
 
 def _copy_fixtures(source: Path, destination: Path) -> None:
