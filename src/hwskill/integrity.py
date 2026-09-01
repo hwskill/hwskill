@@ -351,8 +351,9 @@ def _source_references(
         )
     for source_id, paths in sorted(source_ids.items()):
         if len(paths) > 1:
+            ordered_paths = tuple(sorted(paths, key=lambda item: _relative_path(root, item)))
             issues.append(_issue(
-                "duplicate-source-id", root, paths[0],
+                "duplicate-source-id", root, ordered_paths[0],
                 f"source_id is declared by multiple manifests: {source_id}",
             ))
     return tuple(references)
@@ -441,11 +442,9 @@ def _check_source_skill_consistency(
     ):
         if source_id is None or len({owner.skill_id for owner in owners}) < 2:
             continue
-        ordered_owners = tuple(sorted(
-            owners, key=lambda item: (item.manifest_path.as_posix(), item.skill_id)
-        ))
+        ordered_owners = tuple(sorted(owners, key=lambda item: _reference_sort_key(root, item)))
         evidence = ", ".join(
-            f"{owner.manifest_path.relative_to(root).as_posix()} -> {owner.skill_id}"
+            f"{_relative_path(root, owner.manifest_path)} -> {owner.skill_id}"
             for owner in ordered_owners
         )
         issues.append(_issue(
@@ -454,8 +453,9 @@ def _check_source_skill_consistency(
         ))
     for skill_id, owners in sorted(references_by_id.items()):
         if len(owners) > 1:
+            ordered_owners = tuple(sorted(owners, key=lambda item: _reference_sort_key(root, item)))
             issues.append(_issue(
-                "duplicate-source-skill", root, owners[0].manifest_path,
+                "duplicate-source-skill", root, ordered_owners[0].manifest_path,
                 f"resolved Skill has multiple source owners: {skill_id}",
             ))
         for reference in owners:
@@ -572,6 +572,22 @@ def _catalog_entry(root: Path, record: registry.SkillRecord) -> dict[str, Any]:
 
 def _paths_overlap(first: str, second: str) -> bool:
     return first == second or first.startswith(second + "/") or second.startswith(first + "/")
+
+
+def _relative_path(root: Path, path: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _reference_sort_key(root: Path, reference: _SourceSkillReference) -> tuple[str, str, str, str, str, str, str]:
+    return (
+        _relative_path(root, reference.manifest_path),
+        reference.source_id or "",
+        reference.revision or "",
+        reference.skill_id,
+        reference.upstream_path,
+        reference.layer,
+        reference.content_digest,
+    )
 
 
 def _regular_file(path: Path) -> bool:

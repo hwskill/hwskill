@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -264,6 +265,28 @@ class IntegrityTest(unittest.TestCase):
         report = check_integrity(self.repo)
 
         self.assertIn("duplicate-source-skill", {issue.code for issue in report.issues})
+
+    def test_duplicate_source_issues_keep_the_same_canonical_path_when_inventory_reverses(self) -> None:
+        """Duplicate groups must not expose the filesystem traversal order in their issue path."""
+        from hwskill import integrity
+
+        self.write_source(self.read_source(), "a-source")
+        baseline = integrity.check_integrity(self.repo)
+        original_inventory_files = integrity._inventory_files
+
+        def reversed_inventory(*args, **kwargs):
+            yield from reversed(tuple(original_inventory_files(*args, **kwargs)))
+
+        with patch.object(integrity, "_inventory_files", side_effect=reversed_inventory):
+            reversed_report = integrity.check_integrity(self.repo)
+
+        self.assertEqual(baseline.issues, reversed_report.issues)
+        duplicate_issues = [
+            issue for issue in baseline.issues
+            if issue.code in {"duplicate-source-id", "duplicate-source-skill"}
+        ]
+        self.assertTrue(duplicate_issues)
+        self.assertTrue(all(issue.path == "sources/a-source.yaml" for issue in duplicate_issues))
 
     def test_integrity_reports_two_ids_for_one_path_inside_an_invalid_source(self) -> None:
         """Raw source inspection retains path-to-ID ownership evidence after parser rejection."""
