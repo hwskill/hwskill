@@ -337,22 +337,42 @@ class PendingVerificationTest(unittest.TestCase):
                 os.fstat(lock_fd)
         self.assertIsNotNone(load_pending_verification(self.repo))
 
-    def test_first_pending_directory_creation_rejects_a_malicious_race_winner(self) -> None:
+    def test_first_pending_directory_creation_rejects_non_directory_race_winners(self) -> None:
         gitdir = self.repo / ".git"
         outside = Path(self.temporary.name) / "outside"
         outside.mkdir()
         original_mkdir = pending.os.mkdir
+        winners = (
+            ("symlink", lambda path: path.symlink_to(outside, target_is_directory=True)),
+            ("regular", lambda path: path.write_text("do not write here", encoding="utf-8")),
+            ("fifo", lambda path: os.mkfifo(path)),
+        )
+        for label, install_winner in winners:
+            with self.subTest(winner=label):
+                target = gitdir / "hwskill"
 
-        def install_symlink_then_lose(name: object, *args: object, **kwargs: object) -> object:
-            if name == "hwskill" and kwargs.get("dir_fd") is not None:
-                (gitdir / "hwskill").symlink_to(outside, target_is_directory=True)
-                raise FileExistsError("malicious winner")
-            return original_mkdir(name, *args, **kwargs)
+                def install_winner_then_lose(name: object, *args: object, **kwargs: object) -> object:
+                    if name == "hwskill" and kwargs.get("dir_fd") is not None:
+                        install_winner(target)
+                        raise FileExistsError("malicious winner")
+                    return original_mkdir(name, *args, **kwargs)
 
-        with patch("hwskill.pending_verification.os.mkdir", side_effect=install_symlink_then_lose):
-            with self.assertRaises(pending.PendingVerificationError):
-                write_pending_verification(self.repo, self.selection, self.digests)
-        self.assertFalse(any(outside.iterdir()))
+                with patch("hwskill.pending_verification.os.mkdir", side_effect=install_winner_then_lose):
+                    with self.assertRaises(pending.PendingVerificationError):
+                        write_pending_verification(self.repo, self.selection, self.digests)
+                self.assertFalse(any(outside.iterdir()))
+                if label == "regular":
+                    self.assertEqual(target.read_text(encoding="utf-8"), "do not write here")
+                target.unlink()
+                prepared = prepare_pending_verification(self.repo, self.selection, self.digests)
+                directory_fd, lock_fd = prepared.directory_fd, prepared.lock_fd
+                prepared.discard()
+                with self.assertRaises(OSError):
+                    os.fstat(directory_fd)
+                with self.assertRaises(OSError):
+                    os.fstat(lock_fd)
+                (target / "pending-verification.lock").unlink()
+                target.rmdir()
 
     def test_open_fd_survives_directory_swap_without_external_write(self) -> None:
         prepared = prepare_pending_verification(self.repo, self.selection, self.digests)

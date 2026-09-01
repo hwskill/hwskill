@@ -11,7 +11,6 @@ from pathlib import Path, PurePosixPath
 import re
 import secrets
 import stat
-import subprocess
 from typing import Mapping
 import unicodedata
 
@@ -116,6 +115,11 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _PENDING_SCHEMA_VERSION = 2
 _MAX_IDENTIFIER_COMPONENT_LENGTH = 255
 _MAX_REPOSITORY_PATH_LENGTH = 4096
+_MAX_GITFILE_BYTES = 4096
+
+
+class _GitMarkerMissing(PendingVerificationError):
+    """The explicit, anchored non-Git repository boundary."""
 
 
 def write_pending_verification(repo_root: Path, selection: TestSelection, digests: Mapping[str, str]) -> Path:
@@ -142,10 +146,8 @@ def acquire_repository_mutation_guard(repo_root: Path) -> RepositoryMutationGuar
     """
     try:
         return _acquire_repository_guard(repo_root, create=True)
-    except PendingVerificationError:
-        if _git_marker_is_absent(repo_root):
-            return RepositoryMutationGuard(None, None, None)
-        raise
+    except _GitMarkerMissing:
+        return RepositoryMutationGuard(None, None, None)
 
 
 def _acquire_repository_guard(repo_root: Path, *, create: bool) -> RepositoryMutationGuard:
@@ -258,36 +260,69 @@ def _open_pending_directory(repo_root: Path, *, create: bool) -> tuple[int, Path
     return pending_fd, git_path / "hwskill"
 
 
-def _git_marker_is_absent(repo_root: Path) -> bool:
-    """Only a missing directory entry is the supported non-Git boundary."""
-    try:
-        os.lstat(Path(repo_root) / ".git")
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    return False
-
-
 def _open_git_directory(repo_root: Path) -> tuple[int, Path]:
     root = Path(repo_root).absolute()
-    environment = dict(os.environ)
-    environment["GIT_TERMINAL_PROMPT"] = "0"
-    completed = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, env=environment)
-    if completed.returncode:
-        raise PendingVerificationError("cannot resolve Git directory")
-    raw = completed.stdout.decode("utf-8", errors="strict").strip()
-    candidate = Path(raw)
-    if not raw or (not candidate.is_absolute() and ".." in candidate.parts):
-        raise PendingVerificationError("Git returned an unsafe Git directory")
-    path = candidate if candidate.is_absolute() else root / candidate
-    fd = _open_directory_path(path)
+    root_fd = _open_directory_path(root)
     try:
-        _assert_regular_at(fd, "HEAD")
-    except BaseException:
-        os.close(fd)
-        raise PendingVerificationError("resolved Git directory is invalid")
-    return fd, path
+        try:
+            marker = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise _GitMarkerMissing("Git marker is missing") from exc
+        _before_git_marker_open()
+        if stat.S_ISDIR(marker.st_mode):
+            git_fd = os.open(".git", _directory_flags(), dir_fd=root_fd)
+            try:
+                _assert_file_identity(marker, os.fstat(git_fd))
+                _assert_regular_at(git_fd, "HEAD")
+                return git_fd, root / ".git"
+            except BaseException:
+                os.close(git_fd)
+                raise PendingVerificationError("resolved Git directory is invalid")
+        if stat.S_ISREG(marker.st_mode):
+            marker_fd = os.open(".git", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+            try:
+                _assert_file_identity(marker, os.fstat(marker_fd))
+                git_path = _parse_gitfile(root, marker_fd)
+            finally:
+                os.close(marker_fd)
+            git_fd = _open_directory_path(git_path)
+            try:
+                _assert_regular_at(git_fd, "HEAD")
+                return git_fd, git_path
+            except BaseException:
+                os.close(git_fd)
+                raise PendingVerificationError("resolved Git directory is invalid")
+        raise PendingVerificationError("Git marker is unsafe")
+    except OSError as exc:
+        raise PendingVerificationError("cannot safely open Git directory") from exc
+    finally:
+        os.close(root_fd)
+
+
+def _before_git_marker_open() -> None:
+    """Deterministic test seam after marker identity capture and before open."""
+
+
+def _assert_file_identity(expected: os.stat_result, actual: os.stat_result) -> None:
+    if expected.st_dev != actual.st_dev or expected.st_ino != actual.st_ino:
+        raise PendingVerificationError("Git marker changed during resolution")
+
+
+def _parse_gitfile(root: Path, marker_fd: int) -> Path:
+    info = os.fstat(marker_fd)
+    if info.st_size > _MAX_GITFILE_BYTES:
+        raise PendingVerificationError("Git marker is too large")
+    raw = os.read(marker_fd, _MAX_GITFILE_BYTES + 1)
+    if len(raw) > _MAX_GITFILE_BYTES or not raw.startswith(b"gitdir: ") or raw.count(b"\n") != 1 or not raw.endswith(b"\n"):
+        raise PendingVerificationError("Git marker is malformed")
+    try:
+        target = raw[len(b"gitdir: "):-1].decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise PendingVerificationError("Git marker is malformed") from exc
+    if not target or "\x00" in target or _contains_control(target):
+        raise PendingVerificationError("Git marker is malformed")
+    candidate = Path(target)
+    return Path(os.path.abspath(str(candidate if candidate.is_absolute() else root / candidate)))
 
 
 def _open_directory_path(path: Path) -> int:

@@ -270,9 +270,12 @@ class RepositoryTransactionTest(unittest.TestCase):
                 verify_affected=lambda _: evidence,
             )
 
+        linked_target = Path(self.temp.name) / "git-link-target"
+        linked_target.mkdir()
         markers = (
             ("malformed-file", lambda: (self.repo / ".git").write_text("not a gitdir\n", encoding="utf-8")),
             ("dangling-link", lambda: (self.repo / ".git").symlink_to("missing-gitdir")),
+            ("directory-link", lambda: (self.repo / ".git").symlink_to(linked_target, target_is_directory=True)),
         )
         for label, install_marker in markers:
             with self.subTest(marker=label):
@@ -286,21 +289,68 @@ class RepositoryTransactionTest(unittest.TestCase):
                     tx.discard()
                     (self.repo / ".git").unlink()
 
+        self._init_git()
         tx, candidate = plan()
-        original_run = pending.subprocess.run
 
-        def swap_marker(*args: object, **kwargs: object) -> object:
-            completed = original_run(*args, **kwargs)
+        def swap_marker() -> None:
             (self.repo / ".git").symlink_to("missing-gitdir")
-            return completed
 
         try:
-            with patch("hwskill.pending_verification.subprocess.run", side_effect=swap_marker):
+            with patch("hwskill.pending_verification._before_git_marker_open", side_effect=swap_marker, create=True):
                 with self.assertRaises(pending.PendingVerificationError):
                     candidate.apply()
             self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
         finally:
             tx.discard()
+
+    def test_normal_plan_rejects_a_valid_git_directory_replaced_after_marker_capture(self) -> None:
+        self._init_git()
+        replacement = Path(self.temp.name) / "replacement"
+        subprocess.run(["git", "init", "-q", str(replacement)], check=True)
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        selection = TestSelection(core=True)
+        evidence = VerificationResult(selection, {}, (("core", "PASS"),))
+        candidate = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={},
+            verify_affected=lambda _: evidence,
+        )
+
+        def replace_git_marker() -> None:
+            original = self.repo / ".git"
+            original.rename(self.repo / "original-git")
+            shutil.copytree(replacement / ".git", original)
+
+        try:
+            with patch("hwskill.pending_verification._before_git_marker_open", side_effect=replace_git_marker, create=True):
+                with self.assertRaises(pending.PendingVerificationError):
+                    candidate.apply()
+            self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+        finally:
+            tx.discard()
+
+    def test_normal_plan_acquires_the_guard_from_a_real_linked_worktree_gitfile(self) -> None:
+        self._init_git()
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "test"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "seed"], check=True)
+        linked = Path(self.temp.name) / "linked"
+        subprocess.run(["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
+        tx = RepositoryTransaction(linked)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        selection = TestSelection(core=True)
+        evidence = VerificationResult(selection, {}, (("core", "PASS"),))
+        candidate = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={},
+            verify_affected=lambda _: evidence,
+        )
+
+        candidate.apply()
+
+        self.assertEqual((linked / "sources/a.yaml").read_text(encoding="utf-8"), "candidate source\n")
 
     def test_normal_plan_waits_for_clear_inventory_check_before_repository_mutation(self) -> None:
         """A verified apply cannot slip between clear's inventory check and unlink."""
