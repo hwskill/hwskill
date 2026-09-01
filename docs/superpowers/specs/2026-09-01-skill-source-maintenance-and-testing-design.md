@@ -149,7 +149,9 @@ source:
 
 ## 5. 命令模型
 
-### 5.1 命令树
+### 5.1 新增与变更命令
+
+下面只展示本设计新增或改变的命令，不是 `hwskill` 的完整命令树。未列出的现有命令按兼容性表继续保留。
 
 ```text
 hwskill
@@ -178,6 +180,29 @@ hwskill
     ├── profiles
     ├── affected
     └── <test-path>
+```
+
+现有命令兼容性：
+
+| 现有命令 | 处理方式 |
+|---|---|
+| `info` | 保留，不改变职责 |
+| `setup`、`unsetup`、`doctor` | 保留；`test setup` 不替代宿主集成配置 |
+| `adapter`、`serve-mcp` | 保留 |
+| `profile list/set/show/unset/resolve` | 保留 |
+| `profile bind/unbind` | 保持当前兼容及弃用状态 |
+| `skill list/search/load/dump/dump-profile` | 保留，并与新增的 Skill 维护命令共存 |
+| `registry build` | 保留，继续确定性生成 Catalog |
+| `registry validate` | 保留为 Registry 基础校验；作为 `integrity-check` 的子集复用 |
+| `registry import` | 移除；本地路径导入与新来源模型冲突 |
+
+职责边界：
+
+```text
+registry validate  ⊂  integrity-check
+registry build        生成 Catalog
+source/skill           修改仓库维护内容
+test                   执行行为验证
 ```
 
 ### 5.2 新增 manual Skill
@@ -394,7 +419,7 @@ hwskill integrity-check
 hwskill integrity-check --json
 ```
 
-该命令只检查、不修复，也不运行行为测试。它离线验证：
+该命令只检查、不修复，也不运行行为测试。它复用并包含 `registry validate` 的基础 Registry 校验，再离线验证：
 
 - 每个 `SKILL.md` 都有且只有一个 `skill.yaml`；
 - ID、name、namespace、layer 和物理路径一致；
