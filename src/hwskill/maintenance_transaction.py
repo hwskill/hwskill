@@ -50,8 +50,7 @@ class _PathState:
 
 
 _MISSING = _PathState("missing", None, None, None)
-Replace = Callable[[Path, Path], None]
-Remove = Callable[[Path], None]
+BeforeOperation = Callable[[int, str, str], None]
 Validate = Callable[[Path], None]
 
 
@@ -70,8 +69,7 @@ class RepositoryTransaction:
         repo_root: Path,
         *,
         validate: Validate | None = None,
-        replace: Replace | None = None,
-        remove: Remove | None = None,
+        before_operation: BeforeOperation | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         if not self.repo_root.is_dir():
@@ -79,8 +77,7 @@ class RepositoryTransaction:
         if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
             raise TransactionError("repository transactions require POSIX O_NOFOLLOW support")
         self._validate = validate
-        self._replace = replace
-        self._remove = remove
+        self._before_operation = before_operation
         self._state = "active"
         self._repo_fd = os.open(
             self.repo_root,
@@ -160,7 +157,9 @@ class RepositoryTransaction:
         with tempfile.TemporaryDirectory(prefix="hwskill-backup-") as temporary_backup:
             backup_root = Path(temporary_backup)
             handles: list[_TargetHandle] = []
+            recovered_roots: set[str] = set()
             try:
+                self._backup_managed_roots(targets, backup_root)
                 for relative_path in targets:
                     handle = self._open_verified_target(relative_path)
                     handles.append(handle)
@@ -169,22 +168,33 @@ class RepositoryTransaction:
 
                 applied: list[_TargetHandle] = []
                 try:
-                    for handle in handles:
-                        self._assert_ancestor_identities(handle.relative_path)
-                        self._assert_handle_preimage(handle)
-                        applied.append(handle)
+                    for index, handle in enumerate(handles, start=1):
                         candidate = self.candidate_root / handle.relative_path
-                        destination = self.repo_root / handle.relative_path
-                        if candidate.exists():
-                            if self._replace is not None:
-                                self._replace(candidate, destination)
-                            _replace_at(handle.parent_fd, handle.name, candidate)
-                        else:
-                            if self._remove is not None:
-                                self._remove(destination)
-                            _remove_at(handle.parent_fd, handle.name)
+                        operation = "replace" if candidate.exists() else "remove"
+                        hook_called = False
+                        try:
+                            if self._before_operation is not None:
+                                hook_called = True
+                                self._before_operation(
+                                    index,
+                                    operation,
+                                    handle.relative_path.as_posix(),
+                                )
+                            self._assert_ancestor_identities(handle.relative_path)
+                            self._assert_handle_preimage(handle)
+                            applied.append(handle)
+                            if operation == "replace":
+                                _replace_at(handle.parent_fd, handle.name, candidate)
+                            else:
+                                _remove_at(handle.parent_fd, handle.name)
+                        except BaseException:
+                            if hook_called:
+                                root_name = handle.relative_path.parts[0]
+                                self._restore_managed_root(root_name, backup_root)
+                                recovered_roots.add(root_name)
+                            raise
                 except BaseException:
-                    rollback_error = self._rollback(applied, backup_root)
+                    rollback_error = self._rollback(applied, backup_root, recovered_roots)
                     if rollback_error is not None:
                         raise TransactionError("transaction failed and rollback was incomplete") from rollback_error
                     raise
@@ -221,6 +231,30 @@ class RepositoryTransaction:
         for relative_path in targets:
             handle = self._open_verified_target(relative_path)
             os.close(handle.parent_fd)
+
+    def _backup_managed_roots(self, targets: tuple[Path, ...], backup_root: Path) -> None:
+        for root_name in sorted({path.parts[0] for path in targets}):
+            expected = self._baseline.get(Path(root_name), _MISSING)
+            actual = _path_state_at(self._repo_fd, root_name)
+            if actual != expected:
+                raise TransactionConflictError(
+                    f"managed root preimage changed: {root_name}"
+                )
+            if expected.kind != "missing":
+                _copy_from_fd_to_path(
+                    self._repo_fd,
+                    root_name,
+                    backup_root / "managed-roots" / root_name,
+                )
+
+    def _restore_managed_root(self, root_name: str, backup_root: Path) -> None:
+        _remove_entry_at(self._repo_fd, root_name)
+        if self._baseline.get(Path(root_name), _MISSING).kind != "missing":
+            _copy_path_to_fd(
+                backup_root / "managed-roots" / root_name,
+                self._repo_fd,
+                root_name,
+            )
 
     def _open_verified_target(self, relative_path: Path) -> _TargetHandle:
         parent_fd = os.dup(self._repo_fd)
@@ -274,9 +308,16 @@ class RepositoryTransaction:
         finally:
             os.close(parent_fd)
 
-    def _rollback(self, applied: list[_TargetHandle], backup_root: Path) -> BaseException | None:
+    def _rollback(
+        self,
+        applied: list[_TargetHandle],
+        backup_root: Path,
+        recovered_roots: set[str],
+    ) -> BaseException | None:
         rollback_error: BaseException | None = None
         for handle in reversed(applied):
+            if handle.relative_path.parts[0] in recovered_roots:
+                continue
             try:
                 original = self._baseline.get(handle.relative_path, _MISSING)
                 _remove_at(handle.parent_fd, handle.name)
@@ -451,6 +492,19 @@ def _remove_at(parent_fd: int, name: str) -> None:
     finally:
         os.close(directory_fd)
     os.rmdir(name, dir_fd=parent_fd)
+
+
+def _remove_entry_at(parent_fd: int, name: str) -> None:
+    try:
+        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(metadata.st_mode) or not (
+        stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)
+    ):
+        os.unlink(name, dir_fd=parent_fd)
+        return
+    _remove_at(parent_fd, name)
 
 
 def _copy_path(source: Path, destination: Path) -> None:
