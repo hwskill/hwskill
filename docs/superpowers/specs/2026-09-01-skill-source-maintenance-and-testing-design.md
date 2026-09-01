@@ -272,9 +272,9 @@ hwskill source update --all
 
 - `--select-track` 交互列出 branch、tag，并允许输入完整 commit SHA。
 - source ID 与 `--all` 互斥。
-- `--all` 先完成全部 source 的获取、分析和选择，全部通过后统一写入。
+- `--all` 先完成全部 source 的获取、分析和选择，全部通过后统一写入。交互选择完成后，事务规划会再次物化并核对这份 inventory；远端在此间变化时停止，要求重新执行。
 - 新增或删除 Skill 时交互逐项处理。
-- 非交互模式使用 `--on-added include|ignore|fail` 与 `--on-removed remove|manualize|fail`。
+- 非交互模式（包括 `--yes`）使用 `--on-added include|ignore|fail` 与 `--on-removed remove|manualize|fail`；不会读取或提示逐项决策。
 - 新增 Skill 使用 source 默认 layer；需要例外时由维护者在合并前修改 resolved 条目。
 - 本期不自动 commit。
 

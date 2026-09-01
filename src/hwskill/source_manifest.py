@@ -126,7 +126,7 @@ def _parse_source(data: Any, path: Path) -> UpstreamSource:
     if not _is_remote_git_url(repository):
         raise SourceManifestError(f"{path}: upstream.repository must be a remote Git URL")
     track = _string(upstream_data["track"], "upstream.track")
-    if not _is_full_ref(track):
+    if not is_valid_track(track):
         raise SourceManifestError(
             f"{path}: upstream.track must be refs/heads/..., refs/tags/..., "
             "or a full 40-character Git revision"
@@ -251,7 +251,8 @@ def _is_local_repository_path(repository: str) -> bool:
     )
 
 
-def _is_full_ref(track: str) -> bool:
+def is_valid_track(track: str) -> bool:
+    """Return whether a manifest track uses the supported ref-or-commit grammar."""
     if _SHA1_RE.fullmatch(track):
         return True
     for prefix in ("refs/heads/", "refs/tags/"):
@@ -259,6 +260,11 @@ def _is_full_ref(track: str) -> bool:
             suffix = track.removeprefix(prefix)
             return bool(suffix) and all(part not in {"", ".", ".."} for part in suffix.split("/"))
     return False
+
+
+def is_full_commit_track(track: str) -> bool:
+    """Return whether ``track`` is a fully pinned 40-hex Git commit."""
+    return bool(_SHA1_RE.fullmatch(track))
 
 
 def _validate_unique(values: list[str], label: str) -> None:

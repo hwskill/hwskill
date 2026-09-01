@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+from dataclasses import replace
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -164,6 +165,50 @@ class SourceMaintenanceTest(unittest.TestCase):
         self.assertEqual(changed_governance["source"]["kind"], "upstream")
         catalog = yaml.safe_load((self.repo / "registry/catalog.json").read_text(encoding="utf-8"))
         self.assertEqual([item["id"] for item in catalog["skills"]], ["team/changed-skill", "team/new-skill", "team/same-skill"])
+
+    def test_update_applies_mixed_per_skill_decisions_in_one_candidate_transaction(self) -> None:
+        from hwskill.source_maintenance import UpdatePolicies, plan_update_sources
+
+        source = self._source()
+        self._upstream_skill("new-skill-2", "new-skill-2", "another new skill")
+        deleted_two = self._skill(
+            "team/deleted-skill-2", "l2", body="deleted two",
+            source={"kind": "upstream", "source_id": "team", "revision": "a" * 40, "upstream_path": "deleted-skill-2"},
+        )
+        source = replace(source, skills=(*source.skills, ResolvedSourceSkill(
+            "deleted-skill-2", "team/deleted-skill-2", "l2", content_digest(deleted_two),
+        )))
+        write_source_manifest(self.repo / "sources/team.yaml", source)
+        policies = UpdatePolicies(
+            "fail", "fail",
+            ((("team", "new-skill"), "include"), (("team", "new-skill-2"), "ignore")),
+            ((("team", "deleted-skill"), "remove"), (("team", "deleted-skill-2"), "manualize")),
+        )
+        plan = plan_update_sources(self.repo, ("team",), policies, self.git)
+        self.apply_verified(plan)
+
+        updated = load_source_manifest(self.repo / "sources/team.yaml")
+        self.assertEqual([item.path for item in updated.skills], ["changed-skill", "new-skill", "same-skill"])
+        self.assertEqual([item.path for item in updated.upstream.ignore], ["deleted-skill", "deleted-skill-2", "ignored-skill", "new-skill-2"])
+        self.assertFalse((self.repo / "skills-src/l2/team/deleted-skill").exists())
+        manual = yaml.safe_load((self.repo / "skills-src/l2/team/deleted-skill-2/skill.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(manual["source"], {"kind": "manual"})
+
+    def test_preflight_inventory_must_match_the_single_transaction_plan(self) -> None:
+        from hwskill.source_maintenance import UpdatePolicies, inspect_sources, plan_update_sources, SourceMaintenanceError
+
+        self._source()
+        expected = inspect_sources(self.repo, ("team",), self.git)
+        (self.upstream / "skills" / "new-skill" / "SKILL.md").write_text(
+            "---\nname: new-skill\ndescription: changed after review\n---\n", encoding="utf-8",
+        )
+        original = (self.repo / "sources/team.yaml").read_bytes()
+        with self.assertRaisesRegex(SourceMaintenanceError, "changed after interactive review"):
+            plan_update_sources(
+                self.repo, ("team",), UpdatePolicies("include", "remove"), self.git,
+                expected_inspections=expected,
+            )
+        self.assertEqual((self.repo / "sources/team.yaml").read_bytes(), original)
 
     def test_add_materializes_default_layer_and_ignores_unselected_skill(self) -> None:
         from hwskill.source_maintenance import SourceAddRequest, SourceSelection, plan_add_source

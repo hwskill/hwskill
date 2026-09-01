@@ -7,16 +7,17 @@ from typing import TextIO
 
 from .console_output import format_json, format_maintenance_plan, plan_data
 from .git_source import GitSourceClient, GitSourceError, discover_skills
-from .integrity import IntegrityError
+from .integrity import IntegrityError, check_integrity
 from .maintenance_transaction import TransactionConflictError, TransactionError
 from .skill_maintenance import (
     SkillMaintenanceError, plan_adopt_skill, plan_create_manual, plan_delete_skill,
     plan_manualize_skill, plan_move_skill, plan_rename_skill, plan_update_manual,
 )
-from .source_manifest import SourceDefaults, SourceManifestError, load_all_sources
+from .source_manifest import SourceDefaults, SourceManifestError, is_full_commit_track, load_all_sources
 from .source_maintenance import (
     SourceAddRequest, SourceMaintenanceError, SourceSelection, UpdatePolicies,
-    inspect_source, plan_add_source, plan_delete_source, plan_ignore_change, plan_update_sources,
+    inspect_source, inspect_source_deletion, inspect_sources, plan_add_source, plan_delete_source,
+    plan_ignore_change, plan_update_sources,
 )
 
 
@@ -28,11 +29,11 @@ def register_maintenance_commands(commands) -> None:
     add.add_argument("--track"); add.add_argument("--skills-path"); add.add_argument("--namespace")
     add.add_argument("--layer"); add.add_argument("--license", dest="license_name")
     add.add_argument("--include", action="append"); add.add_argument("--yes", action="store_true"); add.add_argument("--json", action="store_true")
-    check = source_commands.add_parser("check", help="Check upstream source revisions")
+    check = source_commands.add_parser("check", help="Check upstream revisions and local source drift")
     check.add_argument("source_id", nargs="?"); check.add_argument("--all", action="store_true"); check.add_argument("--repo-root"); check.add_argument("--json", action="store_true")
-    update = source_commands.add_parser("update", help="Update upstream source snapshots")
+    update = source_commands.add_parser("update", help="Update upstream snapshots (interactive per-Skill decisions)")
     update.add_argument("source_id", nargs="?"); update.add_argument("--all", action="store_true"); update.add_argument("--repo-root")
-    update.add_argument("--on-added", choices=("include", "ignore", "fail")); update.add_argument("--on-removed", choices=("remove", "manualize", "fail")); update.add_argument("--track"); update.add_argument("--select-track", action="store_true"); update.add_argument("--yes", action="store_true"); update.add_argument("--json", action="store_true")
+    update.add_argument("--on-added", choices=("include", "ignore", "fail"), help="Non-interactive policy for every added Skill"); update.add_argument("--on-removed", choices=("remove", "manualize", "fail"), help="Non-interactive policy for every removed Skill"); update.add_argument("--track", help="Track one source at a full ref or 40-hex commit"); update.add_argument("--select-track", action="store_true", help="Interactively choose a remote ref or enter a 40-hex commit"); update.add_argument("--yes", action="store_true"); update.add_argument("--json", action="store_true")
     adopt = source_commands.add_parser("adopt", help="Adopt an upstream Skill")
     adopt.add_argument("source_id"); adopt.add_argument("skill_id"); adopt.add_argument("--path", required=True); adopt.add_argument("--replace", action="store_true"); adopt.add_argument("--repo-root"); adopt.add_argument("--yes", action="store_true"); adopt.add_argument("--json", action="store_true")
     ignore = source_commands.add_parser("ignore", help="Manage source ignores")
@@ -42,7 +43,7 @@ def register_maintenance_commands(commands) -> None:
         if name != "list": item.add_argument("path"); item.add_argument("--yes", action="store_true")
         item.add_argument("--repo-root"); item.add_argument("--json", action="store_true")
     delete = source_commands.add_parser("delete", help="Delete or manualize a source")
-    delete.add_argument("source_id"); delete.add_argument("--skills", choices=("delete", "manualize")); delete.add_argument("--remove-from-profiles", action="store_true"); delete.add_argument("--repo-root"); delete.add_argument("--yes", action="store_true"); delete.add_argument("--json", action="store_true")
+    delete.add_argument("source_id"); delete.add_argument("--skills", choices=("delete", "manualize"), help="Required non-interactively; interactive mode can choose a policy"); delete.add_argument("--remove-from-profiles", action="store_true"); delete.add_argument("--repo-root"); delete.add_argument("--yes", action="store_true"); delete.add_argument("--json", action="store_true")
 
     skill = commands.choices["skill"]
     skill_commands = next(action for action in skill._actions if isinstance(action, argparse._SubParsersAction))
@@ -158,6 +159,66 @@ def _wizard_add(args, root: Path, git: GitSourceClient, stdin: TextIO, stdout: T
     return plan_add_source(root, request, SourceSelection(tuple(included), ()), git)
 
 
+def _local_source_drift(root: Path, source) -> list[dict[str, str]]:
+    """Return source-owned offline diagnostics without dispatching integrity-check."""
+    managed_roots = {
+        (Path("skills-src") / item.layer / item.skill_id).as_posix()
+        for item in source.skills
+    }
+    manifest_path = (Path("sources") / f"{source.source_id}.yaml").as_posix()
+    diagnostics: list[dict[str, str]] = []
+    for issue in check_integrity(root).issues:
+        belongs_to_source = issue.path == manifest_path or any(
+            issue.path == managed or issue.path.startswith(managed + "/")
+            for managed in managed_roots
+        )
+        is_catalog_drift = issue.path == "registry/catalog.json"
+        if belongs_to_source or is_catalog_drift:
+            diagnostics.append({"path": issue.path, "code": issue.code, "message": issue.message})
+    return diagnostics
+
+
+def _write_interactive_update_deltas(stdout: TextIO, source_id: str, inspection) -> None:
+    stdout.write(f"Source update: {source_id}\n")
+    stdout.write(f"  Added       {len(inspection.added)}\n")
+    stdout.write(f"  Updated     {len(inspection.updated)}\n")
+    stdout.write(f"  Removed     {len(inspection.removed)}\n")
+
+
+def _interactive_update_policies(root: Path, source_ids: tuple[str, ...] | None, git: GitSourceClient, track_overrides: dict[str, str] | None, stdin: TextIO, stdout: TextIO) -> tuple[UpdatePolicies, dict[str, object]]:
+    """Show every delta first, then bind a choice to every mutable path."""
+    inspections = inspect_sources(root, source_ids, git, track_overrides)
+    added: list[tuple[tuple[str, str], str]] = []
+    removed: list[tuple[tuple[str, str], str]] = []
+    for source_id in sorted(inspections):
+        inspection = inspections[source_id]
+        _write_interactive_update_deltas(stdout, source_id, inspection)
+        for item in inspection.added:
+            action = _ask(stdin, stdout, f"Added {source_id}/{item.path} (include/ignore/fail)", "include")
+            if action not in {"include", "ignore", "fail"}:
+                raise UsageError("invalid added Skill update decision")
+            added.append(((source_id, item.path), action))
+        for path in inspection.removed:
+            action = _ask(stdin, stdout, f"Removed {source_id}/{path} (remove/manualize/fail)", "remove")
+            if action not in {"remove", "manualize", "fail"}:
+                raise UsageError("invalid removed Skill update decision")
+            removed.append(((source_id, path), action))
+    # Fail closed if the remote changes between review and the transaction plan.
+    return UpdatePolicies("fail", "fail", tuple(added), tuple(removed)), inspections
+
+
+def _write_source_delete_impact(stdout: TextIO, impact) -> None:
+    stdout.write(f"Source delete: {impact.source_id}\n\n")
+    stdout.write("Skills\n")
+    stdout.write(f"  Managed     {len(impact.skill_ids)}\n")
+    if impact.skill_ids:
+        stdout.write("  IDs         " + ", ".join(impact.skill_ids) + "\n")
+    stdout.write("\nProfiles\n")
+    stdout.write(f"  Referenced  {len(impact.profile_references)}\n")
+    if impact.profile_references:
+        stdout.write("  IDs         " + ", ".join(impact.profile_references) + "\n")
+
+
 def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO, stderr: TextIO, git_client: GitSourceClient | None = None, behavior_verifier=None) -> int | None:
     if args.command not in {"source", "skill"}: return None
     root, git = _root(args, repo_root), git_client or GitSourceClient()
@@ -175,13 +236,21 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
                 rows = []
                 for source in selected:
                     inspection = inspect_source(root, source, git); changed = bool(inspection.added or inspection.updated or inspection.removed or inspection.old_revision != inspection.new_revision)
-                    rows.append({"source_id": source.source_id, "status": "update_available" if changed else "current", "repository": source.upstream.repository, "track": source.upstream.track, "old_revision": inspection.old_revision, "new_revision": inspection.new_revision, "deltas": {"added": [item.path for item in inspection.added], "updated": [item.path for item in inspection.updated], "removed": list(inspection.removed), "ignored": list(inspection.ignored)}, "affected_profiles": [], "affected_tests": []})
-                status = "update_available" if any(row["status"] == "update_available" for row in rows) else "current"
+                    local_drift = _local_source_drift(root, source)
+                    upstream_status = "update_available" if changed else "current"
+                    local_status = "drift" if local_drift else "current"
+                    row_status = "update_available_with_local_drift" if changed and local_drift else ("update_available" if changed else ("local_drift" if local_drift else "current"))
+                    rows.append({"source_id": source.source_id, "status": row_status, "upstream_status": upstream_status, "local_status": local_status, "local_drift": local_drift, "repository": source.upstream.repository, "track": source.upstream.track, "old_revision": inspection.old_revision, "new_revision": inspection.new_revision, "deltas": {"added": [item.path for item in inspection.added], "updated": [item.path for item in inspection.updated], "removed": list(inspection.removed), "ignored": list(inspection.ignored)}, "affected_profiles": [], "affected_tests": []})
+                status = "update_available_with_local_drift" if any(row["status"] == "update_available_with_local_drift" for row in rows) else ("update_available" if any(row["upstream_status"] == "update_available" for row in rows) else ("local_drift" if any(row["local_status"] == "drift" for row in rows) else "current"))
                 data = {"status": status, "sources": rows}
                 if args.json: stdout.write(format_json(data))
                 else:
-                    for row in rows: stdout.write(f"Source check: {row['source_id']}\n\nSource\n  Repository   {row['repository']}\n  Track        {row['track']}\n  Revision     {row['old_revision']} → {row['new_revision']}\n\nSkills\n  Added        {len(row['deltas']['added'])}\n  Updated      {len(row['deltas']['updated'])}\n  Removed      {len(row['deltas']['removed'])}\n\nProfiles\n  Affected     0\n\nTests\n  Affected     0\n")
-                return 1 if status == "update_available" else 0
+                    for row in rows:
+                        stdout.write(f"Source check: {row['source_id']}\n\nSource\n  Repository   {row['repository']}\n  Track        {row['track']}\n  Revision     {row['old_revision']} → {row['new_revision']}\n  Upstream     {row['upstream_status']}\n  Local        {row['local_status']}\n\nSkills\n  Added        {len(row['deltas']['added'])}\n  Updated      {len(row['deltas']['updated'])}\n  Removed      {len(row['deltas']['removed'])}\n")
+                        if row["local_drift"]:
+                            stdout.write("\nLocal drift\n" + "".join(f"  {item['code']:<28} {item['path']}\n" for item in row["local_drift"]))
+                        stdout.write("\nProfiles\n  Affected     0\n\nTests\n  Affected     0\n")
+                return 1 if status != "current" else 0
             if args.source_command == "update":
                 if bool(args.source_id) == bool(args.all): raise UsageError("provide SOURCE_ID or --all")
                 if args.track and (args.all or args.select_track): raise UsageError("--track is only valid for one source")
@@ -199,16 +268,20 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
                         args.track = choices[_select_indices(selected, len(choices))[0]]
                     elif selected in choices:
                         args.track = selected
+                    elif is_full_commit_track(selected):
+                        args.track = selected
                     else:
                         raise UsageError("unknown track selection")
-                if not args.on_added or not args.on_removed:
+                if bool(args.on_added) != bool(args.on_removed): raise UsageError("source update requires both --on-added and --on-removed")
+                selected_ids = None if args.all else (args.source_id,)
+                overrides = {args.source_id: args.track} if args.track else None
+                expected_inspections = None
+                if not args.on_added:
                     if not _interactive(stdin) or args.yes: raise UsageError("source update requires --on-added and --on-removed")
-                    args.on_added = args.on_added or _ask(stdin, interaction, "On added (include/ignore/fail)", "include")
-                    args.on_removed = args.on_removed or _ask(stdin, interaction, "On removed (remove/manualize/fail)", "remove")
-                    if args.on_added not in {"include", "ignore", "fail"} or args.on_removed not in {"remove", "manualize", "fail"}:
-                        raise UsageError("invalid update policy")
-                policies = UpdatePolicies(args.on_added, args.on_removed)
-                plan = plan_update_sources(root, None if args.all else (args.source_id,), policies, git, {args.source_id: args.track} if args.track else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
+                    policies, expected_inspections = _interactive_update_policies(root, selected_ids, git, overrides, stdin, interaction)
+                else:
+                    policies = UpdatePolicies(args.on_added, args.on_removed)
+                plan = plan_update_sources(root, selected_ids, policies, git, overrides, expected_inspections=expected_inspections); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "adopt":
                 plan = plan_adopt_skill(root, args.source_id, args.skill_id, args.path, args.replace, git); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "ignore":
@@ -218,7 +291,17 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
                     data = {"status": "success", "source_id": source.source_id, "ignored": [{"path": item.path, "reason": item.reason} for item in source.upstream.ignore]}; stdout.write(format_json(data) if args.json else "\n".join(f"{item.path:<32} {item.reason}" for item in source.upstream.ignore) + "\n"); return 0
                 plan = plan_ignore_change(root, args.source_id, args.path, args.ignore_command, git if args.ignore_command == "remove" else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "delete":
-                if not args.skills: raise UsageError("source delete requires --skills delete or --skills manualize")
+                if not args.skills:
+                    if not _interactive(stdin): raise UsageError("source delete requires --skills delete or --skills manualize")
+                    impact = inspect_source_deletion(root, args.source_id)
+                    _write_source_delete_impact(interaction, impact)
+                    choice = _ask(stdin, interaction, "Skill policy (delete/manualize/cancel)", "cancel")
+                    if choice == "cancel":
+                        if args.json: stdout.write(format_json({"status": "cancelled", "source_id": args.source_id}))
+                        else: stdout.write("Cancelled.\n")
+                        return 0
+                    if choice not in {"delete", "manualize"}: raise UsageError("invalid source delete policy")
+                    args.skills = choice
                 plan = plan_delete_source(root, args.source_id, args.skills, args.remove_from_profiles); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
         if args.command == "skill":
             if args.skill_command == "create":

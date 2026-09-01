@@ -12,7 +12,7 @@ from hwskill.cli import main
 from hwskill.console_output import format_maintenance_plan, plan_data
 from hwskill.maintenance_transaction import MaintenancePlan, MaintenanceSummary
 from hwskill.git_source import RemoteRefs, ResolvedTrack
-from hwskill.source_manifest import SourceDefaults, UpstreamConfig, UpstreamSource, IgnoredSkill, write_source_manifest, load_source_manifest
+from hwskill.source_manifest import ResolvedSourceSkill, SourceDefaults, UpstreamConfig, UpstreamSource, IgnoredSkill, write_source_manifest, load_source_manifest
 
 
 class FakeGitSourceClient:
@@ -113,12 +113,44 @@ class MaintenanceCliTest(unittest.TestCase):
 
     def test_source_update_interactively_resolves_added_and_removed_policies(self):
         from hwskill.maintenance_cli import run_maintenance_command
+        from hwskill.git_source import DiscoveredSkill
+        from hwskill.source_maintenance import SourceInspection
         plan = SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-update"))
         args = self._update_args(on_added=None, on_removed=None, yes=False)
-        with patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as dispatch, patch("hwskill.maintenance_cli.GitSourceClient"):
+        inspection = SourceInspection("a" * 40, "b" * 40, (DiscoveredSkill("new", "new", "new"),), (), ("gone",), ())
+        with patch("hwskill.maintenance_cli.inspect_sources", return_value={"team": inspection}), patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as dispatch, patch("hwskill.maintenance_cli.GitSourceClient"):
             self.assertEqual(run_maintenance_command(args, self.repo, *self._streams("ignore\nmanualize\ny\n")), 0)
-        self.assertEqual(dispatch.call_args.args[2].on_added, "ignore")
-        self.assertEqual(dispatch.call_args.args[2].on_removed, "manualize")
+        self.assertEqual(dict(dispatch.call_args.args[2].added_decisions), {("team", "new"): "ignore"})
+        self.assertEqual(dict(dispatch.call_args.args[2].removed_decisions), {("team", "gone"): "manualize"})
+
+    def test_source_update_interactively_collects_mixed_per_skill_decisions_for_all_sources(self):
+        """Interactive update decisions are bound to each discovered source path."""
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        for source_id in ("team", "other"):
+            write_source_manifest(
+                self.repo / "sources" / f"{source_id}.yaml",
+                UpstreamSource(
+                    source_id,
+                    UpstreamConfig(f"https://x/{source_id}.git", "refs/heads/main", "library", ()),
+                    SourceDefaults(source_id, "l1", "MIT"),
+                    "a" * 40,
+                    (),
+                ),
+            )
+        plan = SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-update"))
+        args = self._update_args(source_id=None, all=True, on_added=None, on_removed=None, yes=False)
+        # The fake remote contains one and two.  Mix include and ignore for every source.
+        answers = "include\nignore\nignore\ninclude\ny\n"
+        with patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as dispatch:
+            self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answers), self.git), 0)
+
+        policies = dispatch.call_args.args[2]
+        self.assertEqual(
+            dict(policies.added_decisions),
+            {("other", "one"): "include", ("other", "two"): "ignore", ("team", "one"): "ignore", ("team", "two"): "include"},
+        )
+        self.assertEqual(dispatch.call_args.kwargs["expected_inspections"].keys(), {"other", "team"})
 
     def test_source_update_track_override_and_select_track(self):
         from hwskill.maintenance_cli import run_maintenance_command
@@ -164,8 +196,11 @@ class MaintenanceCliTest(unittest.TestCase):
 
     def test_injected_streams_are_used_without_global_input_or_print(self):
         from hwskill.maintenance_cli import run_maintenance_command
+        from hwskill.git_source import DiscoveredSkill
+        from hwskill.source_maintenance import SourceInspection
         args = self._update_args(on_added=None, on_removed=None, yes=False)
-        with patch("builtins.input", side_effect=AssertionError("global input")), patch("builtins.print", side_effect=AssertionError("global print")), patch("hwskill.maintenance_cli.plan_update_sources", return_value=SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-update"))), patch("hwskill.maintenance_cli.GitSourceClient"):
+        inspection = SourceInspection("a" * 40, "b" * 40, (DiscoveredSkill("new", "new", "new"),), (), ("gone",), ())
+        with patch("builtins.input", side_effect=AssertionError("global input")), patch("builtins.print", side_effect=AssertionError("global print")), patch("hwskill.maintenance_cli.inspect_sources", return_value={"team": inspection}), patch("hwskill.maintenance_cli.plan_update_sources", return_value=SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-update"))), patch("hwskill.maintenance_cli.GitSourceClient"):
             self.assertEqual(run_maintenance_command(args, self.repo, *self._streams("include\nremove\ny\n")), 0)
 
     def test_check_and_update_json_snapshot_has_required_fields(self):
@@ -204,7 +239,8 @@ class MaintenanceCliTest(unittest.TestCase):
         from hwskill.maintenance_cli import run_maintenance_command
         write_source_manifest(self.repo / "sources/team.yaml", UpstreamSource("team", UpstreamConfig("https://x/team.git", "refs/heads/main", "library", ()), SourceDefaults("team", "l1", "MIT"), "a" * 40, ()))
         plan = SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-update"))
-        for answer, expected in (("2", "refs/tags/v1"), ("", "refs/heads/main"), ("refs/heads/main", "refs/heads/main")):
+        commit = "d" * 40
+        for answer, expected in (("2", "refs/tags/v1"), ("", "refs/heads/main"), ("refs/heads/main", "refs/heads/main"), (commit, commit)):
             args=self._update_args(select_track=True, yes=True)
             with patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as dispatch:
                 self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 0)
@@ -212,6 +248,46 @@ class MaintenanceCliTest(unittest.TestCase):
         for answer in ("0", "99", "x,y"):
             args=self._update_args(select_track=True, yes=True)
             self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 2)
+
+    def test_source_delete_interactively_shows_impact_then_chooses_policy_or_cancels(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        source = UpstreamSource(
+            "team", UpstreamConfig("https://x/team.git", "refs/heads/main", "library", ()),
+            SourceDefaults("team", "l1", "MIT"), "a" * 40,
+            (ResolvedSourceSkill("one", "team/one", "l1", "sha256:" + "0" * 64),),
+        )
+        write_source_manifest(self.repo / "sources/team.yaml", source)
+        args = SimpleNamespace(command="source", source_command="delete", source_id="team", skills=None, remove_from_profiles=False, repo_root=str(self.repo), yes=False, json=False)
+        plan = SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-manualize"))
+        with patch("hwskill.maintenance_cli.plan_delete_source", return_value=plan) as planner:
+            stdin, stdout, stderr = self._streams("manualize\ny\n")
+            self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        self.assertEqual(planner.call_args.args[2], "manualize")
+        self.assertIn("Managed", stdout.getvalue())
+
+        args.skills = None
+        with patch("hwskill.maintenance_cli.plan_delete_source") as planner:
+            stdin, stdout, stderr = self._streams("cancel\n")
+            self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        planner.assert_not_called()
+        self.assertIn("Cancelled", stdout.getvalue())
+
+    def test_source_check_reports_local_payload_and_catalog_drift_without_remote_change(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+
+        add = self._add_args()
+        self.assertEqual(run_maintenance_command(add, self.repo, *self._streams("https://x/team.git\n\n\n\n\n\n\ny\n"), self.git, self._verifier), 0)
+        (self.repo / "skills-src/l1/team/one/SKILL.md").write_text("---\nname: one\ndescription: altered\n---\n", encoding="utf-8")
+        (self.repo / "registry/catalog.json").write_text("{\"schema_version\": 1, \"skills\": []}\n", encoding="utf-8")
+        args = SimpleNamespace(command="source", source_command="check", source_id="team", all=False, repo_root=str(self.repo), json=True)
+        stdin, stdout, stderr = self._streams(tty=False)
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 1)
+        row = json.loads(stdout.getvalue())["sources"][0]
+        self.assertEqual(row["upstream_status"], "current")
+        self.assertEqual(row["local_status"], "drift")
+        self.assertTrue(any(item["code"].startswith("catalog-") for item in row["local_drift"]))
+        self.assertTrue(any(item["code"].startswith("source-skill-") for item in row["local_drift"]))
 
     def test_interactive_skill_create_json_prompts_only_stderr(self):
         from hwskill.maintenance_cli import run_maintenance_command

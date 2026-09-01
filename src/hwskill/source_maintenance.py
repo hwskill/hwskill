@@ -60,6 +60,23 @@ class SourceInspection:
 class UpdatePolicies:
     on_added: Literal["include", "ignore", "fail"]
     on_removed: Literal["remove", "manualize", "fail"]
+    # Interactive callers bind choices to the source/path inventory they just
+    # displayed.  The scalar fields remain the explicit non-interactive policy.
+    added_decisions: tuple[tuple[tuple[str, str], Literal["include", "ignore", "fail"]], ...] = ()
+    removed_decisions: tuple[tuple[tuple[str, str], Literal["remove", "manualize", "fail"]], ...] = ()
+
+    def added_policy(self, source_id: str, path: str) -> Literal["include", "ignore", "fail"]:
+        return dict(self.added_decisions).get((source_id, path), self.on_added)
+
+    def removed_policy(self, source_id: str, path: str) -> Literal["remove", "manualize", "fail"]:
+        return dict(self.removed_decisions).get((source_id, path), self.on_removed)
+
+
+@dataclass(frozen=True)
+class SourceDeleteImpact:
+    source_id: str
+    skill_ids: tuple[str, ...]
+    profile_references: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -76,6 +93,35 @@ def inspect_source(repo_root: Path, source: UpstreamSource, git_client: GitSourc
     with tempfile.TemporaryDirectory(prefix="hwskill-source-inspection-") as temporary:
         snapshot = _materialize_source(source, git_client, Path(temporary))
         return snapshot.inspection
+
+
+def inspect_sources(
+    repo_root: Path,
+    source_ids: tuple[str, ...] | None,
+    git_client: GitSourceClient,
+    track_overrides: dict[str, str] | None = None,
+) -> dict[str, SourceInspection]:
+    """Read every selected remote inventory before interactive decisions.
+
+    The planner re-materializes all sources before opening its one repository
+    transaction and verifies this inventory has not changed, so a maintainer
+    never approves a different set of paths than the one that is applied.
+    """
+    inspected: dict[str, SourceInspection] = {}
+    for _, original in _selected_sources(Path(repo_root), source_ids):
+        source = original
+        if track_overrides and source.source_id in track_overrides:
+            source = replace(source, upstream=replace(source.upstream, track=track_overrides[source.source_id]))
+        inspected[source.source_id] = inspect_source(repo_root, source, git_client)
+    return inspected
+
+
+def inspect_source_deletion(repo_root: Path, source_id: str) -> SourceDeleteImpact:
+    """Return the local impact needed before choosing a source-delete policy."""
+    root = Path(repo_root)
+    _, source = _find_source(root, source_id)
+    skill_ids = tuple(sorted(item.skill_id for item in source.skills))
+    return SourceDeleteImpact(source_id, skill_ids, _profile_references(root, set(skill_ids)))
 
 
 def plan_add_source(
@@ -152,20 +198,12 @@ def plan_update_sources(
     policies: UpdatePolicies,
     git_client: GitSourceClient,
     track_overrides: dict[str, str] | None = None,
+    *,
+    expected_inspections: dict[str, SourceInspection] | None = None,
 ) -> MaintenancePlan:
     _validate_policies(policies)
     root = Path(repo_root)
-    source_paths = _load_sources_with_paths(root)
-    selected_ids = None if source_ids is None else tuple(source_ids)
-    if selected_ids is not None and len(selected_ids) != len(set(selected_ids)):
-        raise SourceMaintenanceError("duplicate source id")
-    selected = source_paths if selected_ids is None else tuple(
-        item for item in source_paths if item[1].source_id in set(selected_ids)
-    )
-    if selected_ids is not None and {source.source_id for _, source in selected} != set(selected_ids):
-        raise SourceMaintenanceError("unknown source id")
-    if not selected:
-        raise SourceMaintenanceError("no sources selected for update")
+    selected = _selected_sources(root, source_ids)
 
     # Keep every checkout alive until every source has resolved successfully.  This is
     # what makes --all a plan, rather than a sequence of independently applied updates.
@@ -177,14 +215,19 @@ def plan_update_sources(
             checkout = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="hwskill-source-update-")))
             snapshots.append(_materialize_source(source, git_client, checkout))
 
+        if expected_inspections is not None:
+            actual = {snapshot.source.source_id: snapshot.inspection for snapshot in snapshots}
+            if actual != expected_inspections:
+                raise SourceMaintenanceError("source inventory changed after interactive review; rerun source update")
+
         pending_ids: list[str] = []
         for snapshot in snapshots:
-            if snapshot.inspection.added and policies.on_added == "fail":
+            if any(policies.added_policy(snapshot.source.source_id, item.path) == "fail" for item in snapshot.inspection.added):
                 raise SourceMaintenanceError(f"source {snapshot.source.source_id} has added Skills")
-            if snapshot.inspection.removed and policies.on_removed == "fail":
+            if any(policies.removed_policy(snapshot.source.source_id, path) == "fail" for path in snapshot.inspection.removed):
                 raise SourceMaintenanceError(f"source {snapshot.source.source_id} has removed Skills")
             for item in snapshot.inspection.added:
-                if policies.on_added == "include":
+                if policies.added_policy(snapshot.source.source_id, item.path) == "include":
                     pending_ids.append(_infer_skill_id(snapshot.source.defaults, item))
         _assert_new_ids_available(root, pending_ids)
 
@@ -331,9 +374,12 @@ def _stage_source_update(tx: RepositoryTransaction, snapshot: _MaterializedSourc
     discovered = {item.path: item for item in snapshot.discovered}
     ignored = {item.path: item for item in source.upstream.ignore}
     removed = set(snapshot.inspection.removed)
-    included_added = snapshot.inspection.added if policies.on_added == "include" else ()
-    if policies.on_added == "ignore":
-        for item in snapshot.inspection.added:
+    included_added = tuple(
+        item for item in snapshot.inspection.added
+        if policies.added_policy(source.source_id, item.path) == "include"
+    )
+    for item in snapshot.inspection.added:
+        if policies.added_policy(source.source_id, item.path) == "ignore":
             ignored[item.path] = IgnoredSkill(item.path, "ignored on update")
     retained: list[ResolvedSourceSkill] = []
     manualized: list[str] = []
@@ -343,7 +389,7 @@ def _stage_source_update(tx: RepositoryTransaction, snapshot: _MaterializedSourc
         if old.path in removed:
             ignored[old.path] = IgnoredSkill(old.path, "removed upstream")
             destination = _skill_destination(old.layer, old.skill_id)
-            if policies.on_removed == "remove":
+            if policies.removed_policy(source.source_id, old.path) == "remove":
                 tx.delete(destination)
                 deleted.append(old.skill_id)
             else:
@@ -501,6 +547,21 @@ def _load_sources_with_paths(root: Path) -> tuple[tuple[Path, UpstreamSource], .
     return loaded
 
 
+def _selected_sources(root: Path, source_ids: tuple[str, ...] | None) -> tuple[tuple[Path, UpstreamSource], ...]:
+    source_paths = _load_sources_with_paths(root)
+    selected_ids = None if source_ids is None else tuple(source_ids)
+    if selected_ids is not None and len(selected_ids) != len(set(selected_ids)):
+        raise SourceMaintenanceError("duplicate source id")
+    selected = source_paths if selected_ids is None else tuple(
+        item for item in source_paths if item[1].source_id in set(selected_ids)
+    )
+    if selected_ids is not None and {source.source_id for _, source in selected} != set(selected_ids):
+        raise SourceMaintenanceError("unknown source id")
+    if not selected:
+        raise SourceMaintenanceError("no sources selected for update")
+    return selected
+
+
 def _find_source(root: Path, source_id: str) -> tuple[Path, UpstreamSource]:
     for item in _load_sources_with_paths(root):
         if item[1].source_id == source_id:
@@ -607,6 +668,14 @@ def _validate_source_id(source_id: str) -> None:
 def _validate_policies(policies: UpdatePolicies) -> None:
     if policies.on_added not in {"include", "ignore", "fail"} or policies.on_removed not in {"remove", "manualize", "fail"}:
         raise SourceMaintenanceError("invalid update policy")
+    added = dict(policies.added_decisions)
+    removed = dict(policies.removed_decisions)
+    if len(added) != len(policies.added_decisions) or len(removed) != len(policies.removed_decisions):
+        raise SourceMaintenanceError("duplicate per-Skill update decision")
+    if any(not isinstance(key, tuple) or len(key) != 2 or action not in {"include", "ignore", "fail"} for key, action in policies.added_decisions):
+        raise SourceMaintenanceError("invalid added Skill update decision")
+    if any(not isinstance(key, tuple) or len(key) != 2 or action not in {"remove", "manualize", "fail"} for key, action in policies.removed_decisions):
+        raise SourceMaintenanceError("invalid removed Skill update decision")
 
 
 def _load_yaml(path: Path) -> object:

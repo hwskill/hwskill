@@ -194,7 +194,9 @@ hwskill integrity-check --repo-root .
 hwskill test affected --base HEAD^ --runner docker
 ```
 
-`source update` 的新增、删除与覆盖策略必须显式选择；固定 tag 如果被移动会作为错误报告，不会静默更新。
+交互式 `source update` 会先显示全部选中 source 的 delta，并对每个新增或删除 Skill 分别选择处理方式；`--select-track` 除远端 branch/tag 外也接受完整 40 位 commit SHA。非交互（包括带 `--yes` 的脚本调用）必须用 `--on-added` 与 `--on-removed` 明确统一策略。固定 tag 如果被移动会作为错误报告，不会静默更新。`source check` 同时区分远端可用更新与本地已纳管快照、governance、Catalog 漂移；它是只读报告，不会执行 CLI `integrity-check`。
+
+省略 `--skills` 的交互式 `source delete <source-id>` 会先展示纳管 Skill 和 Profile 引用，再选择 delete、manualize 或 cancel；非交互调用必须显式传入 `--skills`。
 
 维护流程依次为 `source check` / `source update`、离线完整性检查、再执行受影响的行为验证。
 `registry validate` 是聚焦于逐个 Skill 及其 registry 治理信息的校验；它是

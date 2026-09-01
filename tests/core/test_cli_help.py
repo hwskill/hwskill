@@ -58,8 +58,8 @@ class CliHelpTest(unittest.TestCase):
             },
             ("source",): {
                 "add": "Add an upstream source",
-                "check": "Check upstream source revisions",
-                "update": "Update upstream source snapshots",
+                "check": "Check upstream revisions and local source drift",
+                "update": "Update upstream snapshots (interactive per-Skill decisions)",
                 "adopt": "Adopt an upstream Skill",
             },
             ("adapter",): {
