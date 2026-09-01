@@ -8,6 +8,7 @@ integrity tasks; the inventory here is their common, safe traversal boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
@@ -23,12 +24,13 @@ from .profiles import ProfileDefinition, _lock_data
 from .source_manifest import load_source_manifest
 
 
-# Repository-owned bindings may live at the root or in checked-in project trees
-# such as examples/.  Generated and tool-owned directories are never projects.
-_REPOSITORY_PROFILE_SCAN_IGNORED_DIRECTORY_NAMES = frozenset({
-    ".git", ".venv", ".superpowers", "__pycache__",
+# Repository-owned bindings may live in checked-in project trees such as
+# examples/.  This offline default mirrors the repository's generated-directory
+# ignore policy without consulting Git metadata or requiring a .gitignore file.
+_REPOSITORY_PROFILE_SCAN_EXCLUDED_DIRECTORY_PATTERNS = frozenset({
+    "__pycache__", ".venv", ".runtime-deps", ".worktrees", "artifacts",
+    "build", "*.egg-info", ".git", ".superpowers",
 })
-_REPOSITORY_PROFILE_SCAN_IGNORED_TOP_LEVEL = frozenset({"artifacts"})
 
 
 @dataclass(frozen=True, order=True)
@@ -240,10 +242,7 @@ def _inventory_repository_profile_pairs(
         retained_directories = []
         for name in directories:
             candidate = current_path / name
-            if (
-                name in _REPOSITORY_PROFILE_SCAN_IGNORED_DIRECTORY_NAMES
-                or (current_path == root and name in _REPOSITORY_PROFILE_SCAN_IGNORED_TOP_LEVEL)
-            ):
+            if _is_excluded_repository_profile_directory(name):
                 continue
             if _path_components_are_safe(root, candidate, issues):
                 retained_directories.append(name)
@@ -260,6 +259,13 @@ def _inventory_repository_profile_pairs(
         )
         if profile is not None or lock is not None:
             yield profile, profile_regular, lock, lock_regular
+
+
+def _is_excluded_repository_profile_directory(name: str) -> bool:
+    return any(
+        fnmatchcase(name, pattern)
+        for pattern in _REPOSITORY_PROFILE_SCAN_EXCLUDED_DIRECTORY_PATTERNS
+    )
 
 
 def _repository_binding_file(
