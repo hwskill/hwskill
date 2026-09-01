@@ -7,7 +7,11 @@ from pathlib import Path
 import shutil
 import stat
 import tempfile
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, Mapping
+
+if TYPE_CHECKING:
+    from .pending_verification import VerificationResult
+    from .test_impact import TestSelection
 
 
 MANAGED_ROOTS = ("sources", "skills-src", "profiles", "registry", "tests")
@@ -38,9 +42,39 @@ class MaintenanceSummary:
 class MaintenancePlan:
     transaction: "RepositoryTransaction"
     summary: MaintenanceSummary
+    selection: "TestSelection | None" = None
+    candidate_digests: Mapping[str, str] = ()
+    verify_affected: Callable[["TestSelection"], "VerificationResult"] | None = None
 
-    def apply(self) -> None:
-        self.transaction.apply()
+    def apply(self, *, skip_tests: bool = False) -> None:
+        """Apply only after behavior evidence, or record an explicit local debt.
+
+        For ``skip_tests``, the gitdir state is durably prepared before the
+        repository transaction starts and atomically published only after it
+        succeeds. A publish failure is raised to the caller and therefore can
+        never silently present applied changes as verified.
+        """
+        prepared = None
+        if self.selection is not None and self.selection.required_case_ids:
+            if skip_tests:
+                from .pending_verification import prepare_pending_verification
+                prepared = prepare_pending_verification(
+                    self.transaction.repo_root, self.selection, dict(self.candidate_digests),
+                )
+            else:
+                if self.verify_affected is None:
+                    raise TransactionError("affected tests must be verified before applying")
+                result = self.verify_affected(self.selection)
+                if not _verification_passes(self.selection, self.candidate_digests, result):
+                    raise TransactionError("affected tests did not provide exact PASS evidence")
+        try:
+            self.transaction.apply()
+            if prepared is not None:
+                prepared.publish()
+        except BaseException:
+            if prepared is not None:
+                prepared.discard()
+            raise
 
 
 @dataclass(frozen=True)
@@ -60,10 +94,26 @@ def validated_plan(
     transaction: "RepositoryTransaction",
     summary: MaintenanceSummary,
     validate: Validate,
+    *,
+    selection: "TestSelection | None" = None,
+    candidate_digests: Mapping[str, str] = (),
+    verify_affected: Callable[["TestSelection"], "VerificationResult"] | None = None,
 ) -> MaintenancePlan:
     """Close a failed candidate before exposing a maintenance plan."""
     transaction.validate(validate)
-    return MaintenancePlan(transaction, summary)
+    return MaintenancePlan(transaction, summary, selection, candidate_digests, verify_affected)
+
+
+def _verification_passes(
+    selection: "TestSelection",
+    expected_digests: Mapping[str, str],
+    result: "VerificationResult",
+) -> bool:
+    return (
+        result.selection == selection
+        and tuple(sorted(result.digests.items())) == tuple(sorted(expected_digests.items()))
+        and all(dict(result.case_statuses).get(case_id) == "PASS" for case_id in selection.required_case_ids)
+    )
 
 
 @dataclass

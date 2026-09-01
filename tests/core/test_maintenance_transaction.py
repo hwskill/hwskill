@@ -13,6 +13,9 @@ from hwskill.maintenance_transaction import (
     TransactionError,
     validated_plan,
 )
+from hwskill.pending_verification import VerificationResult
+from hwskill.pending_verification import load_pending_verification
+from hwskill.test_impact import TestSelection
 
 
 ROOT = Path(__file__).parents[2]
@@ -158,6 +161,56 @@ class RepositoryTransactionTest(unittest.TestCase):
         self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
         with self.assertRaisesRegex(TransactionError, "discarded"):
             tx.apply()
+
+    def test_plan_with_affected_tests_rejects_apply_without_pass_evidence(self) -> None:
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        selection = TestSelection(skill_ids=("local/example",))
+        plan = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={"local/example": "sha256:new"},
+        )
+
+        with self.assertRaisesRegex(TransactionError, "affected tests must be verified"):
+            plan.apply()
+
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
+    def test_plan_accepts_exact_pass_evidence_before_apply(self) -> None:
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        selection = TestSelection(skill_ids=("local/example",))
+        evidence = VerificationResult(
+            selection, {"local/example": "sha256:new"}, (("skill:local/example", "PASS"),),
+        )
+        plan = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={"local/example": "sha256:new"},
+            verify_affected=lambda _: evidence,
+        )
+
+        plan.apply()
+
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "candidate source\n")
+
+    def test_skip_tests_publishes_pending_state_only_after_candidate_apply(self) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+        selection = TestSelection(skill_ids=("local/example",), changed_paths=("sources/a.yaml",))
+        plan = validated_plan(
+            tx, MaintenanceSummary("test"), lambda root: None,
+            selection=selection, candidate_digests={"local/example": "sha256:new"},
+        )
+
+        plan.apply(skip_tests=True)
+
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "candidate source\n")
+        pending = load_pending_verification(self.repo)
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.selection, selection)
 
     def test_validate_runs_only_while_active_and_keeps_a_clean_candidate_applicable(self) -> None:
         """A successful validation is a planning gate, not a second apply lifecycle."""
