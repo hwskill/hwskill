@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -20,6 +21,12 @@ class TestManifestTest(unittest.TestCase):
         path = self.repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        return path
+
+    def write_raw_manifest(self, text: str) -> Path:
+        path = self.repo / "tests/skills/team/review/test.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
         return path
 
     def skill_manifest(self, cases: list[dict], **overrides: object) -> Path:
@@ -117,6 +124,128 @@ class TestManifestTest(unittest.TestCase):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(TestManifestError, message):
                     load_test_collection(path, self.repo)
+
+    def test_rejects_duplicate_yaml_keys_at_every_schema_level(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        manifests = {
+            "schema_version": """
+                schema_version: 1
+                schema_version: 1
+                target: {kind: skill, id: team/review}
+                cases: []
+            """,
+            "id": """
+                schema_version: 1
+                target:
+                  kind: skill
+                  id: team/review
+                  id: team/review
+                cases: []
+            """,
+            "case id": """
+                schema_version: 1
+                target: {kind: skill, id: team/review}
+                cases:
+                  - id: review
+                    id: review
+                    steps: [{type: command, command: 'true'}]
+                    post_check: {type: command, command: 'true'}
+            """,
+            "command": """
+                schema_version: 1
+                target: {kind: skill, id: team/review}
+                cases:
+                  - id: review
+                    steps:
+                      - type: command
+                        command: first
+                        command: second
+                    post_check: {type: command, command: 'true'}
+            """,
+        }
+        for key, text in manifests.items():
+            path = self.write_raw_manifest(text)
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(TestManifestError, f"{path}.*{key.split()[-1]}"):
+                    load_test_collection(path, self.repo)
+
+    def test_rejects_yaml_merge_keys_before_they_can_bypass_duplicate_key_validation(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        path = self.write_raw_manifest("""
+            schema_version: 1
+            target: {kind: skill, id: team/review}
+            defaults: &command
+              type: command
+              command: 'true'
+            cases:
+              - id: review
+                steps:
+                  - <<: *command
+                post_check: {type: command, command: 'true'}
+        """)
+
+        with self.assertRaisesRegex(TestManifestError, f"{path}.*merge"):
+            load_test_collection(path, self.repo)
+
+    def test_existing_fixtures_must_be_a_symlink_free_directory(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        path = self.skill_manifest([])
+        fixtures = path.parent / "fixtures"
+        external = Path(self.temp.name) / "external-fixtures"
+        external.mkdir()
+
+        fixtures.symlink_to(external, target_is_directory=True)
+        with self.assertRaisesRegex(TestManifestError, "fixtures.*symlink"):
+            load_test_collection(path, self.repo)
+        fixtures.unlink()
+
+        fixtures.write_text("not a directory", encoding="utf-8")
+        with self.assertRaisesRegex(TestManifestError, "fixtures.*directory"):
+            load_test_collection(path, self.repo)
+        fixtures.unlink()
+
+        os.mkfifo(fixtures)
+        with self.assertRaisesRegex(TestManifestError, "fixtures.*directory"):
+            load_test_collection(path, self.repo)
+        fixtures.unlink()
+
+        fixtures.mkdir()
+        (fixtures / "nested").mkdir()
+        (fixtures / "nested" / "outside").symlink_to(external, target_is_directory=True)
+        with self.assertRaisesRegex(TestManifestError, "fixtures.*symlink"):
+            load_test_collection(path, self.repo)
+
+    def test_scalar_schema_fields_reject_list_mapping_and_null_as_manifest_errors(self) -> None:
+        from hwskill.test_manifest import TestManifestError, load_test_collection
+
+        malformed = (
+            lambda value: {"schema_version": value},
+            lambda value: {"target": {"kind": value, "id": "team/review"}},
+            lambda value: {"target": {"kind": "skill", "id": value}},
+            lambda value: {"cases": [self.valid_case(id=value)]},
+            lambda value: {"cases": [self.valid_case(description=value)]},
+            lambda value: {"cases": [self.valid_case(workdir=value)]},
+            lambda value: {"cases": [self.valid_case(steps=[{"id": value, "type": "command", "command": "true"}])]},
+            lambda value: {"cases": [self.valid_case(steps=[{"type": value, "command": "true"}])]},
+            lambda value: {"cases": [self.valid_case(steps=[{"type": "command", "workdir": value, "command": "true"}])]},
+            lambda value: {"cases": [self.valid_case(steps=[{"type": "command", "command": value}])]},
+            lambda value: {"cases": [self.valid_case(steps=[{"type": "agent", "prompt": value}])]},
+        )
+        for build in malformed:
+            for value in ([], {"bad": "value"}, None):
+                data: dict[str, object] = {
+                    "schema_version": 1,
+                    "target": {"kind": "skill", "id": "team/review"},
+                    "cases": [self.valid_case()],
+                }
+                data.update(build(value))
+                path = self.write_manifest("tests/skills/team/review/test.yaml", data)
+                with self.subTest(build=build, value=value):
+                    with self.assertRaises(TestManifestError):
+                        load_test_collection(path, self.repo)
 
     def test_rejects_duplicate_case_and_action_ids_across_case_sections(self) -> None:
         from hwskill.test_manifest import TestManifestError, load_test_collection

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path, PurePosixPath
+import stat
 from typing import Any, Literal, TypeAlias
 
 import yaml
@@ -12,6 +13,38 @@ import yaml
 
 class TestManifestError(ValueError):
     """Raised when a declarative test collection is not schema-safe."""
+
+
+class _YamlMappingKeyError(yaml.YAMLError):
+    """Internal parser error for ambiguous YAML mappings."""
+
+
+class _ManifestLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_unique_mapping(
+    loader: _ManifestLoader,
+    node: yaml.MappingNode,
+    deep: bool = False,
+) -> dict[str, Any]:
+    mapping: dict[str, Any] = {}
+    for key_node, value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge" or key_node.value == "<<":
+            raise _YamlMappingKeyError("YAML merge key '<<' is not allowed")
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str):
+            raise _YamlMappingKeyError("YAML mapping key must be a string")
+        if key in mapping:
+            raise _YamlMappingKeyError(f"duplicate YAML mapping key: {key}")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_ManifestLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
 
 
 @dataclass(frozen=True)
@@ -62,7 +95,9 @@ def load_test_collection(path: Path, repo_root: Path) -> TestCollection:
     if not manifest_path.is_file():
         raise TestManifestError(f"test manifest must be a regular file: {manifest_path}")
     try:
-        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        data = yaml.load(manifest_path.read_text(encoding="utf-8"), Loader=_ManifestLoader)
+    except _YamlMappingKeyError as exc:
+        raise TestManifestError(f"{manifest_path}: {exc}") from exc
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise TestManifestError(f"cannot read test manifest {manifest_path}: {exc}") from exc
 
@@ -77,11 +112,13 @@ def load_test_collection(path: Path, repo_root: Path) -> TestCollection:
         raise TestManifestError("test manifest cases must be a list")
     cases = tuple(_parse_case(item, index + 1) for index, item in enumerate(cases_data))
     _validate_unique((case.case_id for case in cases), "case id")
+    fixtures_dir = manifest_path.parent / "fixtures"
+    _validate_fixtures_dir(fixtures_dir, root)
     return TestCollection(
         manifest_path=manifest_path,
         target=target,
         cases=cases,
-        fixtures_dir=manifest_path.parent / "fixtures",
+        fixtures_dir=fixtures_dir,
     )
 
 
@@ -108,7 +145,7 @@ def _parse_target(value: Any) -> TestTarget:
     data = _mapping(value, "target")
     _exact_keys(data, {"kind", "id"}, "target")
     kind = data["kind"]
-    if kind not in {"skill", "profile"}:
+    if not isinstance(kind, str) or kind not in {"skill", "profile"}:
         raise TestManifestError("target.kind must be skill or profile")
     return TestTarget(kind=kind, target_id=_nonempty_string(data["id"], "target.id"))
 
@@ -153,6 +190,8 @@ def _parse_action(value: Any, default_id: str, location: str) -> TestAction:
     data = _mapping(value, f"action {location}")
     action_type = data.get("type")
     allowed: set[str]
+    if not isinstance(action_type, str):
+        raise TestManifestError(f"action {location} type must be command or agent")
     if action_type == "command":
         allowed = {"id", "type", "workdir", "command"}
     elif action_type == "agent":
@@ -252,7 +291,7 @@ def _safe_repo_path(path: Path, root: Path, label: str, *, require_exists: bool 
     for part in relative.parts:
         current /= part
         if current.is_symlink():
-            raise TestManifestError(f"symlink is not allowed for {label}: {current}")
+            raise TestManifestError(f"{label} must not include a symlink: {current}")
     if require_exists and not candidate.exists():
         raise TestManifestError(f"{label} does not exist: {candidate}")
     return candidate
@@ -263,7 +302,32 @@ def _reject_symlink_ancestors(path: Path, label: str) -> None:
     for part in path.parts[1:]:
         current /= part
         if current.is_symlink():
-            raise TestManifestError(f"symlink is not allowed for {label}: {current}")
+            raise TestManifestError(f"{label} must not include a symlink: {current}")
+
+
+def _validate_fixtures_dir(fixtures_dir: Path, root: Path) -> None:
+    fixtures_dir = _safe_repo_path(fixtures_dir, root, "fixtures", require_exists=False)
+    try:
+        mode = os.lstat(fixtures_dir).st_mode
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise TestManifestError(f"cannot inspect fixtures directory {fixtures_dir}: {exc}") from exc
+    if not stat.S_ISDIR(mode):
+        raise TestManifestError(f"fixtures must be a real directory: {fixtures_dir}")
+
+    def visit(directory: Path) -> None:
+        try:
+            entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+        except OSError as exc:
+            raise TestManifestError(f"cannot scan fixtures directory {directory}: {exc}") from exc
+        for entry in entries:
+            if entry.is_symlink():
+                raise TestManifestError(f"fixtures must not contain a symlink: {entry.path}")
+            if entry.is_dir(follow_symlinks=False):
+                visit(Path(entry.path))
+
+    visit(fixtures_dir)
 
 
 def _mapping(value: Any, location: str) -> dict[str, Any]:
