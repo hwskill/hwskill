@@ -84,6 +84,14 @@ class MaintenanceCliTest(unittest.TestCase):
         stdin.isatty = lambda: tty; stdout.isatty = lambda: False
         return stdin, stdout, stderr
 
+    @staticmethod
+    def _verifier(selection):
+        from hwskill.pending_verification import VerificationResult
+        return VerificationResult(
+            selection, dict(selection.digests),
+            tuple((case_id, "PASS") for case_id in selection.required_case_ids),
+        )
+
     def _update_args(self, **changes):
         values = dict(command="source", source_command="update", source_id="team", all=False, repo_root=str(self.repo), on_added="include", on_removed="remove", track=None, select_track=False, yes=True, json=True)
         values.update(changes); return SimpleNamespace(**values)
@@ -172,7 +180,7 @@ class MaintenanceCliTest(unittest.TestCase):
     def test_source_add_wizard_defaults_to_repo_name_default_branch_detected_skills_path_and_all_skills(self):
         from hwskill.maintenance_cli import run_maintenance_command
         args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/team.git\n\n\n\n\n\n\ny\n")
-        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0, stderr.getvalue() + stdout.getvalue())
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0, stderr.getvalue() + stdout.getvalue())
         source = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual((source.source_id, source.upstream.track, source.upstream.skills_path), ("team", "refs/heads/main", "library")); self.assertEqual(len(source.skills), 2)
 
@@ -189,7 +197,7 @@ class MaintenanceCliTest(unittest.TestCase):
     def test_interactive_source_add_json_is_stdout_only(self):
         from hwskill.maintenance_cli import run_maintenance_command
         args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/json.git\n\n\n\n\n\n\ny\n")
-        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0)
         payload = json.loads(stdout.getvalue()); self.assertTrue(payload["sources"][0]["deltas"]); self.assertIn("Git repository URL", stderr.getvalue())
 
     def test_select_track_numeric_blank_typed_and_invalid(self):
@@ -225,18 +233,18 @@ class MaintenanceCliTest(unittest.TestCase):
         from hwskill.maintenance_cli import run_maintenance_command
         single = Path(self.temp.name) / "only-remote"; payload = single / "skills" / "only"; payload.mkdir(parents=True); (payload / "SKILL.md").write_text("---\nname: only\ndescription: only\n---\n")
         args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/only.git\n\n\n\n\n\n\ny\n")
-        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, FakeGitSourceClient(single)), 0)
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, FakeGitSourceClient(single), self._verifier), 0)
         source = load_source_manifest(self.repo / "sources/only.yaml")
         self.assertEqual((source.upstream.skills_path, len(source.skills), source.skills[0].path), ("skills", 1, "only")); self.assertTrue((self.repo / "skills-src/l1/only/only/SKILL.md").exists())
 
     def test_real_source_update_json_applies_details_and_catalog(self):
         from hwskill.maintenance_cli import run_maintenance_command
         add = self._add_args(); stdin, stdout, stderr = self._streams("https://x/team.git\n\n\n\n\n\n\ny\n")
-        self.assertEqual(run_maintenance_command(add, self.repo, stdin, stdout, stderr, self.git), 0)
+        self.assertEqual(run_maintenance_command(add, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0)
         (self.remote / "library" / "one" / "SKILL.md").write_text("---\nname: one\ndescription: changed\n---\n", encoding="utf-8")
         args = self._update_args()
         stdin, stdout, stderr = self._streams()
-        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0)
         payload = json.loads(stdout.getvalue()); row = payload["sources"][0]
         self.assertEqual((row["repository"], row["track"]), ("https://x/team.git", "refs/heads/main")); self.assertIsNotNone(row["old_revision"]); self.assertIsNotNone(row["new_revision"]); self.assertIn("updated", row["deltas"])
         self.assertTrue((self.repo / "registry/catalog.json").is_file())
@@ -245,13 +253,13 @@ class MaintenanceCliTest(unittest.TestCase):
         from hwskill.maintenance_cli import run_maintenance_command
         write_source_manifest(self.repo / "sources/team.yaml", UpstreamSource("team", UpstreamConfig("https://x/old.git", "refs/heads/main", "library", ()), SourceDefaults("old", "l1", "MIT"), "a" * 40, ()))
         args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/team.git\nteam2\n\n\n\n\n\n\ny\n")
-        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0, stderr.getvalue() + stdout.getvalue())
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0, stderr.getvalue() + stdout.getvalue())
         self.assertTrue((self.repo / "sources/team2.yaml").exists())
 
     def test_source_add_unselected_skills_become_ignored_and_prompts_layer_license(self):
         from hwskill.maintenance_cli import run_maintenance_command
         args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/team.git\n\n\n2\nspace\nl2\nApache-2.0\ny\n")
-        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0, stderr.getvalue() + stdout.getvalue())
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git, self._verifier), 0, stderr.getvalue() + stdout.getvalue())
         source = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual(source.defaults.layer, "l2"); self.assertEqual(source.defaults.license, "Apache-2.0"); self.assertEqual([item.path for item in source.upstream.ignore], ["one"])
 

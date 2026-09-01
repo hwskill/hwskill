@@ -46,7 +46,12 @@ class MaintenancePlan:
     candidate_digests: Mapping[str, str] = ()
     verify_affected: Callable[["TestSelection"], "VerificationResult"] | None = None
 
-    def apply(self, *, skip_tests: bool = False) -> None:
+    def apply(
+        self,
+        *,
+        skip_tests: bool = False,
+        verifier: Callable[["TestSelection"], "VerificationResult"] | None = None,
+    ) -> None:
         """Apply only after behavior evidence, or record an explicit local debt.
 
         For ``skip_tests``, the gitdir state is durably prepared before the
@@ -62,15 +67,14 @@ class MaintenancePlan:
                     self.transaction.repo_root, self.selection, dict(self.candidate_digests),
                 )
             else:
-                if self.verify_affected is None:
+                effective_verifier = verifier or self.verify_affected
+                if effective_verifier is None:
                     raise TransactionError("affected tests must be verified before applying")
-                result = self.verify_affected(self.selection)
+                result = effective_verifier(self.selection)
                 if not _verification_passes(self.selection, self.candidate_digests, result):
                     raise TransactionError("affected tests did not provide exact PASS evidence")
         try:
-            self.transaction.apply()
-            if prepared is not None:
-                prepared.publish()
+            self.transaction.apply(finalize=prepared.publish if prepared is not None else None)
         except BaseException:
             if prepared is not None:
                 prepared.discard()
@@ -215,13 +219,15 @@ class RepositoryTransaction:
             if not any(parent != path and parent in replaced_directories for parent in path.parents)
         )
 
-    def apply(self) -> None:
+    def apply(self, *, finalize: Callable[[], None] | None = None) -> None:
         self._require_active()
         if self._validate is not None:
             self.validate(self._validate)
         targets = self.changed_paths()
         self._assert_preimages(targets)
         if not targets:
+            if finalize is not None:
+                finalize()
             self._state = "applied"
             return
 
@@ -268,6 +274,14 @@ class RepositoryTransaction:
                     if rollback_error is not None:
                         raise TransactionError("transaction failed and rollback was incomplete") from rollback_error
                     raise
+                if finalize is not None:
+                    try:
+                        finalize()
+                    except BaseException:
+                        rollback_error = self._rollback(applied, backup_root, recovered_roots)
+                        if rollback_error is not None:
+                            raise TransactionError("transaction finalization failed and rollback was incomplete") from rollback_error
+                        raise
             finally:
                 for handle in handles:
                     os.close(handle.parent_fd)

@@ -11,6 +11,7 @@ from hwskill.test_impact import (
     ImpactProfile,
     ImpactSkill,
     NameStatus,
+    TestSelection,
     select_affected_tests,
     select_from_changes,
 )
@@ -90,6 +91,22 @@ class TestImpactSelection(unittest.TestCase):
         self.assertFalse(selection.core)
         self.assertEqual(selection.skill_ids, ())
         self.assertEqual(selection.profile_ids, ())
+
+    def test_layer_only_rename_with_same_identity_and_digest_selects_nothing(self) -> None:
+        moved = ImpactInventory(
+            skills=(ImpactSkill("team/review", "skills-src/l2/team/review", "sha256:old", "l2"),),
+            profiles=(ImpactProfile("review-workflow", ("team/review",)),),
+        )
+        selection = select_from_changes(
+            self.before, moved,
+            (NameStatus("R100", "skills-src/l1/team/review/SKILL.md", "skills-src/l2/team/review/SKILL.md"),),
+        )
+        self.assertEqual(selection.skill_ids, ())
+        self.assertEqual(selection.profile_ids, ())
+
+    def test_core_is_a_required_pass_target(self) -> None:
+        selection = TestSelection(core=True)
+        self.assertEqual(selection.required_case_ids, ("core",))
 
     def test_test_fixture_and_runtime_changes_have_exact_targets(self) -> None:
         fixture = select_from_changes(self.before, self.before, (NameStatus("M", "tests/skills/team/review/fixtures/input.txt"),))

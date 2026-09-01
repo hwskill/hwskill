@@ -8,6 +8,7 @@ import unittest
 import yaml
 
 from hwskill.digest import content_digest
+from hwskill.pending_verification import VerificationResult
 from hwskill.git_source import GitSourceError, ResolvedTrack
 from hwskill.source_manifest import (
     IgnoredSkill,
@@ -56,6 +57,12 @@ class SourceMaintenanceTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def apply_verified(self, plan: object) -> None:
+        plan.verify_affected = lambda selection: VerificationResult(
+            selection, dict(plan.candidate_digests), tuple((case_id, "PASS") for case_id in selection.required_case_ids),
+        )
+        plan.apply()
 
     def _upstream_skill(self, path: str, name: str, body: str) -> Path:
         skill = self.upstream / "skills" / path
@@ -142,7 +149,8 @@ class SourceMaintenanceTest(unittest.TestCase):
         plan = plan_update_sources(
             self.repo, ("team",), UpdatePolicies("include", "remove"), self.git,
         )
-        plan.apply()
+        self.assertEqual(plan.selection.skill_ids, ("team/changed-skill", "team/new-skill"))
+        self.apply_verified(plan)
 
         source = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual(source.resolved_revision, "b" * 40)
@@ -166,7 +174,7 @@ class SourceMaintenanceTest(unittest.TestCase):
         plan = plan_add_source(
             self.repo, request, SourceSelection(("new-skill",), ("ignored-skill",)), self.git,
         )
-        plan.apply()
+        self.apply_verified(plan)
 
         source = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual(source.skills[0].skill_id, "team/new-skill")
@@ -185,7 +193,7 @@ class SourceMaintenanceTest(unittest.TestCase):
             "team", "https://team.example/team.git", "refs/tags/v1", "skills", SourceDefaults("team", "l2", "MIT"),
         )
         plan = plan_add_source(self.repo, request, SourceSelection(("new-skill",), ()), self.git)
-        plan.apply()
+        self.apply_verified(plan)
 
         self.assertEqual(load_source_manifest(self.repo / "sources/team.yaml").resolved_revision, "b" * 40)
 

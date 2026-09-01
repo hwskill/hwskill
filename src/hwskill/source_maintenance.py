@@ -15,6 +15,7 @@ from .digest import content_digest
 from .git_source import DiscoveredSkill, GitSourceClient, GitSourceError, ResolvedTrack, discover_skills, verify_existing_tag
 from .integrity import require_integrity
 from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction, validated_plan
+from .test_impact import load_impact_inventory, select_from_changes
 from . import registry as registry_module
 from .source_manifest import (
     IgnoredSkill,
@@ -402,7 +403,13 @@ def _transaction(root: Path) -> RepositoryTransaction:
 
 
 def _validated_plan(tx: RepositoryTransaction, summary: MaintenanceSummary) -> MaintenancePlan:
-    return validated_plan(tx, summary, require_integrity)
+    pre = load_impact_inventory(tx.repo_root)
+    post = load_impact_inventory(tx.candidate_root)
+    selection = select_from_changes(pre, post, tx.changed_paths())
+    return validated_plan(
+        tx, summary, require_integrity,
+        selection=selection, candidate_digests=dict(selection.digests),
+    )
 
 
 def _stage_source_manifest(tx: RepositoryTransaction, source: UpstreamSource) -> None:

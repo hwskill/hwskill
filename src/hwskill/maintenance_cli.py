@@ -110,8 +110,11 @@ def _confirm(args, stdin: TextIO, stdout: TextIO) -> None:
     if _ask(stdin, stdout, "Apply these changes? [y/N]", "n").lower() not in {"y", "yes"}: raise UsageError("cancelled")
 
 
-def _emit(plan, args, stdout: TextIO) -> int:
-    plan.apply()
+def _emit(plan, args, stdout: TextIO, behavior_verifier=None) -> int:
+    if behavior_verifier is None:
+        plan.apply()
+    else:
+        plan.apply(verifier=behavior_verifier)
     stdout.write(format_json(plan_data(plan)) if args.json else format_maintenance_plan(plan, color=stdout.isatty()))
     return 0
 
@@ -155,7 +158,7 @@ def _wizard_add(args, root: Path, git: GitSourceClient, stdin: TextIO, stdout: T
     return plan_add_source(root, request, SourceSelection(tuple(included), ()), git)
 
 
-def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO, stderr: TextIO, git_client: GitSourceClient | None = None) -> int | None:
+def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO, stderr: TextIO, git_client: GitSourceClient | None = None, behavior_verifier=None) -> int | None:
     if args.command not in {"source", "skill"}: return None
     root, git = _root(args, repo_root), git_client or GitSourceClient()
     try:
@@ -164,7 +167,7 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
         if is_write and not _interactive(stdin) and not args.yes: raise UsageError("non-interactive writes require --yes")
         if args.command == "source":
             if args.source_command == "add":
-                plan = _wizard_add(args, root, git, stdin, interaction); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
+                plan = _wizard_add(args, root, git, stdin, interaction); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "check":
                 if bool(args.source_id) == bool(args.all): raise UsageError("provide SOURCE_ID or --all")
                 sources = load_all_sources(root); selected = sources if args.all else tuple(source for source in sources if source.source_id == args.source_id)
@@ -205,18 +208,18 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
                     if args.on_added not in {"include", "ignore", "fail"} or args.on_removed not in {"remove", "manualize", "fail"}:
                         raise UsageError("invalid update policy")
                 policies = UpdatePolicies(args.on_added, args.on_removed)
-                plan = plan_update_sources(root, None if args.all else (args.source_id,), policies, git, {args.source_id: args.track} if args.track else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
+                plan = plan_update_sources(root, None if args.all else (args.source_id,), policies, git, {args.source_id: args.track} if args.track else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "adopt":
-                plan = plan_adopt_skill(root, args.source_id, args.skill_id, args.path, args.replace, git); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
+                plan = plan_adopt_skill(root, args.source_id, args.skill_id, args.path, args.replace, git); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "ignore":
                 source = next((source for source in load_all_sources(root) if source.source_id == args.source_id), None)
                 if source is None: raise SourceMaintenanceError("unknown source id")
                 if args.ignore_command == "list":
                     data = {"status": "success", "source_id": source.source_id, "ignored": [{"path": item.path, "reason": item.reason} for item in source.upstream.ignore]}; stdout.write(format_json(data) if args.json else "\n".join(f"{item.path:<32} {item.reason}" for item in source.upstream.ignore) + "\n"); return 0
-                plan = plan_ignore_change(root, args.source_id, args.path, args.ignore_command, git if args.ignore_command == "remove" else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
+                plan = plan_ignore_change(root, args.source_id, args.path, args.ignore_command, git if args.ignore_command == "remove" else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
             if args.source_command == "delete":
                 if not args.skills: raise UsageError("source delete requires --skills delete or --skills manualize")
-                plan = plan_delete_source(root, args.source_id, args.skills, args.remove_from_profiles); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
+                plan = plan_delete_source(root, args.source_id, args.skills, args.remove_from_profiles); _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
         if args.command == "skill":
             if args.skill_command == "create":
                 if not args.description and not _interactive(stdin): raise UsageError("non-interactive skill create requires --description")
@@ -229,7 +232,7 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
             elif args.skill_command == "delete": plan = plan_delete_skill(root, args.skill_id, args.remove_from_profiles)
             elif args.skill_command == "manualize": plan = plan_manualize_skill(root, args.skill_id)
             else: return None
-            _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
+            _confirm(args, stdin, interaction); return _emit(plan, args, stdout, behavior_verifier)
     except UsageError as error:
         stderr.write(f"usage: {error}\n"); return 2
     except SourceManifestError as error:

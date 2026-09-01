@@ -13,6 +13,7 @@ from .frontmatter import FrontmatterError, parse_skill_markdown
 from .git_source import DiscoveredSkill, GitSourceClient
 from .integrity import require_integrity
 from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction, validated_plan
+from .test_impact import load_impact_inventory, select_from_changes
 from .profiles import ProfileError, remove_profile_skill_id, replace_profile_skill_id
 from .source_manifest import IgnoredSkill, ResolvedSourceSkill, UpstreamSource
 from .source_maintenance import (
@@ -335,7 +336,13 @@ def _transaction(root: Path) -> RepositoryTransaction:
 
 
 def _validated_plan(tx: RepositoryTransaction, summary: MaintenanceSummary) -> MaintenancePlan:
-    return validated_plan(tx, summary, require_integrity)
+    pre = load_impact_inventory(tx.repo_root)
+    post = load_impact_inventory(tx.candidate_root)
+    selection = select_from_changes(pre, post, tx.changed_paths())
+    return validated_plan(
+        tx, summary, require_integrity,
+        selection=selection, candidate_digests=dict(selection.digests),
+    )
 
 
 def _stage_catalog(tx: RepositoryTransaction) -> None:

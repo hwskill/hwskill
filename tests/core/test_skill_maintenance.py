@@ -9,6 +9,7 @@ from unittest.mock import patch
 import yaml
 
 from hwskill.digest import content_digest
+from hwskill.pending_verification import VerificationResult
 from hwskill.git_source import ResolvedTrack
 from hwskill.source_manifest import (
     IgnoredSkill,
@@ -62,6 +63,12 @@ class SkillMaintenanceTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def apply_verified(self, plan: object) -> None:
+        plan.verify_affected = lambda selection: VerificationResult(
+            selection, dict(plan.candidate_digests), tuple((case_id, "PASS") for case_id in selection.required_case_ids),
+        )
+        plan.apply()
 
     def _upstream_skill(self, path: str, text: str) -> Path:
         skill = self.upstream / "skills" / path
@@ -122,7 +129,9 @@ class SkillMaintenanceTest(unittest.TestCase):
         from hwskill.skill_maintenance import SkillMaintenanceError, plan_create_manual, plan_update_manual
 
         created = plan_create_manual(self.repo, "team/review", "l2", "review description", "MIT")
-        created.apply()
+        self.assertEqual(created.selection.skill_ids, ("team/review",))
+        self.assertEqual(created.selection.required_case_ids, ("skill:team/review",))
+        self.apply_verified(created)
         skill = self.repo / "skills-src/l2/team/review"
         self.assertTrue((skill / "SKILL.md").is_file())
         self.assertEqual(yaml.safe_load((skill / "skill.yaml").read_text(encoding="utf-8"))["source"], {"kind": "manual"})
@@ -130,7 +139,7 @@ class SkillMaintenanceTest(unittest.TestCase):
             plan_create_manual(self.repo, "team/review", "l2", "other", "MIT")
 
         (skill / "SKILL.md").write_text(SKILL_TEXT + "\nChanged.\n", encoding="utf-8")
-        plan_update_manual(self.repo, "team/review").apply()
+        self.apply_verified(plan_update_manual(self.repo, "team/review"))
         governance = yaml.safe_load((skill / "skill.yaml").read_text(encoding="utf-8"))
         self.assertEqual(governance["source"], {"kind": "manual"})
         self.assertEqual(governance["content_digest"], content_digest(skill))
@@ -153,7 +162,7 @@ class SkillMaintenanceTest(unittest.TestCase):
         self.assertEqual(yaml.safe_load((moved / "skill.yaml").read_text(encoding="utf-8"))["id"], "team/review")
         self.assertEqual(load_source_manifest(self.repo / "sources/team.yaml").skills[0].layer, "l1")
 
-        plan_rename_skill(self.repo, "team/review", "team/check").apply()
+        self.apply_verified(plan_rename_skill(self.repo, "team/review", "team/check"))
         renamed = self.repo / "skills-src/l1/team/check"
         self.assertTrue(renamed.is_dir())
         self.assertEqual(yaml.safe_load((renamed / "skill.yaml").read_text(encoding="utf-8"))["id"], "team/check")
@@ -209,7 +218,7 @@ class SkillMaintenanceTest(unittest.TestCase):
             plan_adopt_skill(self.repo, "team", "team/review", "review", False, self.git)
         self.assertEqual((local / "SKILL.md").read_bytes(), before)
 
-        plan_adopt_skill(self.repo, "team", "team/review", "review", True, self.git).apply()
+        self.apply_verified(plan_adopt_skill(self.repo, "team", "team/review", "review", True, self.git))
         self.assertEqual((local / "SKILL.md").read_bytes(), (self.upstream / "skills/review/SKILL.md").read_bytes())
         governance = yaml.safe_load((local / "skill.yaml").read_text(encoding="utf-8"))
         self.assertEqual(governance["source"], {
@@ -254,7 +263,7 @@ class SkillMaintenanceTest(unittest.TestCase):
             {old_revision: old_revision, "refs/heads/main": new_revision},
         )
 
-        plan_adopt_skill(self.repo, "team", "team/review", "review", False, git).apply()
+        self.apply_verified(plan_adopt_skill(self.repo, "team", "team/review", "review", False, git))
 
         self.assertEqual(git.tracks, [old_revision])
         self.assertEqual((existing / "SKILL.md").read_bytes(), before)

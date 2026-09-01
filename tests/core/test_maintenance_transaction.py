@@ -212,6 +212,15 @@ class RepositoryTransactionTest(unittest.TestCase):
         self.assertIsNotNone(pending)
         self.assertEqual(pending.selection, selection)
 
+    def test_finalize_failure_rolls_back_applied_candidate(self) -> None:
+        tx = RepositoryTransaction(self.repo)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+
+        with self.assertRaisesRegex(OSError, "pending publish failure"):
+            tx.apply(finalize=lambda: (_ for _ in ()).throw(OSError("pending publish failure")))
+
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
     def test_validate_runs_only_while_active_and_keeps_a_clean_candidate_applicable(self) -> None:
         """A successful validation is a planning gate, not a second apply lifecycle."""
         validated: list[Path] = []

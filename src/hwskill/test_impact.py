@@ -11,6 +11,8 @@ from typing import Iterable, Mapping, Sequence
 
 import yaml
 
+from .digest import content_digest
+
 
 class TestImpactError(RuntimeError):
     """Affected-test selection cannot safely determine its input."""
@@ -97,7 +99,8 @@ class TestSelection:
     @property
     def required_case_ids(self) -> tuple[str, ...]:
         return tuple(
-            [f"skill:{skill_id}" for skill_id in self.skill_ids]
+            (["core"] if self.core else [])
+            + [f"skill:{skill_id}" for skill_id in self.skill_ids]
             + [f"profile:{profile_id}" for profile_id in self.profile_ids]
         )
 
@@ -133,18 +136,9 @@ def select_from_changes(
             selected_skills.add(skill_id)
             reasons.add(f"skill-content:{skill_id}")
 
-    for change in change_records:
-        for path in _paths(change):
-            for skill in after_skills.values():
-                if _inside(path, skill.path):
-                    selected_skills.add(skill.skill_id)
-                    reasons.add(f"skill-content:{skill.skill_id}")
-        if change.status[:1] in {"R", "C"} and change.new_path is not None:
-            old = _skill_at_path(before_skills.values(), change.path)
-            new = _skill_at_path(after_skills.values(), change.new_path)
-            if new is not None and (old is None or old.skill_id != new.skill_id):
-                selected_skills.add(new.skill_id)
-                reasons.add(f"skill-rename:{new.skill_id}")
+    # A changed path below a Skill is not proof of a behavioral payload delta:
+    # layer-only R100 moves have exactly that shape. Canonical pre/post IDs and
+    # digests above decide Skill behavior; path inputs only map test fixtures.
 
     before_digests = {item.skill_id: item.content_digest for item in pre.skills}
     after_digests = {item.skill_id: item.content_digest for item in post.skills}
@@ -295,6 +289,8 @@ def _inventory_at_revision(root: Path, revision: str) -> ImpactInventory:
 def _inventory_from_worktree(root: Path) -> ImpactInventory:
     try:
         catalog = json.loads((root / "registry/catalog.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        catalog = None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise TestImpactError("cannot read current registry catalog") from exc
     profiles: list[ImpactProfile] = []
@@ -304,7 +300,28 @@ def _inventory_from_worktree(root: Path) -> ImpactInventory:
             profiles.append(ImpactProfile(str(data["id"]), tuple(str(item) for item in data.get("skills", ()))))
         except (KeyError, TypeError, UnicodeError, yaml.YAMLError, ValueError) as exc:
             raise TestImpactError(f"cannot read current profile inventory: {path}") from exc
-    return _inventory_from_catalog(catalog, profiles)
+    if catalog is not None:
+        inventory = _inventory_from_catalog(catalog, profiles)
+        skills = tuple(
+            ImpactSkill(
+                item.skill_id, item.path,
+                content_digest(root / item.path) if (root / item.path).is_dir() else item.content_digest,
+                item.layer,
+            )
+            for item in inventory.skills
+        )
+        return ImpactInventory(skills, inventory.profiles)
+    skills: list[ImpactSkill] = []
+    for governance in sorted((root / "skills-src").glob("**/skill.yaml")):
+        try:
+            data = yaml.safe_load(governance.read_text(encoding="utf-8")) or {}
+            skills.append(ImpactSkill(
+                str(data["id"]), governance.parent.relative_to(root).as_posix(),
+                str(data["content_digest"]), str(data.get("layer", "")),
+            ))
+        except (KeyError, TypeError, UnicodeError, yaml.YAMLError, ValueError) as exc:
+            raise TestImpactError(f"cannot read current Skill inventory: {governance}") from exc
+    return ImpactInventory(tuple(skills), tuple(profiles))
 
 
 def _inventory_from_catalog(catalog: Mapping[str, object], profiles: Sequence[ImpactProfile]) -> ImpactInventory:
@@ -318,8 +335,8 @@ def _inventory_from_catalog(catalog: Mapping[str, object], profiles: Sequence[Im
     return ImpactInventory(skills=skills, profiles=tuple(profiles))
 
 
-def _coerce_change(value: NameStatus | str) -> NameStatus:
-    return value if isinstance(value, NameStatus) else NameStatus("M", value)
+def _coerce_change(value: NameStatus | str | Path) -> NameStatus:
+    return value if isinstance(value, NameStatus) else NameStatus("M", Path(value).as_posix())
 
 
 def _paths(change: NameStatus) -> tuple[str, ...]:
