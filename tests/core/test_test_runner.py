@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from hwskill.test_manifest import CommandAction, TestCase, TestCollection, TestTarget
 
@@ -128,6 +129,73 @@ class TestLocalCaseRunner(unittest.TestCase):
         self.assertEqual(result.actions[1].status, "blocked")
         self.assertFalse((outside / "escaped").exists())
 
+    def test_workdir_swap_after_open_never_launches_the_command_outside_workspace(self) -> None:
+        from hwskill.test_runner import run_case
+
+        (self.fixtures / "project").mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+
+        def swap_after_open(workspace: Path, configured: str | None) -> None:
+            if configured != "project":
+                return
+            target = workspace / "project"
+            target.rename(workspace / "project-original")
+            target.symlink_to(outside, target_is_directory=True)
+
+        with patch("hwskill.test_runner._after_workdir_opened", side_effect=swap_after_open):
+            result = run_case(self.case(
+                steps=[CommandAction("step", "touch anchored.txt", workdir="project")],
+                post_check=CommandAction("post-check", "exit 0"),
+            ), self.environment(), self.artifacts)
+
+        self.assertIn(result.status, {"PASS", "BLOCKED"})
+        self.assertNotEqual(result.actions[0].status, "failed")
+        self.assertFalse((outside / "anchored.txt").exists())
+
+    def test_fixture_root_swap_after_open_copies_the_anchored_fixture_tree(self) -> None:
+        from hwskill.test_runner import run_case
+
+        (self.fixtures / "root.txt").write_text("trusted", encoding="utf-8")
+        outside = self.root / "outside-fixtures"
+        outside.mkdir()
+        (outside / "root.txt").write_text("external", encoding="utf-8")
+
+        def swap_after_open(source: Path, relative: Path) -> None:
+            if relative == Path("."):
+                source.rename(source.with_name("fixtures-original"))
+                source.symlink_to(outside, target_is_directory=True)
+
+        with patch("hwskill.test_runner._after_fixture_directory_opened", side_effect=swap_after_open):
+            result = run_case(self.case(
+                steps=[CommandAction("step", 'test "$(cat root.txt)" = trusted && printf written > output.txt')],
+            ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+
+    def test_nested_fixture_swap_after_open_copies_the_anchored_directory(self) -> None:
+        from hwskill.test_runner import run_case
+
+        nested = self.fixtures / "nested"
+        nested.mkdir()
+        (nested / "value.txt").write_text("trusted", encoding="utf-8")
+        outside = self.root / "outside-nested"
+        outside.mkdir()
+        (outside / "value.txt").write_text("external", encoding="utf-8")
+
+        def swap_after_open(source: Path, relative: Path) -> None:
+            if relative == Path("nested"):
+                target = source / "nested"
+                target.rename(source / "nested-original")
+                target.symlink_to(outside, target_is_directory=True)
+
+        with patch("hwskill.test_runner._after_fixture_directory_opened", side_effect=swap_after_open):
+            result = run_case(self.case(
+                steps=[CommandAction("step", 'test "$(cat nested/value.txt)" = trusted && printf written > output.txt')],
+            ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+
     def test_case_workdir_applies_when_action_has_no_override(self) -> None:
         from hwskill.test_runner import run_case
 
@@ -181,6 +249,32 @@ class TestLocalCaseRunner(unittest.TestCase):
         self.assertNotIn(secret, persisted)
         self.assertIn("[REDACTED]", persisted)
         self.assertNotIn(os.environ.get("HOME", ""), persisted)
+
+    def test_invalid_command_environment_returns_blocked_action_evidence_and_cleans_workspace(self) -> None:
+        from hwskill.test_runner import run_case
+
+        result = run_case(self.case(), self.environment(
+            environment_variables=(("INVALID=KEY", "value"),),
+        ), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual([action.status for action in result.actions], ["blocked", "blocked"])
+        step_result = json.loads((result.actions[0].artifact_dir / "result.json").read_text(encoding="utf-8"))
+        self.assertIn("invalid declared test environment variable", step_result["reason"])
+        context = json.loads((result.artifact_dir / "context.json").read_text(encoding="utf-8"))
+        self.assertFalse(Path(context["workspace"]).exists())
+
+    def test_collection_keeps_invalid_environment_action_evidence_and_cleans_workspace(self) -> None:
+        from hwskill.test_runner import run_collection
+
+        result = run_collection(self.collection(self.case()), self.environment(
+            environment_variables=(("INVALID=KEY", "value"),),
+        ), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual([action.status for action in result.cases[0].actions], ["blocked", "blocked"])
+        context = json.loads((result.cases[0].artifact_dir / "context.json").read_text(encoding="utf-8"))
+        self.assertFalse(Path(context["workspace"]).exists())
 
     def test_agent_without_a_required_executor_blocks_the_case(self) -> None:
         from hwskill.test_manifest import AgentAction
