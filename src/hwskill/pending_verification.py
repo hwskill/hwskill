@@ -111,7 +111,7 @@ def load_pending_verification(repo_root: Path) -> PendingVerification | None:
     try:
         raw = _read_regular_at(directory_fd, _PENDING_NAME, missing_ok=True)
         return None if raw is None else _parse_pending(raw)
-    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    except (PendingVerificationError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         return None
     finally:
         os.close(directory_fd)

@@ -5,6 +5,9 @@ from tempfile import TemporaryDirectory
 import os
 import shutil
 import unittest
+from unittest.mock import patch
+
+import hwskill.pending_verification as pending
 
 from hwskill.maintenance_transaction import (
     MaintenanceSummary,
@@ -13,8 +16,12 @@ from hwskill.maintenance_transaction import (
     TransactionError,
     validated_plan,
 )
-from hwskill.pending_verification import VerificationResult
-from hwskill.pending_verification import load_pending_verification
+from hwskill.pending_verification import (
+    VerificationResult,
+    load_pending_verification,
+    prepare_pending_verification,
+    write_pending_verification,
+)
 from hwskill.test_impact import TestSelection
 
 
@@ -220,6 +227,43 @@ class RepositoryTransactionTest(unittest.TestCase):
             tx.apply(finalize=lambda: (_ for _ in ()).throw(OSError("pending publish failure")))
 
         self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
+    def test_each_pending_publish_stage_failure_rolls_back_finalized_transaction(self) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        selection = TestSelection(skill_ids=("local/example",), changed_paths=("sources/a.yaml",))
+        original = write_pending_verification(
+            self.repo, selection, {"local/example": "sha256:old"},
+        ).read_bytes()
+        stages = (
+            ("replace", "os.replace", pending.os.replace),
+            ("chmod", "os.chmod", pending.os.chmod),
+            ("directory fsync", "_fsync_fd", pending._fsync_fd),
+        )
+        for stage, attribute, original_function in stages:
+            with self.subTest(stage=stage):
+                prepared = prepare_pending_verification(
+                    self.repo, selection, {"local/example": "sha256:new"},
+                )
+                calls = {"count": 0}
+
+                def fail_once(*args: object, **kwargs: object) -> object:
+                    calls["count"] += 1
+                    if calls["count"] == 1:
+                        raise OSError(stage)
+                    return original_function(*args, **kwargs)
+
+                tx = RepositoryTransaction(self.repo)
+                tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+                with patch("hwskill.pending_verification." + attribute, side_effect=fail_once):
+                    with self.assertRaises(pending.PendingVerificationError):
+                        tx.apply(finalize=prepared.publish)
+                    prepared.discard()
+                self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+                self.assertEqual(
+                    (self.repo / ".git/hwskill/pending-verification.json").read_bytes(), original,
+                )
 
     def test_validate_runs_only_while_active_and_keeps_a_clean_candidate_applicable(self) -> None:
         """A successful validation is a planning gate, not a second apply lifecycle."""
