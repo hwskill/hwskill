@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
 import unittest
+
+import yaml
+
+from hwskill.digest import content_digest
 
 
 ROOT = Path(__file__).parents[1]
@@ -28,6 +33,24 @@ class IntegrityTest(unittest.TestCase):
             "---\nname: orphan\ndescription: missing governance\n---\n",
             encoding="utf-8",
         )
+
+    def read_source(self, name: str = "superpowers") -> dict:
+        return yaml.safe_load((self.repo / "sources" / f"{name}.yaml").read_text(encoding="utf-8"))
+
+    def write_source(self, source: dict, name: str = "superpowers") -> None:
+        (self.repo / "sources" / f"{name}.yaml").write_text(
+            yaml.safe_dump(source, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+    def update_governance(self, relative_path: str, update) -> dict:
+        """Apply a provenance-only fixture change while preserving a valid local digest."""
+        path = self.repo / relative_path / "skill.yaml"
+        governance = yaml.safe_load(path.read_text(encoding="utf-8"))
+        update(governance)
+        path.write_text(yaml.safe_dump(governance, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        governance["content_digest"] = content_digest(path.parent)
+        path.write_text(yaml.safe_dump(governance, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        return governance
 
     def test_integrity_collects_orphan_skill_and_stale_catalog_together(self) -> None:
         """Removing governance or regenerating Catalog independently must be reported."""
@@ -184,6 +207,127 @@ class IntegrityTest(unittest.TestCase):
         self.assertEqual((report.skill_count, report.source_count, report.profile_count), (0, 0, 0))
         self.assertEqual([issue.code for issue in report.issues], ["unsafe-path"])
         self.assertEqual(report.issues[0].path, ".")
+
+    def test_integrity_reports_source_digest_drift_without_fetching(self) -> None:
+        """The checked-in source digest, not a remote checkout, owns snapshot integrity."""
+        from hwskill.integrity import check_integrity
+
+        source = self.read_source()
+        source["resolved"]["skills"][0]["content_digest"] = "sha256:" + "0" * 64
+        self.write_source(source)
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("source-skill-digest-mismatch", {issue.code for issue in report.issues})
+
+    def test_integrity_reports_manual_skill_claimed_by_a_resolved_source(self) -> None:
+        """Manual ownership cannot coexist with a source manifest resolved entry."""
+        from hwskill.integrity import check_integrity
+
+        source = self.read_source()
+        item = source["resolved"]["skills"][0]
+        skill = self.repo / "skills-src/l1/superpowers/brainstorming"
+        governance = self.update_governance(
+            skill.relative_to(self.repo).as_posix(),
+            lambda data: data.__setitem__("source", {"kind": "manual"}),
+        )
+        item["content_digest"] = governance["content_digest"]
+        self.write_source(source)
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("manual-skill-resolved", {issue.code for issue in report.issues})
+
+    def test_integrity_reports_an_upstream_skill_missing_from_all_resolved_sources(self) -> None:
+        """Every upstream governance record must have exactly one source ownership entry."""
+        from hwskill.integrity import check_integrity
+
+        self.update_governance(
+            "skills-src/l1/local/chinese-thinking",
+            lambda data: data.__setitem__("source", {
+                "kind": "upstream", "source_id": "missing", "revision": "a" * 40,
+                "upstream_path": "chinese-thinking",
+            }),
+        )
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("upstream-skill-unresolved", {issue.code for issue in report.issues})
+
+    def test_integrity_reports_duplicate_source_ownership(self) -> None:
+        """One resolved Skill ID must not be owned by two source manifests."""
+        from hwskill.integrity import check_integrity
+
+        duplicate = self.read_source()
+        self.write_source(duplicate, "duplicate")
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("duplicate-source-skill", {issue.code for issue in report.issues})
+
+    def test_integrity_reports_resolved_ignore_overlap_even_when_manifest_is_invalid(self) -> None:
+        """Raw overlap inspection keeps the actionable conflict visible after parser rejection."""
+        from hwskill.integrity import check_integrity
+
+        source = self.read_source()
+        source["upstream"]["ignore"] = [{"path": "brainstorming", "reason": "conflict"}]
+        self.write_source(source)
+
+        report = check_integrity(self.repo)
+
+        self.assertTrue({"invalid-source-manifest", "source-resolved-ignore-overlap"} <= {
+            issue.code for issue in report.issues
+        })
+
+    def test_integrity_reports_source_metadata_mismatches_independently(self) -> None:
+        """Source, governance, and physical Skill location expose distinct bad edges."""
+        from hwskill.integrity import check_integrity
+
+        source = self.read_source()
+        source["resolved"]["revision"] = "0" * 40
+        source["resolved"]["skills"][0]["layer"] = "l2"
+        self.write_source(source)
+        self.update_governance(
+            "skills-src/l1/superpowers/brainstorming",
+            lambda data: data["source"].update({"source_id": "wrong", "upstream_path": "wrong-path"}),
+        )
+
+        report = check_integrity(self.repo)
+
+        codes = {issue.code for issue in report.issues}
+        self.assertTrue({
+            "source-skill-source-mismatch", "source-skill-path-mismatch",
+            "source-skill-layer-mismatch", "source-skill-revision-mismatch",
+        } <= codes)
+
+    def test_integrity_reports_a_resolved_id_mismatch_by_its_source_path(self) -> None:
+        """A source path can identify the governed Skill even when its resolved ID drifts."""
+        from hwskill.integrity import check_integrity
+
+        source = self.read_source()
+        source["resolved"]["skills"][0]["id"] = "superpowers/renamed-brainstorming"
+        self.write_source(source)
+
+        report = check_integrity(self.repo)
+
+        self.assertIn("source-skill-id-mismatch", {issue.code for issue in report.issues})
+
+    def test_integrity_reports_precise_catalog_entry_differences_and_one_stale_issue(self) -> None:
+        """Catalog diagnostics distinguish its generated-byte drift from individual bad entries."""
+        from hwskill.integrity import check_integrity
+
+        catalog_path = self.repo / "registry/catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        removed = catalog["skills"].pop(0)
+        catalog["skills"][0]["description"] = "wrong description"
+        catalog["skills"].append({**removed, "id": "extra/skill"})
+        catalog_path.write_text(json.dumps(catalog, sort_keys=True), encoding="utf-8")
+
+        report = check_integrity(self.repo)
+
+        codes = [issue.code for issue in report.issues]
+        self.assertTrue({"catalog-extra-skill", "catalog-missing-skill", "catalog-skill-mismatch"} <= set(codes))
+        self.assertEqual(codes.count("catalog-stale"), 1)
 
 
 if __name__ == "__main__":

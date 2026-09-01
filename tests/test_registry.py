@@ -10,6 +10,7 @@ import yaml
 
 from hwskill import registry as registry_module
 from hwskill.cli import main
+from hwskill.digest import content_digest
 from hwskill.source_manifest import load_source_manifest
 
 
@@ -121,6 +122,37 @@ class RegistryTest(unittest.TestCase):
         governance["source"] = {"kind": "other", "source_id": "source", "revision": "revision", "upstream_path": "path"}
         governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
         with self.assertRaisesRegex(RegistryValidationError, "source kind"):
+            validate_registry(self.repo)
+
+    def test_validation_rejects_upstream_provenance_without_full_revision(self):
+        """A local-looking revision cannot make an upstream snapshot reproducible."""
+        governance_path = self.repo / "skills-src/l1/local/chinese-thinking/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["source"]["revision"] = "a" * 12
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+
+        with self.assertRaisesRegex(RegistryValidationError, "full 40-character"):
+            validate_registry(self.repo)
+
+    def test_validation_rejects_upstream_provenance_without_a_safe_path(self):
+        """An upstream Skill must retain the path relative to its declared source root."""
+        governance_path = self.repo / "skills-src/l1/local/chinese-thinking/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["source"]["upstream_path"] = "../outside"
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+
+        with self.assertRaisesRegex(RegistryValidationError, "upstream path"):
+            validate_registry(self.repo)
+
+    def test_validation_rejects_a_skill_id_that_disagrees_with_its_physical_path(self):
+        """Catalog paths must remain derivable from the governed Skill ID and layer."""
+        governance_path = self.repo / "skills-src/l1/local/chinese-thinking/skill.yaml"
+        governance = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+        governance["id"] = "other/chinese-thinking"
+        governance["content_digest"] = content_digest(governance_path.parent)
+        governance_path.write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+
+        with self.assertRaisesRegex(RegistryValidationError, "physical path"):
             validate_registry(self.repo)
 
 

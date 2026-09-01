@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 import stat
-from typing import Iterator
+from typing import Any, Iterator
 
 import yaml
 
@@ -47,6 +47,24 @@ class IntegrityError(ValueError):
         super().__init__(f"repository integrity check failed ({len(report.issues)} issue(s))")
 
 
+@dataclass(frozen=True)
+class _SourceSkillReference:
+    manifest_path: Path
+    source_id: str | None
+    revision: str | None
+    skill_id: str
+    upstream_path: str
+    layer: str
+    content_digest: str
+
+
+@dataclass(frozen=True)
+class _GovernedSkill:
+    record: registry.SkillRecord
+    governance_path: Path
+    upstream_path: str | None
+
+
 def check_integrity(repo_root: Path) -> IntegrityReport:
     """Collect offline inventory problems without stopping at the first one."""
     root = Path(repo_root).absolute()
@@ -67,11 +85,7 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
             issues.append(_issue("orphan-governance", root, path, "skill.yaml has no sibling SKILL.md"))
 
     source_paths = tuple(_inventory_files(root / "sources", "*.yaml", root, issues))
-    for path in source_paths:
-        try:
-            load_source_manifest(path)
-        except Exception as exc:
-            issues.append(_issue("invalid-source-manifest", root, path, str(exc)))
+    source_references = _source_references(source_paths, root, issues)
 
     profile_tree_safe = _inventory_tree_is_safe(root / "profiles", root, issues)
     profile_paths = tuple(_inventory_files(root / "profiles", "*.yaml", root, issues))
@@ -85,9 +99,18 @@ def check_integrity(repo_root: Path) -> IntegrityReport:
         _parse_yaml_mapping(path, root, issues, "invalid-test-manifest", "test manifest")
 
     catalog_path = root / "registry" / "catalog.json"
-    catalog_ok = _parse_catalog(catalog_path, root, issues)
-    registry_ok = skill_tree_safe and profile_tree_safe and _validate_registry(root, issues)
-    if catalog_ok and registry_ok:
+    catalog_data = _parse_catalog(catalog_path, root, issues)
+    if skill_tree_safe:
+        governed_skills, registry_ok = _governed_skills(
+            root, governance, issues, validate_profiles=profile_tree_safe
+        )
+        _check_source_skill_consistency(root, source_references, governed_skills, issues)
+        if catalog_data is not None:
+            _check_catalog_entries(root, catalog_path, catalog_data, governed_skills, issues)
+    else:
+        governed_skills, registry_ok = (), False
+    registry_ok = skill_tree_safe and profile_tree_safe and registry_ok
+    if catalog_data is not None and registry_ok:
         expected_catalog = json.dumps(
             registry.build_catalog(root), ensure_ascii=False, sort_keys=True, indent=2
         ) + "\n"
@@ -235,30 +258,291 @@ def _parse_yaml_mapping(
         issues.append(_issue(code, root, path, f"{label} must be a mapping"))
 
 
-def _parse_catalog(path: Path, root: Path, issues: list[IntegrityIssue]) -> bool:
+def _parse_catalog(path: Path, root: Path, issues: list[IntegrityIssue]) -> dict[str, Any] | None:
     if not _path_components_are_safe(root, path, issues):
-        return False
+        return None
     if not _regular_file(path):
         issues.append(_issue("invalid-catalog", root, path, "Catalog must be a regular JSON file"))
-        return False
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         issues.append(_issue("invalid-catalog", root, path, f"cannot parse Catalog: {exc}"))
-        return False
+        return None
     if not isinstance(data, dict):
         issues.append(_issue("invalid-catalog", root, path, "Catalog must be a JSON object"))
-        return False
-    return True
+        return None
+    return data
 
 
-def _validate_registry(root: Path, issues: list[IntegrityIssue]) -> bool:
+def _governed_skills(
+    root: Path,
+    governance_paths: tuple[Path, ...],
+    issues: list[IntegrityIssue],
+    *,
+    validate_profiles: bool,
+) -> tuple[tuple[_GovernedSkill, ...], bool]:
+    """Collect individually valid Skills even when the strict Registry entrypoint fails."""
+    valid: list[_GovernedSkill] = []
+    for path in governance_paths:
+        try:
+            record = registry.validate_skill(root, path)
+        except Exception:
+            continue
+        upstream_path = _governance_upstream_path(path)
+        valid.append(_GovernedSkill(record, path, upstream_path))
+    if validate_profiles:
+        try:
+            registry.validate_registry(root)
+        except Exception as exc:
+            issues.append(_issue("invalid-registry", root, root / "skills-src", str(exc)))
+            return tuple(valid), False
+    elif len(valid) != len(governance_paths):
+        return tuple(valid), False
+    return tuple(valid), True
+
+
+def _governance_upstream_path(path: Path) -> str | None:
+    """Read only the provenance detail needed for source cross-indexing.
+
+    `validate_skill` has already accepted this file, so a failed best-effort read
+    simply leaves the relevant source edge unmatched rather than crashing the run.
+    """
     try:
-        registry.validate_registry(root)
-    except Exception as exc:
-        issues.append(_issue("invalid-registry", root, root / "skills-src", str(exc)))
-        return False
-    return True
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    source = data.get("source") if isinstance(data, dict) else None
+    path_value = source.get("upstream_path") if isinstance(source, dict) else None
+    return path_value if isinstance(path_value, str) else None
+
+
+def _source_references(
+    source_paths: tuple[Path, ...],
+    root: Path,
+    issues: list[IntegrityIssue],
+) -> tuple[_SourceSkillReference, ...]:
+    """Load valid manifests and retain enough raw shape to diagnose invalid ones."""
+    references: list[_SourceSkillReference] = []
+    source_ids: dict[str, list[Path]] = {}
+    for path in source_paths:
+        raw = _read_source_data(path)
+        _report_raw_resolved_ignore_overlap(root, path, raw, issues)
+        try:
+            source = load_source_manifest(path)
+        except Exception as exc:
+            issues.append(_issue("invalid-source-manifest", root, path, str(exc)))
+            references.extend(_raw_source_references(path, raw))
+            continue
+        source_ids.setdefault(source.source_id, []).append(path)
+        references.extend(
+            _SourceSkillReference(
+                manifest_path=path,
+                source_id=source.source_id,
+                revision=source.resolved_revision,
+                skill_id=item.skill_id,
+                upstream_path=item.path,
+                layer=item.layer,
+                content_digest=item.content_digest,
+            )
+            for item in source.skills
+        )
+    for source_id, paths in sorted(source_ids.items()):
+        if len(paths) > 1:
+            issues.append(_issue(
+                "duplicate-source-id", root, paths[0],
+                f"source_id is declared by multiple manifests: {source_id}",
+            ))
+    return tuple(references)
+
+
+def _read_source_data(path: Path) -> object | None:
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+
+
+def _report_raw_resolved_ignore_overlap(
+    root: Path,
+    manifest_path: Path,
+    raw: object | None,
+    issues: list[IntegrityIssue],
+) -> None:
+    if not isinstance(raw, dict):
+        return
+    upstream = raw.get("upstream")
+    resolved = raw.get("resolved")
+    ignored = upstream.get("ignore") if isinstance(upstream, dict) else None
+    resolved_skills = resolved.get("skills") if isinstance(resolved, dict) else None
+    ignored_paths = [item.get("path") for item in ignored if isinstance(item, dict) and isinstance(item.get("path"), str)] if isinstance(ignored, list) else []
+    resolved_paths = [item.get("path") for item in resolved_skills if isinstance(item, dict) and isinstance(item.get("path"), str)] if isinstance(resolved_skills, list) else []
+    for resolved_path in sorted(set(resolved_paths)):
+        if any(_paths_overlap(resolved_path, ignored_path) for ignored_path in ignored_paths):
+            issues.append(_issue(
+                "source-resolved-ignore-overlap", root, manifest_path,
+                f"resolved path overlaps an ignored path: {resolved_path}",
+            ))
+
+
+def _raw_source_references(path: Path, raw: object | None) -> tuple[_SourceSkillReference, ...]:
+    if not isinstance(raw, dict):
+        return ()
+    source_id = raw.get("source_id") if isinstance(raw.get("source_id"), str) else None
+    resolved = raw.get("resolved")
+    revision = resolved.get("revision") if isinstance(resolved, dict) and isinstance(resolved.get("revision"), str) else None
+    skills = resolved.get("skills") if isinstance(resolved, dict) else None
+    if not isinstance(skills, list):
+        return ()
+    result: list[_SourceSkillReference] = []
+    for item in skills:
+        if not isinstance(item, dict):
+            continue
+        skill_id = item.get("id")
+        upstream_path = item.get("path")
+        layer = item.get("layer")
+        digest = item.get("content_digest")
+        if all(isinstance(value, str) for value in (skill_id, upstream_path, layer, digest)):
+            result.append(_SourceSkillReference(path, source_id, revision, skill_id, upstream_path, layer, digest))
+    return tuple(result)
+
+
+def _check_source_skill_consistency(
+    root: Path,
+    references: tuple[_SourceSkillReference, ...],
+    governed_skills: tuple[_GovernedSkill, ...],
+    issues: list[IntegrityIssue],
+) -> None:
+    by_id = {item.record.skill_id: item for item in governed_skills}
+    by_source_path: dict[tuple[str | None, str], list[_GovernedSkill]] = {}
+    for skill in governed_skills:
+        if skill.record.source_kind == "upstream" and skill.upstream_path is not None:
+            by_source_path.setdefault((skill.record.source_id, skill.upstream_path), []).append(skill)
+    references_by_id: dict[str, list[_SourceSkillReference]] = {}
+    references_by_source_path: dict[tuple[str | None, str], list[_SourceSkillReference]] = {}
+    for reference in references:
+        references_by_id.setdefault(reference.skill_id, []).append(reference)
+        references_by_source_path.setdefault((reference.source_id, reference.upstream_path), []).append(reference)
+    for skill_id, owners in sorted(references_by_id.items()):
+        if len(owners) > 1:
+            issues.append(_issue(
+                "duplicate-source-skill", root, owners[0].manifest_path,
+                f"resolved Skill has multiple source owners: {skill_id}",
+            ))
+        for reference in owners:
+            skill = by_id.get(reference.skill_id)
+            if skill is None:
+                path_matches = by_source_path.get((reference.source_id, reference.upstream_path), [])
+                if len(path_matches) == 1:
+                    skill = path_matches[0]
+                    issues.append(_issue(
+                        "source-skill-id-mismatch", root, reference.manifest_path,
+                        f"resolved Skill id differs for source path {reference.upstream_path}: {reference.skill_id}",
+                    ))
+                    _compare_source_reference(root, reference, skill, issues)
+                    continue
+                issues.append(_issue(
+                    "source-skill-missing", root, reference.manifest_path,
+                    f"resolved Skill has no governed payload: {reference.skill_id}",
+                ))
+                continue
+            if skill.record.source_kind == "manual":
+                issues.append(_issue(
+                    "manual-skill-resolved", root, reference.manifest_path,
+                    f"manual Skill appears in a resolved source: {reference.skill_id}",
+                ))
+                continue
+            _compare_source_reference(root, reference, skill, issues)
+    for skill in governed_skills:
+        if skill.record.source_kind != "upstream":
+            continue
+        matching = [
+            reference for reference in references_by_id.get(skill.record.skill_id, [])
+            if reference.source_id == skill.record.source_id and reference.upstream_path == skill.upstream_path
+        ]
+        matching_path = references_by_source_path.get((skill.record.source_id, skill.upstream_path), [])
+        if not matching and not matching_path:
+            issues.append(_issue(
+                "upstream-skill-unresolved", root, skill.governance_path,
+                f"upstream Skill is not resolved by its source: {skill.record.skill_id}",
+            ))
+
+
+def _compare_source_reference(
+    root: Path,
+    reference: _SourceSkillReference,
+    skill: _GovernedSkill,
+    issues: list[IntegrityIssue],
+) -> None:
+    record = skill.record
+    checks = (
+        ("source-skill-source-mismatch", record.source_id, reference.source_id, "source_id"),
+        ("source-skill-path-mismatch", skill.upstream_path, reference.upstream_path, "upstream path"),
+        ("source-skill-layer-mismatch", record.layer, reference.layer, "layer"),
+        ("source-skill-revision-mismatch", record.revision, reference.revision, "revision"),
+        ("source-skill-digest-mismatch", record.content_digest, reference.content_digest, "content digest"),
+    )
+    for code, actual, expected, label in checks:
+        if actual != expected:
+            issues.append(_issue(
+                code, root, reference.manifest_path,
+                f"resolved Skill {label} differs for {record.skill_id}",
+            ))
+    expected_path = Path("skills-src") / reference.layer / record.skill_id.split("/")[0] / record.skill_id.split("/")[1]
+    if record.path.relative_to(root) != expected_path:
+        issues.append(_issue(
+            "source-skill-physical-path-mismatch", root, reference.manifest_path,
+            f"resolved Skill path differs for {record.skill_id}",
+        ))
+
+
+def _check_catalog_entries(
+    root: Path,
+    catalog_path: Path,
+    catalog_data: dict[str, Any],
+    governed_skills: tuple[_GovernedSkill, ...],
+    issues: list[IntegrityIssue],
+) -> None:
+    entries = catalog_data.get("skills")
+    if not isinstance(entries, list):
+        return
+    actual: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            issues.append(_issue("invalid-catalog", root, catalog_path, "Catalog Skill entries must have string ids"))
+            continue
+        skill_id = entry["id"]
+        if skill_id in actual:
+            issues.append(_issue("catalog-duplicate-skill", root, catalog_path, f"Catalog has duplicate Skill id: {skill_id}"))
+            continue
+        actual[skill_id] = entry
+    expected = {item.record.skill_id: _catalog_entry(root, item.record) for item in governed_skills}
+    for skill_id in sorted(actual.keys() - expected.keys()):
+        issues.append(_issue("catalog-extra-skill", root, catalog_path, f"Catalog has no governed Skill: {skill_id}"))
+    for skill_id in sorted(expected.keys() - actual.keys()):
+        issues.append(_issue("catalog-missing-skill", root, catalog_path, f"Catalog is missing governed Skill: {skill_id}"))
+    for skill_id in sorted(expected.keys() & actual.keys()):
+        if actual[skill_id] != expected[skill_id]:
+            issues.append(_issue("catalog-skill-mismatch", root, catalog_path, f"Catalog entry differs for Skill: {skill_id}"))
+
+
+def _catalog_entry(root: Path, record: registry.SkillRecord) -> dict[str, Any]:
+    return {
+        "id": record.skill_id,
+        "name": record.name,
+        "description": record.description,
+        "layer": record.layer,
+        "source_kind": record.source_kind,
+        "source_id": record.source_id,
+        "revision": record.revision,
+        "license": record.license,
+        "content_digest": record.content_digest,
+        "path": record.path.relative_to(root).as_posix(),
+    }
+
+
+def _paths_overlap(first: str, second: str) -> bool:
+    return first == second or first.startswith(second + "/") or second.startswith(first + "/")
 
 
 def _regular_file(path: Path) -> bool:

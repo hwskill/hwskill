@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -15,44 +16,19 @@ class RegistryValidationError(ValueError):
     pass
 
 
+_SHA1_RE = re.compile(r"[0-9a-fA-F]{40}")
+
+
 def validate_registry(repo_root: Path) -> list[SkillRecord]:
     records: list[SkillRecord] = []
     seen: set[str] = set()
     for governance_path in sorted((repo_root / "skills-src").glob("**/skill.yaml")):
-        skill_dir = governance_path.parent
-        data = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise RegistryValidationError(f"invalid governance mapping: {governance_path}")
-        skill_id = str(data.get("id", ""))
+        record = validate_skill(repo_root, governance_path)
+        skill_id = record.skill_id
         if not skill_id or skill_id in seen:
             raise RegistryValidationError(f"duplicate or missing id: {skill_id}")
         seen.add(skill_id)
-        markdown = skill_dir / "SKILL.md"
-        if not markdown.is_file():
-            raise RegistryValidationError(f"missing SKILL.md: {skill_dir}")
-        metadata, _ = parse_skill_markdown(markdown.read_text(encoding="utf-8"))
-        if "x-hwskill-runtime" in metadata:
-            raise RegistryValidationError(f"reserved x-hwskill-runtime: {skill_id}")
-        if metadata["name"] != data.get("name") or skill_dir.name != data.get("name"):
-            raise RegistryValidationError(f"directory/name mismatch: {skill_id}")
-        actual = content_digest(skill_dir)
-        if actual != data.get("content_digest"):
-            raise RegistryValidationError(
-                f"content_digest mismatch for {skill_id}: {data.get('content_digest')} != {actual}"
-            )
-        source_kind, source_id, revision = _parse_provenance(data.get("source"), skill_id)
-        records.append(SkillRecord(
-            skill_id=skill_id,
-            name=str(data["name"]),
-            description=str(data.get("description", metadata["description"])),
-            layer=str(data["layer"]),
-            source_kind=source_kind,
-            source_id=source_id,
-            revision=revision,
-            license=str(data["license"]),
-            content_digest=actual,
-            path=skill_dir,
-        ))
+        records.append(record)
     if not records:
         raise RegistryValidationError("no skills found")
     for profile_path in sorted((repo_root / "profiles").glob("*.yaml")):
@@ -62,12 +38,77 @@ def validate_registry(repo_root: Path) -> list[SkillRecord]:
         skill_ids = profile.get("skills")
         if not isinstance(skill_ids, list) or len(skill_ids) != len(set(skill_ids)):
             raise RegistryValidationError(f"invalid or duplicate profile skills: {profile_path.stem}")
-        for skill_id in skill_ids:
-            if skill_id not in seen:
+        for profile_skill_id in skill_ids:
+            if profile_skill_id not in seen:
                 raise RegistryValidationError(
-                    f"unknown skill in profile {profile_path.stem}: {skill_id}"
+                    f"unknown skill in profile {profile_path.stem}: {profile_skill_id}"
                 )
     return sorted(records, key=lambda item: item.skill_id)
+
+
+def validate_skill(repo_root: Path, governance_path: Path) -> SkillRecord:
+    """Validate one governed Skill without consulting sources, Catalog, or Profiles."""
+    skill_dir = governance_path.parent
+    try:
+        data = yaml.safe_load(governance_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise RegistryValidationError(f"cannot read governance: {governance_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RegistryValidationError(f"invalid governance mapping: {governance_path}")
+    if data.get("schema_version") != 1:
+        raise RegistryValidationError(f"unsupported governance schema_version: {governance_path}")
+    skill_id = data.get("id")
+    name = data.get("name")
+    layer = data.get("layer")
+    if not all(isinstance(value, str) and value.strip() == value and value for value in (skill_id, name, layer)):
+        raise RegistryValidationError(f"invalid Skill identity: {governance_path}")
+    _validate_physical_path(repo_root, skill_dir, skill_id, layer, name)
+    markdown = skill_dir / "SKILL.md"
+    if not markdown.is_file():
+        raise RegistryValidationError(f"missing SKILL.md: {skill_dir}")
+    try:
+        metadata, _ = parse_skill_markdown(markdown.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RegistryValidationError(f"invalid SKILL.md: {skill_id}: {exc}") from exc
+    if "x-hwskill-runtime" in metadata:
+        raise RegistryValidationError(f"reserved x-hwskill-runtime: {skill_id}")
+    if metadata["name"] != name:
+        raise RegistryValidationError(f"frontmatter/name mismatch: {skill_id}")
+    actual = content_digest(skill_dir)
+    if actual != data.get("content_digest"):
+        raise RegistryValidationError(
+            f"content_digest mismatch for {skill_id}: {data.get('content_digest')} != {actual}"
+        )
+    source_kind, source_id, revision = _parse_provenance(data.get("source"), skill_id)
+    description = data.get("description", metadata["description"])
+    license_name = data.get("license")
+    if not isinstance(description, str) or not isinstance(license_name, str) or not license_name.strip():
+        raise RegistryValidationError(f"invalid governance metadata: {skill_id}")
+    return SkillRecord(
+        skill_id=skill_id,
+        name=name,
+        description=description,
+        layer=layer,
+        source_kind=source_kind,
+        source_id=source_id,
+        revision=revision,
+        license=license_name,
+        content_digest=actual,
+        path=skill_dir,
+    )
+
+
+def _validate_physical_path(repo_root: Path, skill_dir: Path, skill_id: str, layer: str, name: str) -> None:
+    parts = skill_id.split("/")
+    if len(parts) != 2 or any(not part or part in {".", ".."} or "\\" in part for part in parts):
+        raise RegistryValidationError(f"invalid Skill id: {skill_id}")
+    try:
+        relative = skill_dir.relative_to(repo_root / "skills-src")
+    except ValueError as exc:
+        raise RegistryValidationError(f"Skill physical path escapes skills-src: {skill_id}") from exc
+    expected = (layer, parts[0], name)
+    if relative.parts != expected:
+        raise RegistryValidationError(f"physical path mismatch: {skill_id}")
 
 
 def _parse_provenance(source: object, skill_id: str) -> tuple[str, str | None, str]:
@@ -85,13 +126,20 @@ def _parse_provenance(source: object, skill_id: str) -> tuple[str, str | None, s
     source_id = source.get("source_id")
     revision = source.get("revision")
     upstream_path = source.get("upstream_path")
-    if (
-        not isinstance(source_id, str) or not source_id.strip()
-        or not isinstance(revision, str) or not revision.strip() or revision == "manual"
-        or not isinstance(upstream_path, str) or not upstream_path.strip()
-    ):
+    if not isinstance(source_id, str) or not source_id.strip():
         raise RegistryValidationError(f"invalid upstream source kind: {skill_id}")
+    if not isinstance(revision, str) or not _SHA1_RE.fullmatch(revision):
+        raise RegistryValidationError(f"upstream revision must be a full 40-character Git revision: {skill_id}")
+    if not isinstance(upstream_path, str) or not _safe_upstream_path(upstream_path):
+        raise RegistryValidationError(f"invalid upstream path: {skill_id}")
     return "upstream", source_id, revision
+
+
+def _safe_upstream_path(path: str) -> bool:
+    if not path or path != path.strip() or "\\" in path:
+        return False
+    parts = path.split("/")
+    return all(part and part not in {".", ".."} for part in parts)
 
 
 def build_catalog(repo_root: Path) -> dict[str, Any]:
