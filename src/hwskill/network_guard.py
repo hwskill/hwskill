@@ -15,6 +15,8 @@ _SECCOMP_MODE_FILTER = 2
 _BPF_LD_W_ABS = 0x20
 _BPF_JMP_JEQ_K = 0x15
 _BPF_RET_K = 0x06
+_SECCOMP_DATA_ARG0_OFFSET = 16
+_AF_UNIX = 1
 _SECCOMP_RET_ALLOW = 0x7FFF0000
 _SECCOMP_RET_ERRNO = 0x00050000
 _LANDLOCK_CREATE_RULESET = 444
@@ -65,20 +67,32 @@ class _LandlockPathBeneathAttr(ctypes.Structure):
 
 
 def install_network_guard() -> None:
-    """Apply a process-tree seccomp filter that denies socket and socketpair."""
+    """Deny internet socket creation while retaining AF_UNIX local process IPC."""
     machine = platform.machine().lower()
     syscalls = {
-        "x86_64": (41, 53, 425, 426, 427),
-        "amd64": (41, 53, 425, 426, 427),
-        "aarch64": (198, 199, 425, 426, 427),
-        "arm64": (198, 199, 425, 426, 427),
-        "i386": (102, 425, 426, 427),
-        "i686": (102, 425, 426, 427),
+        "x86_64": ((41, 53), (425, 426, 427)),
+        "amd64": ((41, 53), (425, 426, 427)),
+        "aarch64": ((198, 199), (425, 426, 427)),
+        "arm64": ((198, 199), (425, 426, 427)),
+        # socketcall's family argument lives behind a userspace pointer, which
+        # classic BPF cannot inspect safely.  Keep its conservative deny rule.
+        "i386": ((), (102, 425, 426, 427)),
+        "i686": ((), (102, 425, 426, 427)),
     }.get(machine)
     if syscalls is None:
         raise OSError(errno.ENOTSUP, "network guard does not support this architecture")
+    local_ipc_syscalls, denied_syscalls = syscalls
     instructions = [_SockFilter(_BPF_LD_W_ABS, 0, 0, 0)]
-    for number in syscalls:
+    for number in local_ipc_syscalls:
+        instructions.extend((
+            # On a mismatch, skip this syscall's argument check and both returns.
+            _SockFilter(_BPF_JMP_JEQ_K, 0, 4, number),
+            _SockFilter(_BPF_LD_W_ABS, 0, 0, _SECCOMP_DATA_ARG0_OFFSET),
+            _SockFilter(_BPF_JMP_JEQ_K, 0, 1, _AF_UNIX),
+            _SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ALLOW),
+            _SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ERRNO | errno.EPERM),
+        ))
+    for number in denied_syscalls:
         instructions.extend((
             _SockFilter(_BPF_JMP_JEQ_K, 0, 1, number),
             _SockFilter(_BPF_RET_K, 0, 0, _SECCOMP_RET_ERRNO | errno.EPERM),

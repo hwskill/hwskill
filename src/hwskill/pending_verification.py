@@ -116,6 +116,7 @@ _PENDING_SCHEMA_VERSION = 2
 _MAX_IDENTIFIER_COMPONENT_LENGTH = 255
 _MAX_REPOSITORY_PATH_LENGTH = 4096
 _MAX_GITFILE_BYTES = 4096
+_DIRECTORY_ANCHORS_ENV = "HWSKILL_PENDING_DIRECTORY_ANCHORS"
 
 
 class _GitMarkerMissing(PendingVerificationError):
@@ -329,16 +330,64 @@ def _open_directory_path(path: Path) -> int:
     absolute = Path(path)
     if not absolute.is_absolute():
         raise PendingVerificationError("Git directory must be absolute")
-    fd = os.open("/", _directory_flags())
     try:
-        for component in absolute.parts[1:]:
+        return _open_directory_from_anchor(absolute, Path("/"))
+    except PermissionError:
+        pass
+    except OSError as exc:
+        raise PendingVerificationError("cannot safely open Git directory") from exc
+    for anchor in _permitted_directory_anchors():
+        try:
+            relative = absolute.relative_to(anchor)
+        except ValueError:
+            continue
+        try:
+            return _open_directory_from_anchor(absolute, anchor, relative)
+        except PermissionError:
+            continue
+        except OSError as exc:
+            raise PendingVerificationError("cannot safely open Git directory") from exc
+    raise PendingVerificationError("cannot safely open Git directory")
+
+
+def _open_directory_from_anchor(path: Path, anchor: Path, relative: Path | None = None) -> int:
+    fd = os.open(anchor, _directory_flags())
+    try:
+        components = path.parts[1:] if relative is None else relative.parts
+        for component in components:
             next_fd = os.open(component, _directory_flags(), dir_fd=fd)
             os.close(fd)
             fd = next_fd
         return fd
-    except OSError as exc:
+    except BaseException:
         os.close(fd)
-        raise PendingVerificationError("cannot safely open Git directory") from exc
+        raise
+
+
+def _permitted_directory_anchors() -> tuple[Path, ...]:
+    """Return runner-provided, direct absolute anchors after strict validation.
+
+    A Landlock-constrained process cannot open ``/`` even when a declared
+    subtree such as ``/tmp`` is allowed.  The runner can provide direct
+    first-level mount anchors; every child is still opened one component at a
+    time with ``O_NOFOLLOW``.
+    """
+    value = os.environ.get(_DIRECTORY_ANCHORS_ENV, "")
+    anchors: list[Path] = []
+    for raw in value.split(os.pathsep):
+        candidate = Path(raw)
+        if (
+            not raw
+            or "\x00" in raw
+            or not candidate.is_absolute()
+            or candidate == Path("/")
+            or len(candidate.parts) != 2
+            or candidate.parts[1] in {"", ".", ".."}
+        ):
+            continue
+        if candidate not in anchors:
+            anchors.append(candidate)
+    return tuple(anchors)
 
 
 def _directory_flags() -> int:

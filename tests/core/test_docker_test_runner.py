@@ -873,6 +873,60 @@ class DockerExecutionTests(unittest.TestCase):
 
 
 class WorkerExecutionTests(unittest.TestCase):
+    def test_standard_network_guard_allows_local_ipc_but_denies_internet_families(self) -> None:
+        """Core async tests need AF_UNIX, while internet socket creation stays denied."""
+        from hwskill import network_guard
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            probe = """\
+import errno
+import pathlib
+import socket
+left, right = socket.socketpair()
+left.close()
+right.close()
+for family in (socket.AF_INET, socket.AF_INET6):
+    try:
+        socket.socket(family, socket.SOCK_STREAM)
+    except OSError as exc:
+        if exc.errno != errno.EPERM:
+            raise
+    else:
+        raise RuntimeError(f"internet family {family} was allowed")
+pathlib.Path("probe").write_text("local-ipc-only")
+"""
+            completed = subprocess.run(
+                (
+                    sys.executable, str(Path(network_guard.__file__).resolve()),
+                    "--read-write", str(workspace), "--", sys.executable, "-c", probe,
+                ), cwd=workspace, text=True, capture_output=True, check=False,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8", "HOME": str(workspace)},
+            )
+            observed = (workspace / "probe").read_text(encoding="utf-8") if (workspace / "probe").exists() else ""
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(observed, "local-ipc-only")
+
+    def test_core_guard_prefix_adds_only_its_own_fd_directory(self) -> None:
+        from hwskill.test_cli import _core_command_prefix
+        from hwskill.test_runner import TestEnvironment, _command_prefix
+
+        environment = TestEnvironment(
+            ROOT, "docker", "codex", "model", "high", workspace_root=Path("/workspace"),
+            command_prefix=("guard", "--read-write", "/workspace", "--"),
+        )
+
+        self.assertEqual(
+            _core_command_prefix(environment),
+            ("guard", "--read-write", "/workspace", "--read-only", "/proc/self/fd", "--"),
+        )
+        self.assertEqual(
+            _command_prefix(environment, Path("/workspace/case")),
+            ("guard", "--read-write", "/workspace/case", "--"),
+        )
+
     def test_allow_network_guard_keeps_export_isolated_and_supports_local_socketpair(self) -> None:
         from hwskill import network_guard
 
@@ -1086,6 +1140,169 @@ cases:
 
         self.assertEqual(result.status, "PASS")
         self.assertEqual(result.cases[0].case_id, "tests/core/test_current.py")
+
+    def test_real_guard_core_stage_preserves_a_writable_repository_layout(self) -> None:
+        """A staged core module keeps its normal ``__file__``-derived root."""
+        from hwskill import network_guard
+        from hwskill.test_cli import _run_core_path
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            repo = root / "registry"
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            (repo / "README.md").write_text("snapshot-root\n", encoding="utf-8")
+            (repo / "src").mkdir()
+            (repo / "src" / "__pycache__").mkdir()
+            (repo / "src" / "__pycache__" / "host.pyc").write_bytes(b"host-bytecode")
+            (repo / "src" / "host.pyc").write_bytes(b"host-bytecode")
+            (repo / "scripts").mkdir()
+            script = repo / "scripts" / "executable.sh"
+            script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            script.chmod(0o755)
+            (core / "__init__.py").write_text("", encoding="utf-8")
+            (core / "test_layout.py").write_text(
+                "from pathlib import Path\n"
+                "from tempfile import TemporaryDirectory\n"
+                "import os, unittest\n"
+                "ROOT = Path(__file__).resolve().parents[2]\n"
+                "class Layout(unittest.TestCase):\n"
+                " def test_root(self):\n"
+                "  self.assertEqual((ROOT / 'README.md').read_text(), 'snapshot-root\\n')\n"
+                "  self.assertTrue(os.access(ROOT / 'scripts/executable.sh', os.X_OK))\n"
+                "  self.assertFalse((ROOT / 'src/__pycache__').exists())\n"
+                "  self.assertFalse((ROOT / 'src/host.pyc').exists())\n"
+                "  with TemporaryDirectory(dir=ROOT) as path: self.assertTrue(Path(path).is_dir())\n",
+                encoding="utf-8",
+            )
+            artifacts = root / "artifacts"
+            workspace = root / "workspace"
+            artifacts.mkdir()
+            workspace.mkdir()
+            environment = TestEnvironment(
+                repo, "docker", "codex", "model", "high", workspace_root=workspace,
+                command_path=f"{Path(sys.executable).parent}:{os.defpath}",
+                command_prefix=(
+                    sys.executable, str(Path(network_guard.__file__).resolve()),
+                    "--read-only", str(repo), "--read-only", str(repo / "tests"),
+                    "--read-write", str(artifacts), "--read-write", str(workspace), "--",
+                ),
+            )
+
+            result = _run_core_path(Path("tests/core/test_layout.py"), repo, artifacts, environment)
+
+        self.assertEqual(result.status, "PASS")
+
+    def test_core_child_environment_uses_private_workspace_temp_directory(self) -> None:
+        from hwskill.test_cli import _core_environment
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            workspace = Path("/workspace")
+            temporary_root = workspace / "hwskill-core-stage-unique"
+            environment = TestEnvironment(root / "registry", "docker", "codex", "model", "high", workspace_root=workspace)
+
+            values = _core_environment("/registry", environment, temporary_root)
+
+        self.assertEqual(values["TMPDIR"], str(temporary_root))
+        self.assertEqual(values["HOME"], str(temporary_root / "home"))
+        self.assertEqual(values["HWSKILL_PENDING_DIRECTORY_ANCHORS"], str(workspace))
+
+    def test_core_snapshot_retries_short_writes_without_truncating_file(self) -> None:
+        from hwskill.test_cli import _copy_core_file_descriptor
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            source = root / "source"
+            destination = root / "destination"
+            expected = b"complete-core-snapshot" * 1024
+            source.write_bytes(expected)
+            original_write = os.write
+
+            def short_write(descriptor, data):
+                return original_write(descriptor, data[:7])
+
+            descriptor = os.open(source, os.O_RDONLY)
+            try:
+                with patch("hwskill.test_cli.os.write", side_effect=short_write):
+                    _copy_core_file_descriptor(descriptor, destination)
+            finally:
+                os.close(descriptor)
+
+            observed = destination.read_bytes()
+
+        self.assertEqual(observed, expected)
+
+    def test_core_snapshot_excludes_untracked_files_inside_allowlisted_directories(self) -> None:
+        from hwskill import network_guard
+        from hwskill.test_cli import _run_core_path
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            repo = root / "registry"
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            (repo / "src").mkdir()
+            (repo / "src" / "tracked.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (repo / "src" / "untracked.txt").write_text("private-user-content\n", encoding="utf-8")
+            (core / "test_snapshot.py").write_text(
+                "from pathlib import Path\n"
+                "import unittest\n"
+                "ROOT = Path(__file__).resolve().parents[2]\n"
+                "class Snapshot(unittest.TestCase):\n"
+                " def test_untracked_is_excluded(self):\n"
+                "  self.assertTrue((ROOT / 'src/tracked.py').is_file())\n"
+                "  self.assertFalse((ROOT / 'src/untracked.txt').exists())\n",
+                encoding="utf-8",
+            )
+            subprocess.run(("git", "init", "-q", str(repo)), check=True)
+            subprocess.run(("git", "-C", str(repo), "add", "src/tracked.py", "tests/core/test_snapshot.py"), check=True)
+            artifacts = root / "artifacts"
+            workspace = root / "workspace"
+            artifacts.mkdir()
+            workspace.mkdir()
+            environment = TestEnvironment(
+                repo, "docker", "codex", "model", "high", workspace_root=workspace,
+                command_path=f"{Path(sys.executable).parent}:{os.defpath}",
+                command_prefix=(
+                    sys.executable, str(Path(network_guard.__file__).resolve()),
+                    "--read-only", str(repo), "--read-only", str(repo / "tests"),
+                    "--read-write", str(artifacts), "--read-write", str(workspace), "--",
+                ),
+            )
+
+            result = _run_core_path(Path("tests/core/test_snapshot.py"), repo, artifacts, environment)
+
+        self.assertEqual(result.status, "PASS")
+
+    def test_pending_directory_uses_the_declared_anchor_when_root_is_denied(self) -> None:
+        """The fallback remains component-wise O_NOFOLLOW traversal from /tmp."""
+        from hwskill.pending_verification import write_pending_verification
+        from hwskill.test_impact import TestSelection
+
+        with TemporaryDirectory(dir="/tmp") as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            (repo / "registry").mkdir()
+            subprocess.run(("git", "init", "-q", str(repo)), check=True)
+            (repo / "registry/catalog.json").write_text('{"skills": []}', encoding="utf-8")
+            original_open = os.open
+
+            def deny_root(path, *args, **kwargs):
+                if path == "/" or path == Path("/"):
+                    raise PermissionError("root denied")
+                return original_open(path, *args, **kwargs)
+
+            with patch.dict(os.environ, {"HWSKILL_PENDING_DIRECTORY_ANCHORS": "/tmp"}, clear=False), patch(
+                "hwskill.pending_verification.os.open", side_effect=deny_root,
+            ):
+                pending = write_pending_verification(repo, TestSelection(), {})
+                published = pending.is_file()
+
+        self.assertTrue(published)
 
     def test_unavailable_filesystem_isolation_is_explicitly_blocked(self) -> None:
         from contextlib import redirect_stderr
@@ -1310,7 +1527,8 @@ cases:
                 result = _run_core_path(Path("tests/core"), repo, artifacts, environment)
 
         self.assertEqual(result.status, "PASS")
-        self.assertEqual(popen.call_args.args[0][:2], ("guard", "--"))
+        self.assertEqual(popen.call_args.args[0][0], "guard")
+        self.assertIn("/proc/self/fd", popen.call_args.args[0])
 
     def test_command_executor_uses_worker_network_guard_prefix(self) -> None:
         from hwskill.test_artifacts import ActionResult

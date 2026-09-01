@@ -3,12 +3,38 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 
 class TestTestConfiguration(unittest.TestCase):
+    def test_config_parent_can_use_a_declared_landlock_anchor(self) -> None:
+        from hwskill import network_guard
+        from hwskill.test_configuration import HostModel, TestConfiguration, write_test_configuration
+
+        with TemporaryDirectory(dir="/tmp") as directory:
+            workspace = Path("/tmp")
+            config = Path(directory) / "home/.config/hwskill/test.yaml"
+            completed = subprocess.run(
+                (
+                    sys.executable, str(Path(network_guard.__file__).resolve()),
+                    "--read-only", str(Path(__file__).parents[2] / "src"),
+                    "--read-write", str(workspace), "--", sys.executable, "-c",
+                    "from pathlib import Path; from hwskill.test_configuration import HostModel, TestConfiguration, write_test_configuration; "
+                    "write_test_configuration(TestConfiguration('docker','codex',{'codex': HostModel('model','high')}), path=Path(__import__('os').environ['CONFIG']))",
+                ), text=True, capture_output=True, check=False,
+                env={
+                    "PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8",
+                    "PYTHONPATH": str(Path(__file__).parents[2] / "src"), "CONFIG": str(config),
+                    "HWSKILL_PENDING_DIRECTORY_ANCHORS": str(workspace),
+                },
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(config.is_file())
     def test_xdg_path_is_used_before_home_config(self) -> None:
         from hwskill.test_configuration import TestConfigurationError, test_config_path
 

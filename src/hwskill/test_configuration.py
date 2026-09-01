@@ -291,9 +291,30 @@ def _absolute_config_path(path: Path) -> Path:
 
 def _open_config_parent(path: Path, *, create: bool) -> int:
     """Anchor every parent directory, refusing symlink swaps on the way."""
-    descriptor = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for component in path.parent.parts[1:]:
+        return _open_config_parent_from_anchor(Path("/"), path.parent.parts[1:], create=create)
+    except PermissionError:
+        pass
+    # Reuse the pending-state anchor grammar: the runner supplies a trusted,
+    # first-level mount and every descendant remains O_NOFOLLOW-opened.
+    from .pending_verification import _permitted_directory_anchors
+
+    for anchor in _permitted_directory_anchors():
+        try:
+            relative = path.parent.relative_to(anchor)
+        except ValueError:
+            continue
+        try:
+            return _open_config_parent_from_anchor(anchor, relative.parts, create=create)
+        except PermissionError:
+            continue
+    raise TestConfigurationError("cannot safely open test configuration parent")
+
+
+def _open_config_parent_from_anchor(anchor: Path, components: tuple[str, ...], *, create: bool) -> int:
+    descriptor = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        for component in components:
             descriptor = _open_or_create_directory(component, descriptor, create=create)
         return descriptor
     except Exception:

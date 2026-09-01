@@ -58,15 +58,16 @@ from pathlib import Path
 import sys
 import unittest
 
-stage = Path(sys.argv[1])
+repository = Path(sys.argv[1])
 selected = Path(sys.argv[2]) if sys.argv[2] else None
-sys.path.insert(0, str(stage))
+core = repository / "tests" / "core"
+sys.path.insert(0, str(repository))
 loader = unittest.defaultTestLoader
 def load_selected(selected, index):
-    source = stage / selected
+    source = repository / selected
     package_parts = []
     parent = selected.parent
-    while parent != Path(".") and (stage / parent / "__init__.py").is_file():
+    while parent != Path(".") and (repository / parent / "__init__.py").is_file():
         package_parts.insert(0, parent.name)
         parent = parent.parent
     if package_parts and parent == Path("."):
@@ -82,8 +83,8 @@ def load_selected(selected, index):
     return loader.loadTestsFromModule(module)
 if selected is None:
     selected_files = sorted(
-        source.relative_to(stage)
-        for source in stage.rglob("test_*.py")
+        source.relative_to(repository)
+        for source in core.rglob("test_*.py")
         if source.is_file()
     )
     suite = unittest.TestSuite(load_selected(source, index) for index, source in enumerate(selected_files))
@@ -629,15 +630,20 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
             _after_core_directories_opened(root, root / "tests" / "core")
             _assert_core_directory_unchanged(root, core_fd)
             root_path = f"/proc/self/fd/{root_fd}"
-            with tempfile.TemporaryDirectory(prefix="hwskill-core-stage-") as stage_directory:
-                staged_core = _stage_core_sources(core_fd, Path(stage_directory))
-                selected = "" if relative == Path("tests/core") else str(relative.relative_to("tests/core"))
-                if selected and not (staged_core / selected).is_file():
+            tracked_paths = _core_snapshot_tracked_paths(root_path, root_fd)
+            stage_parent = _core_stage_parent(environment)
+            stage_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="hwskill-core-stage-", dir=stage_parent) as stage_directory:
+                staged_repository = _stage_core_repository(root_fd, Path(stage_directory), tracked_paths)
+                temporary_root = Path(stage_directory)
+                (temporary_root / "home").mkdir(mode=0o700)
+                selected = "" if relative == Path("tests/core") else str(relative)
+                if selected and not (staged_repository / selected).is_file():
                     raise ValueError("selected core test disappeared before staging")
                 process = subprocess.Popen(
-                    environment.command_prefix
-                    + (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_core), selected),
-                    cwd=root_path, env=_core_environment(root_path, environment), stdin=subprocess.DEVNULL,
+                    _core_command_prefix(environment)
+                    + (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_repository), selected),
+                    cwd=root_path, env=_core_environment(root_path, environment, temporary_root), stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                     start_new_session=True, pass_fds=(root_fd, core_fd),
                 )
@@ -701,25 +707,124 @@ def _assert_core_directory_unchanged(root: Path, core_fd: int) -> None:
         raise ValueError("core test directory changed before launch")
 
 
-def _stage_core_sources(core_fd: int, stage_root: Path) -> Path:
-    """Copy the descriptor-anchored core tree without following links or special files."""
-    staged_core = stage_root / "core"
-    staged_core.mkdir(mode=0o700)
-    _copy_core_directory(core_fd, staged_core)
-    return staged_core
+_CORE_SNAPSHOT_FILES = (
+    ".dockerignore", ".gitignore", "README.md", "install.sh", "pyproject.toml",
+)
+_CORE_SNAPSHOT_DIRECTORIES = (
+    "docker", "docs", "examples", "profiles", "registry", "scripts", "skills-src", "sources", "src", "tests",
+)
 
 
-def _copy_core_directory(source_fd: int, destination: Path) -> None:
+def _core_snapshot_tracked_paths(root_path: str, root_fd: int) -> frozenset[PurePosixPath] | None:
+    """Return Git-indexed paths, retaining modified tracked content but no untracked files."""
+    try:
+        marker = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        # Core-runner unit fixtures deliberately need not be Git repositories.
+        return None
+    if stat.S_ISLNK(marker.st_mode) or not (stat.S_ISDIR(marker.st_mode) or stat.S_ISREG(marker.st_mode)):
+        raise ValueError("core repository Git marker is unsafe")
+    try:
+        completed = subprocess.run(
+            ("git", "-C", root_path, "ls-files", "-z"), stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False, timeout=10,
+            env={"PATH": os.environ.get("PATH", os.defpath), "LANG": "C.UTF-8"},
+            pass_fds=(root_fd,),
+        )
+    except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
+        raise ValueError("cannot determine tracked core snapshot paths") from exc
+    if completed.returncode != 0:
+        raise ValueError("cannot determine tracked core snapshot paths")
+    paths: set[PurePosixPath] = set()
+    for raw in completed.stdout.split(b"\0"):
+        if not raw:
+            continue
+        try:
+            value = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError("tracked core snapshot path is invalid") from exc
+        path = PurePosixPath(value)
+        if not value or path.is_absolute() or "\\" in value or any(part in {"", ".", ".."} for part in path.parts):
+            raise ValueError("tracked core snapshot path is invalid")
+        paths.add(path)
+    return frozenset(paths)
+
+
+def _stage_core_repository(
+    root_fd: int, stage_root: Path, tracked_paths: frozenset[PurePosixPath] | None,
+) -> Path:
+    """Create a sealed, writable test-repository snapshot from declared inputs only."""
+    staged_repository = stage_root / "repository"
+    staged_repository.mkdir(mode=0o700)
+    for name in _CORE_SNAPSHOT_FILES:
+        if tracked_paths is None or PurePosixPath(name) in tracked_paths:
+            _copy_core_file_if_present(root_fd, name, staged_repository)
+    for name in _CORE_SNAPSHOT_DIRECTORIES:
+        prefix = PurePosixPath(name)
+        if tracked_paths is None or _core_snapshot_contains_path(tracked_paths, prefix):
+            _copy_core_directory_if_present(root_fd, name, staged_repository, tracked_paths, prefix)
+    return staged_repository
+
+
+def _copy_core_file_if_present(source_fd: int, name: str, destination_root: Path) -> None:
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=source_fd)
+    except FileNotFoundError:
+        return
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("core repository snapshot contains an unsupported file")
+        _copy_core_file_descriptor(descriptor, destination_root / name)
+    finally:
+        os.close(descriptor)
+
+
+def _copy_core_directory_if_present(
+    source_fd: int,
+    name: str,
+    destination_root: Path,
+    tracked_paths: frozenset[PurePosixPath] | None,
+    prefix: PurePosixPath,
+) -> None:
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=source_fd)
+    except FileNotFoundError:
+        return
+    try:
+        _copy_core_directory(descriptor, destination_root / name, tracked_paths, prefix)
+    finally:
+        os.close(descriptor)
+
+
+def _core_snapshot_contains_path(paths: frozenset[PurePosixPath], prefix: PurePosixPath) -> bool:
+    return any(path.parts[:len(prefix.parts)] == prefix.parts for path in paths)
+
+
+def _copy_core_directory(
+    source_fd: int,
+    destination: Path,
+    tracked_paths: frozenset[PurePosixPath] | None,
+    prefix: PurePosixPath,
+) -> None:
+    destination.mkdir(mode=0o700)
     with os.scandir(source_fd) as entries:
         for entry in sorted(entries, key=lambda item: item.name):
+            if entry.name == "__pycache__" or entry.name.endswith((".pyc", ".pyo")):
+                continue
             if entry.is_symlink():
                 raise ValueError("core test tree contains a symlink")
             target = destination / entry.name
+            relative = prefix / entry.name
+            if tracked_paths is not None:
+                if entry.is_dir(follow_symlinks=False) and not _core_snapshot_contains_path(tracked_paths, relative):
+                    continue
+                if entry.is_file(follow_symlinks=False) and relative not in tracked_paths:
+                    continue
             if entry.is_dir(follow_symlinks=False):
-                target.mkdir(mode=0o700)
                 child_fd = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=source_fd)
                 try:
-                    _copy_core_directory(child_fd, target)
+                    _copy_core_directory(child_fd, target, tracked_paths, relative)
                 finally:
                     os.close(child_fd)
                 continue
@@ -729,21 +834,67 @@ def _copy_core_directory(source_fd: int, destination: Path) -> None:
             try:
                 if not stat.S_ISREG(os.fstat(source_file_fd).st_mode):
                     raise ValueError("core test tree contains an unsupported file")
-                with target.open("xb") as output:
-                    while chunk := os.read(source_file_fd, 64 * 1024):
-                        output.write(chunk)
+                _copy_core_file_descriptor(source_file_fd, target)
             finally:
                 os.close(source_file_fd)
 
 
-def _core_environment(root_path: str, environment: TestEnvironment) -> dict[str, str]:
+def _copy_core_file_descriptor(source_fd: int, destination: Path) -> None:
+    mode = stat.S_IMODE(os.fstat(source_fd).st_mode) & 0o777
+    destination_fd = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(destination_fd, mode)
+        while chunk := os.read(source_fd, 64 * 1024):
+            _write_core_snapshot_chunk(destination_fd, chunk)
+    finally:
+        os.close(destination_fd)
+
+
+def _write_core_snapshot_chunk(destination_fd: int, chunk: bytes) -> None:
+    pending = memoryview(chunk)
+    while pending:
+        written = os.write(destination_fd, pending)
+        if written <= 0:
+            raise OSError("core repository snapshot write made no progress")
+        pending = pending[written:]
+
+
+def _core_stage_parent(environment: TestEnvironment) -> Path:
+    """Use the worker's executable workspace, never the container's noexec /tmp."""
+    return environment.workspace_root if environment.workspace_root is not None else Path(tempfile.gettempdir())
+
+
+def _core_command_prefix(environment: TestEnvironment) -> tuple[str, ...]:
+    """Core framework tests may inspect only their own descriptor directory."""
+    prefix = environment.command_prefix
+    if environment.runner != "docker" or not prefix:
+        return prefix
+    if prefix[-1] != "--":
+        raise ValueError("core isolation prefix must terminate with --")
+    return (*prefix[:-1], "--read-only", "/proc/self/fd", "--")
+
+
+def _core_pending_anchor(temporary_root: Path) -> str:
+    absolute = temporary_root.absolute()
+    if len(absolute.parts) < 2 or absolute.parts[0] != os.path.sep:
+        raise ValueError("core temporary root requires a direct absolute anchor")
+    return str(Path(*absolute.parts[:2]))
+
+
+def _core_environment(root_path: str, environment: TestEnvironment, temporary_root: Path) -> dict[str, str]:
     python_root = str(environment.repo_root / "src") if environment.runner == "docker" else root_path + "/src"
     return {
         "PATH": environment.command_path or os.defpath,
         "LANG": "C.UTF-8",
-        "HOME": tempfile.gettempdir(),
+        "HOME": str(temporary_root / "home"),
+        "TMPDIR": str(temporary_root),
         "PYTHONPATH": python_root,
         "PYTHONDONTWRITEBYTECODE": "1",
+        "HWSKILL_PENDING_DIRECTORY_ANCHORS": _core_pending_anchor(temporary_root),
     }
 
 

@@ -798,7 +798,6 @@ class TestCliTest(unittest.TestCase):
                 self.stdout = StringIO('{"type":"result","result":"' + sentinel + '"}\n')
                 self.stderr = StringIO(sentinel + "\n")
                 self.returncode = 0
-                self.pid = os.getpid()
 
             def wait(self, timeout=None):
                 return self.returncode
@@ -824,10 +823,11 @@ class TestCliTest(unittest.TestCase):
             "hwskill.test_cli.load_test_configuration", return_value=self.config
         ), patch("hwskill.test_cli._local_agent_executor", return_value=executor), patch(
             "hwskill.test_agent.subprocess.Popen", side_effect=popen
-        ):
+        ), patch("hwskill.test_agent._terminate_residual_process_group", return_value=False) as residual_cleanup:
             code = test_cli.run_test_command(args, self.repo, stdout, StringIO())
 
         self.assertEqual(code, 0, stdout.getvalue())
+        residual_cleanup.assert_called_once()
         credentialed = [environment for environment in captured if "CODEX_API_KEY" in environment]
         self.assertEqual(credentialed[0]["CODEX_API_KEY"], sentinel)
         self.assertTrue(all("UNRELATED_SECRET" not in environment for environment in captured))
