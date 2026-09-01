@@ -8,8 +8,8 @@ content hashes. Build only through
 `hwskill test setup`; `setup --check` performs a read-only identity inspection.
 
 At run time the repository and `tests/` are mounted read-only. The workspace is
-a writable mount, while action artifacts first live in a container-private
-`/artifacts` tmpfs. The host artifact root is mounted separately at `/export`
+a container-private executable tmpfs, while action artifacts first live in a
+separate noexec `/artifacts` tmpfs. The host artifact root is mounted separately at `/export`
 and is not exposed to Agent or command subprocesses. The request contains only
 test selection, model configuration, and approved credential environment *names*;
 secret values remain in the Docker client's inherited environment. Supported
@@ -48,7 +48,8 @@ distinguish from legitimate business output; such deliberate transformation is
 outside this raw-secret boundary.
 
 Offline worker smoke (after the image has been built) must mount the repository
-and tests read-only, provide separate writable artifact/workspace roots, and
+and tests read-only, provide a writable host artifact root plus a private
+temporary workspace, and
 invoke the same strict worker entry point used by `hwskill test`. For example,
 create a request containing this payload:
 
@@ -80,10 +81,10 @@ docker run --rm --init --read-only --network none --cap-drop ALL \
   --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=256m \
   --tmpfs "/artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=$(id -u),gid=$(id -g)" \
+  --tmpfs "/workspace:rw,nosuid,nodev,exec,size=256m,mode=0700,uid=$(id -u),gid=$(id -g)" \
   --mount type=bind,src="$PWD",dst=/registry,readonly \
   --mount type=bind,src="$PWD/tests",dst=/tests,readonly \
   --mount type=bind,src="$ARTIFACTS",dst=/export \
-  --mount type=bind,src="$WORKSPACE",dst=/workspace \
   --mount type=bind,src="$REQUEST",dst=/run/request.json,readonly \
   --env HOME=/workspace/home \
   --env HWSKILL_REGISTRY_ROOT=/registry \

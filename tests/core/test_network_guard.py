@@ -1,10 +1,28 @@
 from __future__ import annotations
 
 import errno
+from io import StringIO
 import unittest
+from unittest.mock import patch
 
 
 class NetworkGuardFilterTest(unittest.TestCase):
+    def test_network_only_mode_installs_seccomp_without_filesystem_guard(self) -> None:
+        from hwskill import network_guard
+
+        error = StringIO()
+        with patch.object(network_guard, "install_filesystem_guard") as filesystem, patch.object(
+            network_guard, "install_network_guard"
+        ) as network, patch.object(network_guard.os, "execvp", side_effect=OSError("exec blocked")), patch(
+            "sys.stderr", error,
+        ):
+            code = network_guard.main(("--network-only", "--", "true"))
+
+        self.assertEqual(code, network_guard.GUARD_FAILURE_EXIT)
+        filesystem.assert_not_called()
+        network.assert_called_once_with()
+        self.assertIn(network_guard.GUARD_FAILURE_MARKER, error.getvalue())
+
     def test_filter_rejects_an_audit_architecture_mismatch_before_syscall_dispatch(self) -> None:
         from hwskill.network_guard import (
             _AUDIT_ARCH_X86_64,

@@ -101,7 +101,6 @@ class CredentialFile:
 class DockerTestRequest:
     request_path: Path
     artifact_root: Path
-    workspace_root: Path
     network: NetworkMode
     environment_variables: tuple[tuple[str, str], ...] = ()
     credential_files: tuple[CredentialFile, ...] = ()
@@ -184,7 +183,6 @@ class DockerTestRunner:
         repository = _real_directory(self.repo_root, "repository")
         tests = _real_directory(repository / "tests", "tests")
         artifacts = _real_directory(request.artifact_root, "artifact root")
-        workspace = _real_directory(request.workspace_root, "workspace root")
         if request.network not in {"none", "agent"}:
             raise DockerRunnerUnavailable("unsupported test network mode")
         argv: list[str] = [
@@ -194,10 +192,10 @@ class DockerTestRunner:
             "--user", f"{self._uid}:{self._gid}",
             "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=256m",
             "--tmpfs", f"/artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid={self._uid},gid={self._gid}",
+            "--tmpfs", f"/workspace:rw,nosuid,nodev,exec,size=256m,mode=0700,uid={self._uid},gid={self._gid}",
             "--mount", _mount(repository, "/registry", readonly=True),
             "--mount", _mount(tests, "/tests", readonly=True),
             "--mount", _mount(artifacts, "/export"),
-            "--mount", _mount(workspace, "/workspace"),
             "--mount", _mount(request_path, "/run/request.json", readonly=True),
             "--env", "HOME=/workspace/home",
             "--env", "HWSKILL_REGISTRY_ROOT=/registry",
@@ -259,9 +257,7 @@ class DockerTestRunner:
                 raise DockerRunnerUnavailable("standard test image preflight failed")
             payload = _worker_request_payload(collections, environment, self.repo_root)
             expectations = _result_expectations(collections, self.repo_root)
-            with tempfile.TemporaryDirectory(prefix="hwskill-docker-request-") as request_directory, tempfile.TemporaryDirectory(
-                prefix="hwskill-docker-workspace-"
-            ) as workspace_directory:
+            with tempfile.TemporaryDirectory(prefix="hwskill-docker-request-") as request_directory:
                 os.chmod(request_directory, 0o700)
                 request_path = Path(request_directory) / "request.json"
                 descriptor = os.open(request_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -269,7 +265,7 @@ class DockerTestRunner:
                     json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                     handle.write("\n")
                 request = DockerTestRequest(
-                    request_path, artifacts, Path(workspace_directory),
+                    request_path, artifacts,
                     selection_network_mode(collections),
                     tuple(environment.environment_variables), self._credential_files,
                 )

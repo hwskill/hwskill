@@ -57,6 +57,8 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
         self.assertIn('--pids-limit 512', readme)
         self.assertIn('dst=/export', readme)
         self.assertIn('/artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700', readme)
+        self.assertIn('/workspace:rw,nosuid,nodev,exec,size=256m,mode=0700', readme)
+        self.assertNotIn('dst=/workspace', readme)
 
     def test_docker_run_mounts_registry_read_only_and_artifacts_writable_without_secrets(self) -> None:
         from hwskill.docker_test_runner import DockerTestRunner, DockerTestRequest, ImageInfo
@@ -75,7 +77,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             runner = DockerTestRunner(
                 repo, config, image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "a" * 64), uid=123, gid=456,
             )
-            value = DockerTestRequest(request, artifacts, workspace, "none", (("CODEX_API_KEY", "credential-sentinel"),))
+            value = DockerTestRequest(request, artifacts, "none", (("CODEX_API_KEY", "credential-sentinel"),))
 
             argv = runner.build_run_command(value)
 
@@ -84,7 +86,8 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             self.assertIn(f"src={repo / 'tests'},dst=/tests,readonly", joined)
             self.assertIn(f"src={artifacts},dst=/export", joined)
             self.assertIn("--tmpfs /artifacts:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=123,gid=456", joined)
-            self.assertIn(f"src={workspace},dst=/workspace", joined)
+            self.assertIn("--tmpfs /workspace:rw,nosuid,nodev,exec,size=256m,mode=0700,uid=123,gid=456", joined)
+            self.assertNotIn(f"src={workspace},dst=/workspace", joined)
             self.assertIn("--network none", joined)
             self.assertIn("--env CODEX_API_KEY", joined)
             self.assertNotIn("credential-sentinel", joined)
@@ -108,7 +111,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             config = TestConfiguration("docker", "codex", {"codex": HostModel("model", "high")})
             runner = DockerTestRunner(repo, config, image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "b" * 64), uid=123, gid=456)
             request = DockerTestRequest(
-                request_path, root / "artifacts", root / "workspace", "agent", (),
+                request_path, root / "artifacts", "agent", (),
                 (CredentialFile(auth, "/credentials/codex/auth.json"),),
             )
 
@@ -139,7 +142,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
                 image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "d" * 64), uid=123, gid=456,
             )
             argv = runner.build_run_command(DockerTestRequest(
-                request_path, root / "artifacts", root / "workspace", "agent", (),
+                request_path, root / "artifacts", "agent", (),
                 (CredentialFile(credential, "/credentials/minimax-auth.json"),),
             ))
 
@@ -164,7 +167,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
                 image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "e" * 64), uid=123, gid=456,
             )
             request = DockerTestRequest(
-                request_path, root / "artifacts", root / "workspace", "agent", (),
+                request_path, root / "artifacts", "agent", (),
                 (CredentialFile(credential, "/credentials/minimax-auth.json"),),
             )
 
@@ -227,7 +230,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             comma_repo = root / "repo,ambiguous"
             (comma_repo / "tests").mkdir(parents=True)
             runner = DockerTestRunner(comma_repo, config, image=identity)
-            request = DockerTestRequest(request_path, root / "artifacts", root / "workspace", "none")
+            request = DockerTestRequest(request_path, root / "artifacts", "none")
             with self.assertRaisesRegex(DockerRunnerUnavailable, "mount path"):
                 runner.build_run_command(request)
 
@@ -237,7 +240,7 @@ class DockerTestRunnerCommandTests(unittest.TestCase):
             comma_auth.write_text("secret", encoding="utf-8")
             runner = DockerTestRunner(repo, config, image=identity)
             request = DockerTestRequest(
-                request_path, root / "artifacts", root / "workspace", "agent", (),
+                request_path, root / "artifacts", "agent", (),
                 (CredentialFile(comma_auth, "/credentials/codex/auth.json"),),
             )
             with self.assertRaisesRegex(DockerRunnerUnavailable, "mount path"):
@@ -537,6 +540,8 @@ class DockerExecutionTests(unittest.TestCase):
             runs = [argv for argv in captured_argv if argv[:2] == ("docker", "run")]
             self.assertEqual(runs[0][-2:], ("sha256:" + "e" * 64, "preflight"))
             self.assertEqual(runs[1][-5:], ("python", "-m", "hwskill.test_worker", "--request", "/run/request.json"))
+            self.assertIn("/workspace:rw,nosuid,nodev,exec,size=256m", " ".join(runs[1]))
+            self.assertNotIn("dst=/workspace", " ".join(runs[1]))
             self.assertNotIn("credential-sentinel", json.dumps(captured_request))
             self.assertNotIn("credential-sentinel", " ".join(captured_argv[-1]))
             self.assertNotIn("credential-sentinel", "".join(
@@ -927,7 +932,7 @@ pathlib.Path("probe").write_text("local-ipc-only")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(observed, "local-ipc-only")
 
-    def test_core_guard_prefix_adds_only_its_own_fd_directory(self) -> None:
+    def test_core_guard_prefix_keeps_the_network_guard_without_landlock_rules(self) -> None:
         from hwskill.test_cli import _core_command_prefix
         from hwskill.test_runner import TestEnvironment, _command_prefix
 
@@ -938,7 +943,7 @@ pathlib.Path("probe").write_text("local-ipc-only")
 
         self.assertEqual(
             _core_command_prefix(environment),
-            ("guard", "--read-write", "/workspace", "--read-only", "/proc/self/fd", "--"),
+            ("guard", "--network-only", "--"),
         )
         self.assertEqual(
             _command_prefix(environment, Path("/workspace/case")),
@@ -1546,7 +1551,8 @@ cases:
 
         self.assertEqual(result.status, "PASS")
         self.assertEqual(popen.call_args.args[0][0], "guard")
-        self.assertIn("/proc/self/fd", popen.call_args.args[0])
+        self.assertIn("--network-only", popen.call_args.args[0])
+        self.assertNotIn("--read-only", popen.call_args.args[0])
 
     def test_full_core_timeout_scales_beyond_one_action_and_blocks_structurally(self) -> None:
         from hwskill.test_cli import _run_core_path
@@ -1570,9 +1576,38 @@ cases:
             ) as capture:
                 result = _run_core_path(Path("tests/core"), repo, artifacts, environment)
 
-        self.assertEqual(capture.call_args.args[1], 60)
+        self.assertAlmostEqual(capture.call_args.args[1], 60, places=3)
         self.assertEqual(result.status, "BLOCKED")
         self.assertEqual(result.cases[0].actions[0].status, "blocked")
+
+    def test_full_core_runs_each_module_in_a_fresh_guarded_process(self) -> None:
+        from hwskill.test_cli import _run_core_path
+        from hwskill.test_runner import TestEnvironment
+
+        with TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            core = repo / "tests/core"
+            core.mkdir(parents=True)
+            for index in range(2):
+                (core / f"test_{index}.py").write_text(
+                    "import unittest\nclass Test(unittest.TestCase):\n def test_ok(self): pass\n",
+                    encoding="utf-8",
+                )
+            artifacts = Path(directory) / "artifacts"
+            artifacts.mkdir()
+            environment = TestEnvironment(
+                repo, "docker", "codex", "model", "high", command_prefix=("guard", "--"),
+            )
+            processes = [Mock(returncode=0), Mock(returncode=0)]
+            with patch("hwskill.test_cli.subprocess.Popen", side_effect=processes) as popen, patch(
+                "hwskill.test_cli._capture_core_output", return_value=("", "", False),
+            ):
+                result = _run_core_path(Path("tests/core"), repo, artifacts, environment)
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(popen.call_count, 2)
+        self.assertEqual(popen.call_args_list[0].args[0][-1], "tests/core/test_0.py")
+        self.assertEqual(popen.call_args_list[1].args[0][-1], "tests/core/test_1.py")
 
     def test_command_executor_uses_worker_network_guard_prefix(self) -> None:
         from hwskill.test_artifacts import ActionResult

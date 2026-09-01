@@ -190,19 +190,26 @@ def main(argv: list[str] | None = None) -> int:
     read_only: list[str] = []
     read_write: list[str] = []
     allow_network = False
+    network_only = False
     while arguments and arguments[0] != "--":
         option = arguments.pop(0)
         if option == "--allow-network":
             allow_network = True
+            continue
+        if option == "--network-only":
+            network_only = True
             continue
         if option not in {"--read-only", "--read-write"} or not arguments:
             return 2
         (read_only if option == "--read-only" else read_write).append(arguments.pop(0))
     if not arguments or arguments.pop(0) != "--" or not arguments:
         return 2
+    if network_only and (allow_network or read_only or read_write):
+        return 2
     try:
-        install_filesystem_guard(tuple(read_only), tuple(read_write))
-        if not allow_network:
+        if not network_only:
+            install_filesystem_guard(tuple(read_only), tuple(read_write))
+        if network_only or not allow_network:
             install_network_guard()
         os.execvp(arguments[0], arguments)
     except OSError:

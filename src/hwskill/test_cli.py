@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from typing import Literal, Protocol, TextIO
 
 from .docker_test_runner import (
@@ -639,17 +640,13 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
                 temporary_root = Path(stage_directory)
                 (temporary_root / "home").mkdir(mode=0o700)
                 core_timeout = core_timeout_seconds(relative, staged_repository, environment.timeout_seconds)
-                selected = "" if relative == Path("tests/core") else str(relative)
-                if selected and not (staged_repository / selected).is_file():
+                selected_paths = _core_selected_paths(staged_repository, relative)
+                if relative != Path("tests/core") and not (staged_repository / relative).is_file():
                     raise ValueError("selected core test disappeared before staging")
-                process = subprocess.Popen(
-                    _core_command_prefix(environment)
-                    + (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_repository), selected),
-                    cwd=root_path, env=_core_environment(root_path, environment, temporary_root), stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                    start_new_session=True, pass_fds=(root_fd, core_fd),
+                stdout, stderr, timed_out, returncode = _run_isolated_core_files(
+                    selected_paths, staged_repository, root_path, root_fd, core_fd,
+                    environment, temporary_root, core_timeout,
                 )
-                stdout, stderr, timed_out = _capture_core_output(process, core_timeout)
         finally:
             os.close(core_fd)
             os.close(root_fd)
@@ -657,16 +654,16 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
             action_status, status, exit_code = "blocked", "BLOCKED", None
             payload = {"action_id": "unittest", "kind": "core", "status": "blocked", "exit_code": None, "reason": "timeout"}
             stderr += f"core test timed out after {core_timeout} seconds\n"
-        elif process.returncode == 125 and "hwskill isolation guard unavailable" in stderr:
+        elif returncode == 125 and "hwskill isolation guard unavailable" in stderr:
             action_status, status, exit_code = "blocked", "BLOCKED", None
             payload = {
                 "action_id": "unittest", "kind": "core", "status": "blocked", "exit_code": None,
                 "reason": "command isolation is unavailable",
             }
         else:
-            action_status = "completed" if process.returncode == 0 else "failed"
-            status = "PASS" if process.returncode == 0 else "FAIL"
-            exit_code = process.returncode
+            action_status = "completed" if returncode == 0 else "failed"
+            status = "PASS" if returncode == 0 else "FAIL"
+            exit_code = returncode
             payload = {"action_id": "unittest", "kind": "core", "status": action_status, "exit_code": exit_code}
     except (OSError, ValueError, subprocess.SubprocessError):
         action_status, status, exit_code = "blocked", "BLOCKED", None
@@ -676,6 +673,49 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
     action = ActionResult("unittest", action_status, exit_code, action_dir)
     case = CaseResult(case_id, status, case_dir, (action,))
     return CoreCollectionResult(TestTarget("profile", "core"), status, (case,))
+
+
+def _core_selected_paths(staged_repository: Path, relative: Path) -> tuple[Path, ...]:
+    if relative != Path("tests/core"):
+        return (relative,)
+    core = staged_repository / "tests" / "core"
+    return tuple(
+        source.relative_to(staged_repository)
+        for source in sorted(core.rglob("test_*.py"))
+        if source.is_file()
+    )
+
+
+def _run_isolated_core_files(
+    selections: tuple[Path, ...], staged_repository: Path, root_path: str, root_fd: int, core_fd: int,
+    environment: TestEnvironment, temporary_root: Path, timeout_seconds: float,
+) -> tuple[str, str, bool, int]:
+    """Run each framework-test module in a fresh guarded process under one deadline."""
+    if not selections:
+        return "", "selected core test collection contains no tests\n", False, 4
+    deadline = time.monotonic() + timeout_seconds
+    outputs: list[str] = []
+    errors: list[str] = []
+    failed = False
+    for selected in selections:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "".join(outputs), "".join(errors), True, 1
+        process = subprocess.Popen(
+            _core_command_prefix(environment)
+            + (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_repository), str(selected)),
+            cwd=root_path, env=_core_environment(root_path, environment, temporary_root), stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+            start_new_session=True, pass_fds=(root_fd, core_fd),
+        )
+        stdout, stderr, timed_out = _capture_core_output(process, remaining)
+        outputs.extend((f"\n=== {selected} ===\n", stdout))
+        errors.extend((f"\n=== {selected} ===\n", stderr))
+        if timed_out:
+            return "".join(outputs), "".join(errors), True, 1
+        if process.returncode != 0:
+            failed = True
+    return "".join(outputs), "".join(errors), False, 1 if failed else 0
 
 
 def _open_anchored_core_directories(root: Path) -> tuple[int, int]:
@@ -871,13 +911,21 @@ def _core_stage_parent(environment: TestEnvironment) -> Path:
 
 
 def _core_command_prefix(environment: TestEnvironment) -> tuple[str, ...]:
-    """Core framework tests may inspect only their own descriptor directory."""
+    """Keep core framework tests behind seccomp without nesting Landlock policy."""
     prefix = environment.command_prefix
     if environment.runner != "docker" or not prefix:
         return prefix
     if prefix[-1] != "--":
         raise ValueError("core isolation prefix must terminate with --")
-    return (*prefix[:-1], "--read-only", "/proc/self/fd", "--")
+    launcher = list(prefix[:-1])
+    for index, value in enumerate(launcher):
+        if value not in {"--allow-network", "--read-only", "--read-write"}:
+            continue
+        launcher = launcher[:index]
+        break
+    if not launcher:
+        raise ValueError("core isolation prefix must include a guard launcher")
+    return (*launcher, "--network-only", "--")
 
 
 def _core_pending_anchor(temporary_root: Path) -> str:
