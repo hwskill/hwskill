@@ -231,6 +231,88 @@ class TestCliTest(unittest.TestCase):
         self.assertEqual(code, 3, error)
         self.assertFalse(marker.exists())
 
+    def test_core_file_swap_after_anchor_blocks_without_running_external_test(self) -> None:
+        core = self.repo / "tests/core"
+        core.mkdir(parents=True)
+        selected = core / "test_safe.py"
+        selected.write_text(
+            "import unittest\nclass Safe(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        outside = Path(self.temporary.name) / "outside.py"
+        marker = Path(self.temporary.name) / "outside-executed"
+        outside.write_text(
+            "from pathlib import Path\nPath(" + repr(str(marker)) + ").write_text('bad')\n",
+            encoding="utf-8",
+        )
+
+        def swap_selected_file(_root, _core):
+            selected.unlink()
+            selected.symlink_to(outside)
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_cli._after_core_directories_opened", side_effect=swap_selected_file
+        ):
+            code, _, error = self.run_cli(*self.command("tests/core/test_safe.py", "--runner", "local"))
+
+        self.assertEqual(code, 3, error)
+        self.assertFalse(marker.exists())
+
+    def test_nested_package_direct_core_file_runs_only_the_selected_same_named_test(self) -> None:
+        core = self.repo / "tests/core"
+        marker_a = Path(self.temporary.name) / "a-ran"
+        marker_b = Path(self.temporary.name) / "b-ran"
+        for directory, marker in (("a", marker_a), ("b", marker_b)):
+            package = core / directory
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "test_same.py").write_text(
+                "import unittest\nfrom pathlib import Path\n"
+                "class Exact(unittest.TestCase):\n"
+                "    def test_exact(self): Path(" + repr(str(marker)) + ").write_text('ran')\n",
+                encoding="utf-8",
+            )
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, _, error = self.run_cli(*self.command("tests/core/a/test_same.py", "--runner", "local"))
+
+        self.assertEqual(code, 0, error)
+        self.assertTrue(marker_a.exists())
+        self.assertFalse(marker_b.exists())
+
+    def test_nested_non_package_direct_core_file_runs_the_selected_test(self) -> None:
+        core = self.repo / "tests/core"
+        marker_a = Path(self.temporary.name) / "non-package-a-ran"
+        marker_b = Path(self.temporary.name) / "non-package-b-ran"
+        for directory, marker in (("a", marker_a), ("b", marker_b)):
+            test_dir = core / directory
+            test_dir.mkdir(parents=True)
+            (test_dir / "test_same.py").write_text(
+                "import unittest\nfrom pathlib import Path\n"
+                "class Exact(unittest.TestCase):\n"
+                "    def test_exact(self): Path(" + repr(str(marker)) + ").write_text('ran')\n",
+                encoding="utf-8",
+            )
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, _, error = self.run_cli(*self.command("tests/core/a/test_same.py", "--runner", "local"))
+
+        self.assertEqual(code, 0, error)
+        self.assertTrue(marker_a.exists())
+        self.assertFalse(marker_b.exists())
+
+    def test_direct_core_file_with_no_tests_is_not_a_pass(self) -> None:
+        core = self.repo / "tests/core"
+        core.mkdir(parents=True)
+        (core / "test_empty.py").write_text("def helper():\n    return True\n", encoding="utf-8")
+
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config):
+            code, output, error = self.run_cli(*self.command("tests/core/test_empty.py", "--runner", "local", "--json"))
+
+        self.assertEqual(code, 1, error)
+        action = json.loads(output)["collections"][0]["cases"][0]["actions"][0]
+        self.assertEqual(action["status"], "failed")
+
     def test_repeated_core_runs_close_the_anchored_descriptors(self) -> None:
         core = self.repo / "tests/core"
         core.mkdir(parents=True)

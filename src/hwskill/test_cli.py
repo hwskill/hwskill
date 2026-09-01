@@ -47,6 +47,43 @@ _CREDENTIAL_STORE_RELATIVE_PATHS = {
     "claude-code": Path(".claude/.credentials.json"),
     "opencode": Path(".local/share/opencode/auth.json"),
 }
+_CORE_UNITTEST_RUNNER = r'''
+import importlib
+import importlib.util
+from pathlib import Path
+import sys
+import unittest
+
+stage = Path(sys.argv[1])
+selected = Path(sys.argv[2]) if sys.argv[2] else None
+sys.path.insert(0, str(stage))
+loader = unittest.defaultTestLoader
+if selected is None:
+    suite = loader.discover(str(stage), pattern="test*.py", top_level_dir=str(stage))
+else:
+    source = stage / selected
+    package_parts = []
+    parent = selected.parent
+    while parent != Path(".") and (stage / parent / "__init__.py").is_file():
+        package_parts.insert(0, parent.name)
+        parent = parent.parent
+    if package_parts and parent == Path("."):
+        module = importlib.import_module(".".join((*package_parts, selected.stem)))
+    else:
+        sys.path.insert(0, str(source.parent))
+        spec = importlib.util.spec_from_file_location("_hwskill_exact_core_test", source)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("selected core test cannot be loaded")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    suite = loader.loadTestsFromModule(module)
+if suite.countTestCases() == 0:
+    print("selected core test collection contains no tests", file=sys.stderr)
+    raise SystemExit(4)
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+raise SystemExit(0 if result.wasSuccessful() else 1)
+'''
 
 
 class TestCliUsageError(ValueError):
@@ -528,17 +565,19 @@ def _run_core_path(path: Path, root: Path, artifact_root: Path, environment: Tes
         try:
             _after_core_directories_opened(root, root / "tests" / "core")
             _assert_core_directory_unchanged(root, core_fd)
-            core_path = f"/proc/self/fd/{core_fd}"
             root_path = f"/proc/self/fd/{root_fd}"
-            arguments = [sys.executable, "-m", "unittest", "discover", "-s", core_path, "-t", core_path]
-            if relative != Path("tests/core"):
-                arguments.extend(("-p", relative.name))
-            process = subprocess.Popen(
-                tuple(arguments), cwd=root_path, env=_core_environment(root_path), stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                start_new_session=True, pass_fds=(root_fd, core_fd),
-            )
-            stdout, stderr, timed_out = _capture_core_output(process, environment.timeout_seconds)
+            with tempfile.TemporaryDirectory(prefix="hwskill-core-stage-") as stage_directory:
+                staged_core = _stage_core_sources(core_fd, Path(stage_directory))
+                selected = "" if relative == Path("tests/core") else str(relative.relative_to("tests/core"))
+                if selected and not (staged_core / selected).is_file():
+                    raise ValueError("selected core test disappeared before staging")
+                process = subprocess.Popen(
+                    (sys.executable, "-u", "-c", _CORE_UNITTEST_RUNNER, str(staged_core), selected),
+                    cwd=root_path, env=_core_environment(root_path), stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                    start_new_session=True, pass_fds=(root_fd, core_fd),
+                )
+                stdout, stderr, timed_out = _capture_core_output(process, environment.timeout_seconds)
         finally:
             os.close(core_fd)
             os.close(root_fd)
@@ -592,12 +631,48 @@ def _assert_core_directory_unchanged(root: Path, core_fd: int) -> None:
         raise ValueError("core test directory changed before launch")
 
 
+def _stage_core_sources(core_fd: int, stage_root: Path) -> Path:
+    """Copy the descriptor-anchored core tree without following links or special files."""
+    staged_core = stage_root / "core"
+    staged_core.mkdir(mode=0o700)
+    _copy_core_directory(core_fd, staged_core)
+    return staged_core
+
+
+def _copy_core_directory(source_fd: int, destination: Path) -> None:
+    with os.scandir(source_fd) as entries:
+        for entry in sorted(entries, key=lambda item: item.name):
+            if entry.is_symlink():
+                raise ValueError("core test tree contains a symlink")
+            target = destination / entry.name
+            if entry.is_dir(follow_symlinks=False):
+                target.mkdir(mode=0o700)
+                child_fd = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=source_fd)
+                try:
+                    _copy_core_directory(child_fd, target)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not entry.is_file(follow_symlinks=False):
+                raise ValueError("core test tree contains an unsupported file")
+            source_file_fd = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=source_fd)
+            try:
+                if not stat.S_ISREG(os.fstat(source_file_fd).st_mode):
+                    raise ValueError("core test tree contains an unsupported file")
+                with target.open("xb") as output:
+                    while chunk := os.read(source_file_fd, 64 * 1024):
+                        output.write(chunk)
+            finally:
+                os.close(source_file_fd)
+
+
 def _core_environment(root_path: str) -> dict[str, str]:
     return {
         "PATH": os.defpath,
         "LANG": "C.UTF-8",
         "HOME": tempfile.gettempdir(),
         "PYTHONPATH": f"{root_path}/src",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
