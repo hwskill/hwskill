@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -29,8 +30,24 @@ class FakeGit:
         self.revision = revision
 
     def materialize(self, repository: str, track: str, destination: Path) -> ResolvedTrack:
-        shutil.copytree(self.upstream / "skills", destination / "skills")
+        shutil.copytree(self.upstream / "skills", destination / "skills", symlinks=True)
         return ResolvedTrack(track=track, kind="branch", commit=self.revision)
+
+
+class HistoricalFakeGit:
+    def __init__(self, snapshots: dict[str, Path], commits: dict[str, str]) -> None:
+        self.snapshots = snapshots
+        self.commits = commits
+        self.tracks: list[str] = []
+
+    def materialize(self, repository: str, track: str, destination: Path) -> ResolvedTrack:
+        self.tracks.append(track)
+        shutil.copytree(self.snapshots[track] / "skills", destination / "skills", symlinks=True)
+        return ResolvedTrack(
+            track=track,
+            kind="commit" if len(track) == 40 else "branch",
+            commit=self.commits[track],
+        )
 
 
 class SkillMaintenanceTest(unittest.TestCase):
@@ -181,7 +198,7 @@ class SkillMaintenanceTest(unittest.TestCase):
         source = UpstreamSource(
             "team",
             UpstreamConfig("https://team.example/team.git", "refs/heads/main", "skills", (IgnoredSkill("review", "manualized"),)),
-            SourceDefaults("team", "l2", "MIT"), "a" * 40, (),
+            SourceDefaults("team", "l2", "MIT"), "0" * 40, (),
         )
         write_source_manifest(self.repo / "sources/team.yaml", source)
         before = (local / "SKILL.md").read_bytes()
@@ -198,6 +215,90 @@ class SkillMaintenanceTest(unittest.TestCase):
         adopted = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual(adopted.upstream.ignore, ())
         self.assertEqual(adopted.skills[0].skill_id, "team/review")
+
+    def test_adopt_uses_persisted_source_revision_without_changing_existing_skills(self) -> None:
+        from hwskill.skill_maintenance import plan_adopt_skill
+
+        old_revision = "a" * 40
+        new_revision = "b" * 40
+        existing = self.make_manual_skill("team/existing", text=SKILL_TEXT.replace("review", "existing"))
+        governance = yaml.safe_load((existing / "skill.yaml").read_text(encoding="utf-8"))
+        governance["name"] = "existing"
+        governance["source"] = {
+            "kind": "upstream", "source_id": "team", "revision": old_revision, "upstream_path": "existing",
+        }
+        (existing / "skill.yaml").write_text(yaml.safe_dump(governance, sort_keys=False), encoding="utf-8")
+        before = (existing / "SKILL.md").read_bytes()
+        source = UpstreamSource(
+            "team",
+            UpstreamConfig("https://team.example/team.git", "refs/heads/main", "skills", (IgnoredSkill("review", "manualized"),)),
+            SourceDefaults("team", "l2", "MIT"), old_revision,
+            (ResolvedSourceSkill("existing", "team/existing", "l2", content_digest(existing)),),
+        )
+        write_source_manifest(self.repo / "sources/team.yaml", source)
+
+        historical = self.root / "historical"
+        old_review = historical / "skills/review"
+        old_review.mkdir(parents=True)
+        (old_review / "SKILL.md").write_text(SKILL_TEXT + "Old snapshot.\n", encoding="utf-8")
+        old_existing = historical / "skills/existing"
+        old_existing.mkdir()
+        (old_existing / "SKILL.md").write_bytes(before)
+        (self.upstream / "skills/review/SKILL.md").write_text(SKILL_TEXT + "New branch head.\n", encoding="utf-8")
+        self._upstream_skill("existing", SKILL_TEXT.replace("review", "existing") + "New branch head.\n")
+        git = HistoricalFakeGit(
+            {old_revision: historical, "refs/heads/main": self.upstream},
+            {old_revision: old_revision, "refs/heads/main": new_revision},
+        )
+
+        plan_adopt_skill(self.repo, "team", "team/review", "review", False, git).apply()
+
+        self.assertEqual(git.tracks, [old_revision])
+        self.assertEqual((existing / "SKILL.md").read_bytes(), before)
+        self.assertEqual(
+            yaml.safe_load((existing / "skill.yaml").read_text(encoding="utf-8"))["source"]["revision"], old_revision,
+        )
+        adopted = self.repo / "skills-src/l2/team/review"
+        self.assertEqual((adopted / "SKILL.md").read_text(encoding="utf-8"), SKILL_TEXT + "Old snapshot.\n")
+        self.assertEqual(
+            yaml.safe_load((adopted / "skill.yaml").read_text(encoding="utf-8"))["source"]["revision"], old_revision,
+        )
+        manifest = load_source_manifest(self.repo / "sources/team.yaml")
+        self.assertEqual(manifest.resolved_revision, old_revision)
+        self.assertEqual([item.skill_id for item in manifest.skills], ["team/existing", "team/review"])
+
+    def test_adopt_rejects_nested_upstream_symlink_before_digest(self) -> None:
+        from hwskill.skill_maintenance import SkillMaintenanceError, plan_adopt_skill
+
+        source = UpstreamSource(
+            "team",
+            UpstreamConfig("https://team.example/team.git", "refs/heads/main", "skills", (IgnoredSkill("review", "manualized"),)),
+            SourceDefaults("team", "l2", "MIT"), "0" * 40, (),
+        )
+        write_source_manifest(self.repo / "sources/team.yaml", source)
+        (self.upstream / "skills/review/outside-link").symlink_to(self.root / "outside-sentinel")
+
+        with patch("hwskill.skill_maintenance.content_digest", side_effect=AssertionError("digest invoked")) as digest:
+            with self.assertRaisesRegex(SkillMaintenanceError, "unsafe"):
+                plan_adopt_skill(self.repo, "team", "team/review", "review", False, self.git)
+        digest.assert_not_called()
+
+    def test_adopt_rejects_nested_local_symlink_before_any_digest(self) -> None:
+        from hwskill.skill_maintenance import SkillMaintenanceError, plan_adopt_skill
+
+        local = self.make_manual_skill("team/review")
+        source = UpstreamSource(
+            "team",
+            UpstreamConfig("https://team.example/team.git", "refs/heads/main", "skills", (IgnoredSkill("review", "manualized"),)),
+            SourceDefaults("team", "l2", "MIT"), "0" * 40, (),
+        )
+        write_source_manifest(self.repo / "sources/team.yaml", source)
+        (local / "outside-link").symlink_to(self.root / "outside-sentinel")
+
+        with patch("hwskill.skill_maintenance.content_digest", side_effect=AssertionError("digest invoked")) as digest:
+            with self.assertRaisesRegex(SkillMaintenanceError, "unsafe"):
+                plan_adopt_skill(self.repo, "team", "team/review", "review", False, self.git)
+        digest.assert_not_called()
 
     def test_failed_planning_never_writes_real_tree(self) -> None:
         from hwskill.skill_maintenance import SkillMaintenanceError, plan_move_skill

@@ -10,7 +10,7 @@ import yaml
 
 from .digest import content_digest
 from .frontmatter import FrontmatterError, parse_skill_markdown
-from .git_source import GitSourceClient, discover_skills, verify_existing_tag
+from .git_source import DiscoveredSkill, GitSourceClient
 from .maintenance_transaction import MaintenancePlan, MaintenanceSummary, RepositoryTransaction
 from .profiles import ProfileError, remove_profile_skill_id, replace_profile_skill_id
 from .source_manifest import IgnoredSkill, ResolvedSourceSkill, UpstreamSource
@@ -274,29 +274,34 @@ def plan_adopt_skill(
     if existing is not None and _source_kind(existing.governance, skill_id) != "manual":
         raise SkillMaintenanceError(f"Skill id is already upstream-managed: {skill_id}")
 
+    persisted_revision = _persisted_source_revision(source)
+    materialize_track = persisted_revision or source.upstream.track
     with tempfile.TemporaryDirectory(prefix="hwskill-skill-adopt-") as temporary:
         checkout = Path(temporary)
-        resolved = git_client.materialize(source.upstream.repository, source.upstream.track, checkout)
-        if source.upstream.track.startswith("refs/tags/"):
-            verify_existing_tag(source.upstream.track, source.resolved_revision, resolved.commit)
-        discovered = {item.path: item for item in discover_skills(checkout, source.upstream.skills_path)}
-        item = discovered.get(normalized_path)
-        if item is None:
-            raise SkillMaintenanceError(f"upstream Skill path was not found: {normalized_path}")
-        payload = checkout / Path(*PurePosixPath(source.upstream.skills_path).parts) / Path(*PurePosixPath(normalized_path).parts)
+        resolved = git_client.materialize(source.upstream.repository, materialize_track, checkout)
+        if persisted_revision is not None and resolved.commit != persisted_revision:
+            raise SkillMaintenanceError(
+                f"materialized persisted source revision differs: expected {persisted_revision}, got {resolved.commit}"
+            )
+        source_revision = persisted_revision or resolved.commit
+        payload = _adoptable_upstream_payload(checkout, source.upstream.skills_path, normalized_path)
+        if existing is not None:
+            _assert_safe_skill_tree(root / existing.destination, "local Skill payload")
+        item = _upstream_metadata(payload, normalized_path)
         upstream_digest = content_digest(payload)
-        if existing is not None and content_digest(root / existing.destination) != upstream_digest and not replace:
+        existing_digest = content_digest(root / existing.destination) if existing is not None else None
+        if existing_digest is not None and existing_digest != upstream_digest and not replace:
             raise SkillMaintenanceError("manual Skill content differs from upstream; retry with replace=True to overwrite it")
 
         layer = existing.layer if existing is not None else source.defaults.layer
         destination = existing.destination if existing is not None else _destination(layer, skill_id)
         tx = _transaction(root)
         try:
-            if existing is None or content_digest(root / existing.destination) != upstream_digest:
+            if existing is None or existing_digest != upstream_digest:
                 _stage_upstream_payload(tx, payload, destination)
                 _write_governance(
                     tx, destination, skill_id, layer, item.name, item.description,
-                    source.defaults.license, _upstream_provenance(source, resolved.commit, normalized_path),
+                    source.defaults.license, _upstream_provenance(source, source_revision, normalized_path),
                     existing=existing.governance if existing is not None else None,
                 )
             else:
@@ -307,13 +312,13 @@ def plan_adopt_skill(
                     _string_field(existing.governance, "name", skill_id),
                     _string_field(existing.governance, "description", skill_id),
                     _string_field(existing.governance, "license", skill_id),
-                    _upstream_provenance(source, resolved.commit, normalized_path), existing=existing.governance,
+                    _upstream_provenance(source, source_revision, normalized_path), existing=existing.governance,
                 )
             ignored = {ignored.path: ignored for ignored in source.upstream.ignore}
             ignored.pop(normalized_path, None)
             staged_source = dataclass_replace(
                 source,
-                resolved_revision=resolved.commit,
+                resolved_revision=source_revision,
                 skills=tuple(sorted((*source.skills, ResolvedSourceSkill(
                     normalized_path, skill_id, layer, content_digest(tx.candidate_root / destination),
                 )), key=lambda value: value.path)),
@@ -443,12 +448,8 @@ def _rewrite_markdown_name(tx: RepositoryTransaction, relative_path: Path, name:
 
 def _copy_candidate_tree(tx: RepositoryTransaction, old: Path, new: Path) -> None:
     source = tx.candidate_root / old
-    if source.is_symlink() or not source.is_dir():
-        raise SkillMaintenanceError(f"Skill payload must be a real directory: {old.as_posix()}")
+    _assert_safe_skill_tree(source, f"Skill payload {old.as_posix()}")
     for path in sorted(source.rglob("*"), key=lambda value: value.relative_to(source).as_posix()):
-        metadata = path.lstat()
-        if stat.S_ISLNK(metadata.st_mode) or not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
-            raise SkillMaintenanceError(f"unsafe Skill payload entry: {path.name}")
         relative = path.relative_to(source)
         if path.is_dir():
             (tx.candidate_root / new / relative).mkdir(parents=True, exist_ok=True)
@@ -457,13 +458,9 @@ def _copy_candidate_tree(tx: RepositoryTransaction, old: Path, new: Path) -> Non
 
 
 def _stage_upstream_payload(tx: RepositoryTransaction, source: Path, destination: Path) -> None:
-    if source.is_symlink() or not source.is_dir():
-        raise SkillMaintenanceError("upstream Skill payload must be a real directory")
+    _assert_safe_skill_tree(source, "upstream Skill payload")
     tx.delete(destination)
     for path in sorted(source.rglob("*"), key=lambda value: value.relative_to(source).as_posix()):
-        metadata = path.lstat()
-        if stat.S_ISLNK(metadata.st_mode) or not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
-            raise SkillMaintenanceError(f"unsafe upstream payload entry: {path.name}")
         relative = path.relative_to(source)
         if path.is_dir():
             (tx.candidate_root / destination / relative).mkdir(parents=True, exist_ok=True)
@@ -526,6 +523,61 @@ def _safe_upstream_path(path: str) -> str:
     if parsed.is_absolute() or path in {".", ".."} or ".." in parsed.parts:
         raise SkillMaintenanceError("upstream path must be a safe relative path")
     return path
+
+
+def _persisted_source_revision(source: UpstreamSource) -> str | None:
+    """Return the immutable snapshot, if the source has been materialized."""
+    return None if source.resolved_revision == "0" * 40 else source.resolved_revision
+
+
+def _adoptable_upstream_payload(checkout: Path, skills_path: str, upstream_path: str) -> Path:
+    skills_root = _walk_real_directories(
+        checkout, PurePosixPath(skills_path).parts, "upstream skills path",
+    )
+    path_parts = PurePosixPath(upstream_path).parts
+    if len(path_parts) != 1:
+        raise SkillMaintenanceError("upstream Skill path must name a direct child of the skills path")
+    payload = skills_root / path_parts[0]
+    _assert_safe_skill_tree(payload, "upstream Skill payload")
+    return payload
+
+
+def _upstream_metadata(payload: Path, upstream_path: str) -> DiscoveredSkill:
+    name, description = _markdown_metadata(payload / "SKILL.md")
+    return DiscoveredSkill(path=upstream_path, name=name, description=description)
+
+
+def _walk_real_directories(root: Path, parts: tuple[str, ...], label: str) -> Path:
+    current = root
+    _assert_real_directory(current, label)
+    for part in parts:
+        current = current / part
+        _assert_real_directory(current, label)
+    return current
+
+
+def _assert_real_directory(path: Path, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise SkillMaintenanceError(f"{label} is unavailable: {path.name}") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise SkillMaintenanceError(f"{label} must be a real directory")
+
+
+def _assert_safe_skill_tree(source: Path, label: str) -> None:
+    _assert_real_directory(source, label)
+    try:
+        paths = sorted(source.rglob("*"), key=lambda value: value.relative_to(source).as_posix())
+    except OSError as error:
+        raise SkillMaintenanceError(f"cannot inspect {label}") from error
+    for path in paths:
+        try:
+            metadata = path.lstat()
+        except OSError as error:
+            raise SkillMaintenanceError(f"cannot inspect {label}") from error
+        if stat.S_ISLNK(metadata.st_mode) or not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
+            raise SkillMaintenanceError(f"unsafe {label} entry: {path.name}")
 
 
 def _upstream_provenance(source: UpstreamSource, revision: str, upstream_path: str) -> dict[str, str]:
