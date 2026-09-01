@@ -98,6 +98,7 @@ def _catalog_for_profile_ids(
                 name=item["name"],
                 description=item["description"],
                 layer=item["layer"],
+                source_kind=item.get("source_kind", "upstream"),
                 source_id=item["source_id"],
                 revision=item["revision"],
                 license=item["license"],

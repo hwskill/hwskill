@@ -41,6 +41,12 @@ class RegistryTest(unittest.TestCase):
         ids = [item["id"] for item in json.loads(first)["skills"]]
         self.assertEqual(ids, sorted(ids))
 
+    def test_validation_marks_governed_skills_as_upstream(self):
+        records = validate_registry(self.repo)
+
+        self.assertEqual(records[0].source_kind, "upstream")
+        self.assertEqual(records[0].source_id, "local-agents-skills")
+
     def test_check_detects_stale_catalog(self):
         (self.repo / "registry").mkdir()
         (self.repo / "registry/catalog.json").write_text("{}\n", encoding="utf-8")

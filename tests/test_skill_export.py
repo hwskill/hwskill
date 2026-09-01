@@ -34,6 +34,7 @@ class SkillExportTest(unittest.TestCase):
             name=skill_id.rsplit("/", 1)[-1],
             description="fixture",
             layer="l1",
+            source_kind="upstream",
             source_id="fixture",
             revision="1",
             license="MIT",

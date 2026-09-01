@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,8 @@ class SkillRecord:
     name: str
     description: str
     layer: str
-    source_id: str
+    source_kind: Literal["manual", "upstream"]
+    source_id: str | None
     revision: str
     license: str
     content_digest: str

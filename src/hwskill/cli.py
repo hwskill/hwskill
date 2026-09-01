@@ -465,6 +465,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 "name": item.name,
                                 "description": item.description,
                                 "layer": item.layer,
+                                "source_kind": item.source_kind,
                                 "source_id": item.source_id,
                                 "revision": item.revision,
                                 "license": item.license,

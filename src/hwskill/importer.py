@@ -108,6 +108,7 @@ def import_source(
                 name=selected.name,
                 description=str(metadata["description"]),
                 layer=selected.layer,
+                source_kind="upstream",
                 source_id=spec.source_id,
                 revision=spec.revision,
                 license=spec.license,
