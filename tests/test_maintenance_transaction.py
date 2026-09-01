@@ -47,11 +47,9 @@ class RepositoryTransactionTest(unittest.TestCase):
             self.assertFalse((tx.candidate_root / ".git").exists())
 
     def test_apply_rolls_back_every_target_when_second_replace_fails(self) -> None:
-        def fail_second_operation(index: int, operation: str, relative_path: str) -> None:
+        def fail_second_operation(index: int, operation: str) -> None:
             self.assertIsInstance(index, int)
             self.assertEqual(operation, "replace")
-            self.assertIsInstance(relative_path, str)
-            self.assertFalse(relative_path.startswith("/"))
             if index == 2:
                 raise OSError("injected replacement failure")
 
@@ -66,9 +64,8 @@ class RepositoryTransactionTest(unittest.TestCase):
         self.assertEqual((self.repo / "registry/catalog.json").read_text(encoding="utf-8"), "old catalog\n")
 
     def test_rollback_restores_deleted_and_created_directories(self) -> None:
-        def fail_second_operation(index: int, operation: str, relative_path: str) -> None:
+        def fail_second_operation(index: int, operation: str) -> None:
             self.assertIn(operation, {"replace", "remove"})
-            self.assertIsInstance(relative_path, str)
             if index == 2:
                 raise OSError("injected replacement failure")
 
@@ -211,8 +208,7 @@ class RepositoryTransactionTest(unittest.TestCase):
         original_inode = external_file.stat().st_ino
         calls = 0
 
-        def swap_next_target_ancestor(index: int, operation: str, relative_path: str) -> None:
-            self.assertFalse(relative_path.startswith("/"))
+        def swap_next_target_ancestor(index: int, operation: str) -> None:
             if index == 1:
                 shutil.rmtree(self.repo / "sources")
                 os.symlink(external, self.repo / "sources")
@@ -236,17 +232,21 @@ class RepositoryTransactionTest(unittest.TestCase):
         sentinel = external / "a.yaml"
         sentinel.write_text("external sentinel\n", encoding="utf-8")
 
-        def swap_same_target_ancestor(index: int, operation: str, relative_path: str) -> None:
-            self.assertEqual((index, operation, relative_path), (1, "replace", "sources/a.yaml"))
-            self.assertNotIn(str(self.repo), relative_path)
+        def swap_same_target_ancestor(index: int, operation: str) -> None:
+            self.assertEqual((index, operation), (1, "replace"))
             shutil.rmtree(self.repo / "sources")
             os.symlink(external, self.repo / "sources")
 
         tx = RepositoryTransaction(self.repo, before_operation=swap_same_target_ancestor)
         tx.write_text(Path("sources/a.yaml"), "candidate source\n")
 
-        with self.assertRaises(TransactionError):
-            tx.apply()
+        original_cwd = Path.cwd()
+        os.chdir(self.repo)
+        try:
+            with self.assertRaises(TransactionError):
+                tx.apply()
+        finally:
+            os.chdir(original_cwd)
 
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "external sentinel\n")
         self.assertFalse((self.repo / "sources").is_symlink())
@@ -258,21 +258,49 @@ class RepositoryTransactionTest(unittest.TestCase):
         sentinel = external / "a.yaml"
         sentinel.write_text("external sentinel\n", encoding="utf-8")
 
-        def swap_same_target_ancestor(index: int, operation: str, relative_path: str) -> None:
-            self.assertEqual((index, operation, relative_path), (1, "remove", "sources/a.yaml"))
-            self.assertNotIn(str(self.repo), relative_path)
+        def swap_same_target_ancestor(index: int, operation: str) -> None:
+            self.assertEqual((index, operation), (1, "remove"))
             shutil.rmtree(self.repo / "sources")
             os.symlink(external, self.repo / "sources")
 
         tx = RepositoryTransaction(self.repo, before_operation=swap_same_target_ancestor)
         tx.delete(Path("sources/a.yaml"))
 
-        with self.assertRaises(TransactionError):
-            tx.apply()
+        original_cwd = Path.cwd()
+        os.chdir(self.repo)
+        try:
+            with self.assertRaises(TransactionError):
+                tx.apply()
+        finally:
+            os.chdir(original_cwd)
 
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "external sentinel\n")
         self.assertFalse((self.repo / "sources").is_symlink())
         self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+
+    def test_root_recovery_unlinks_nested_symlink_and_restores_all_contents(self) -> None:
+        sibling = self._write("sources/unchanged.yaml", "unchanged sibling\n")
+        external = self.repo.parent / "external"
+        external.mkdir()
+        sentinel = external / "sentinel.txt"
+        sentinel.write_text("external sentinel\n", encoding="utf-8")
+
+        def inject_nested_symlink(index: int, operation: str) -> None:
+            self.assertEqual((index, operation), (1, "replace"))
+            os.symlink(external, self.repo / "sources/injected-link")
+            (self.repo / "sources/a.yaml").write_text("tampered\n", encoding="utf-8")
+
+        tx = RepositoryTransaction(self.repo, before_operation=inject_nested_symlink)
+        tx.write_text(Path("sources/a.yaml"), "candidate source\n")
+
+        with self.assertRaises(TransactionError):
+            tx.apply()
+
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "external sentinel\n")
+        self.assertFalse((self.repo / "sources/injected-link").exists())
+        self.assertFalse((self.repo / "sources/injected-link").is_symlink())
+        self.assertEqual((self.repo / "sources/a.yaml").read_text(encoding="utf-8"), "old source\n")
+        self.assertEqual(sibling.read_text(encoding="utf-8"), "unchanged sibling\n")
 
 
 if __name__ == "__main__":

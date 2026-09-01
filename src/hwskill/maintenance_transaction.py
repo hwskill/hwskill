@@ -50,7 +50,7 @@ class _PathState:
 
 
 _MISSING = _PathState("missing", None, None, None)
-BeforeOperation = Callable[[int, str, str], None]
+BeforeOperation = Callable[[int, str], None]
 Validate = Callable[[Path], None]
 
 
@@ -178,7 +178,6 @@ class RepositoryTransaction:
                                 self._before_operation(
                                     index,
                                     operation,
-                                    handle.relative_path.as_posix(),
                                 )
                             self._assert_ancestor_identities(handle.relative_path)
                             self._assert_handle_preimage(handle)
@@ -499,12 +498,20 @@ def _remove_entry_at(parent_fd: int, name: str) -> None:
         metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
         return
-    if stat.S_ISLNK(metadata.st_mode) or not (
-        stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)
-    ):
+    if not stat.S_ISDIR(metadata.st_mode):
         os.unlink(name, dir_fd=parent_fd)
         return
-    _remove_at(parent_fd, name)
+    _clear_recovery_directory_at(parent_fd, name)
+
+
+def _clear_recovery_directory_at(parent_fd: int, name: str) -> None:
+    directory_fd = _open_directory_at(parent_fd, name)
+    try:
+        for child_name in os.listdir(directory_fd):
+            _remove_entry_at(directory_fd, child_name)
+    finally:
+        os.close(directory_fd)
+    os.rmdir(name, dir_fd=parent_fd)
 
 
 def _copy_path(source: Path, destination: Path) -> None:
