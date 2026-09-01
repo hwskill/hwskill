@@ -48,6 +48,7 @@ from .maintenance_cli import register_maintenance_commands, run_maintenance_comm
 from .opencode_adapter import render_catalog as render_opencode_catalog
 from .paths import resolve_repo_root
 from .scopes import ScopeTarget, project_scope, user_scope
+from .test_cli import run_test_command
 
 
 HOST_CHOICES = ("codex", "claude-code", "claude_code", "opencode")
@@ -181,6 +182,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     info_parser.add_argument("--repo-root")
     info_parser.add_argument("--json", action="store_true")
     register_integrity_command(commands)
+    test = _command(commands, "test", "Run declarative core, Skill, and Profile tests")
+    test.add_argument(
+        "test_target", metavar="<TARGET>",
+        help="setup, all, skills, profiles, affected, or a repository-relative test path",
+    )
+    test.add_argument("test_id", nargs="?", metavar="<ID>", help="Optional Skill or Profile ID")
+    test.add_argument("--runner", choices=("docker", "local"))
+    test.add_argument("--host", choices=HOST_CHOICES)
+    test.add_argument("--base")
+    test.add_argument("--check", action="store_true", help="Inspect setup without changing configuration")
+    test.add_argument("--repo-root")
+    test.add_argument("--json", action="store_true")
     registry = _command(commands, "registry", "Manage the skill registry")
     registry_commands = _commands(registry, "registry_command")
     validate_parser = _command(registry_commands, "validate", "Validate registry contents")
@@ -361,6 +374,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         assert integrity_code is not None
         return integrity_code
+    if args.command == "test":
+        return run_test_command(args, _repo_root(args.repo_root), sys.stdout, sys.stderr)
     if args.command == "source" or (
         args.command == "skill" and args.skill_command in {"create", "update", "move", "rename", "delete", "manualize"}
     ):

@@ -23,6 +23,7 @@ class CliHelpTest(unittest.TestCase):
             (): {
                 "info": "Show installation and integration status",
                 "integrity-check": "Validate repository source integrity",
+                "test": "Run declarative core, Skill, and Profile tests",
                 "registry": "Manage the skill registry",
                 "source": "Manage upstream skill sources",
                 "profile": "Manage user and project profiles",
