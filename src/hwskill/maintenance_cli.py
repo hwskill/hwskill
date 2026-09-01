@@ -88,7 +88,19 @@ def _detect_skills_path(repository: str, track: str, git: GitSourceClient) -> st
     prefix = list(parents[0])
     for parts in parents[1:]:
         prefix = prefix[:next((index for index, pair in enumerate(zip(prefix, parts)) if pair[0] != pair[1]), min(len(prefix), len(parts)))]
+    # A lone SKILL.md lives below the enumerable directory; never return its own directory.
+    if len(parents) == 1 and prefix == list(parents[0]):
+        prefix = prefix[:-1]
     return "/".join(prefix) or "."
+
+
+def _select_indices(value: str, count: int) -> tuple[int, ...]:
+    if not value.strip(): return tuple(range(count))
+    try: selected = tuple(int(item.strip()) for item in value.split(","))
+    except ValueError as error: raise UsageError("selection must be comma-separated integers") from error
+    if len(set(selected)) != len(selected) or any(item < 1 or item > count for item in selected):
+        raise UsageError("selection contains duplicate or out-of-range index")
+    return tuple(item - 1 for item in selected)
 
 
 def _confirm(args, stdin: TextIO, stdout: TextIO) -> None:
@@ -134,7 +146,7 @@ def _wizard_add(args, root: Path, git: GitSourceClient, stdin: TextIO, stdout: T
         stdout.write("Discovered Skills:\n")
         for index, item in enumerate(found, 1): stdout.write(f"  {index}. {item.path}\n")
         choice = _ask(stdin, stdout, "Select skills (comma-separated; blank for all)")
-        included = tuple(item.path for item in found) if not choice else tuple(found[int(value.strip()) - 1].path for value in choice.split(","))
+        included = tuple(found[index].path for index in _select_indices(choice, len(found)))
     namespace = args.namespace or (source_id if not _interactive(stdin) else _ask(stdin, stdout, "Namespace", source_id))
     layer = args.layer or (_ask(stdin, stdout, "Default layer", "l1") if _interactive(stdin) else "l1")
     license_name = args.license_name or (_ask(stdin, stdout, "License", "MIT") if _interactive(stdin) else "MIT")
@@ -146,11 +158,12 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
     if args.command not in {"source", "skill"}: return None
     root, git = _root(args, repo_root), git_client or GitSourceClient()
     try:
+        interaction = stderr if getattr(args, "json", False) else stdout
         is_write = not (args.command == "source" and (args.source_command == "check" or (args.source_command == "ignore" and args.ignore_command == "list")))
         if is_write and not _interactive(stdin) and not args.yes: raise UsageError("non-interactive writes require --yes")
         if args.command == "source":
             if args.source_command == "add":
-                plan = _wizard_add(args, root, git, stdin, stdout); _confirm(args, stdin, stdout); return _emit(plan, args, stdout)
+                plan = _wizard_add(args, root, git, stdin, interaction); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
             if args.source_command == "check":
                 if bool(args.source_id) == bool(args.all): raise UsageError("provide SOURCE_ID or --all")
                 sources = load_all_sources(root); selected = sources if args.all else tuple(source for source in sources if source.source_id == args.source_id)
@@ -174,28 +187,28 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
                     if source is None: raise SourceMaintenanceError("unknown source id")
                     refs = git.list_remote(source.upstream.repository)
                     choices = sorted(refs.refs)
-                    stdout.write("Available tracks:\n" + "".join(f"  {i}. {value}\n" for i, value in enumerate(choices, 1)))
-                    selected = _ask(stdin, stdout, "Track", source.upstream.track)
-                    args.track = choices[int(selected) - 1] if selected.isdigit() else selected
+                    interaction.write("Available tracks:\n" + "".join(f"  {i}. {value}\n" for i, value in enumerate(choices, 1)))
+                    selected = _ask(stdin, interaction, "Track", source.upstream.track)
+                    args.track = source.upstream.track if not selected.strip() else (choices[_select_indices(selected, len(choices))[0]] if selected.isdigit() else selected)
                 if not args.on_added or not args.on_removed:
                     if not _interactive(stdin) or args.yes: raise UsageError("source update requires --on-added and --on-removed")
-                    args.on_added = args.on_added or _ask(stdin, stdout, "On added (include/ignore/fail)", "include")
-                    args.on_removed = args.on_removed or _ask(stdin, stdout, "On removed (remove/manualize/fail)", "remove")
+                    args.on_added = args.on_added or _ask(stdin, interaction, "On added (include/ignore/fail)", "include")
+                    args.on_removed = args.on_removed or _ask(stdin, interaction, "On removed (remove/manualize/fail)", "remove")
                     if args.on_added not in {"include", "ignore", "fail"} or args.on_removed not in {"remove", "manualize", "fail"}:
                         raise UsageError("invalid update policy")
                 policies = UpdatePolicies(args.on_added, args.on_removed)
-                plan = plan_update_sources(root, None if args.all else (args.source_id,), policies, git, {args.source_id: args.track} if args.track else None); _confirm(args, stdin, stdout); return _emit(plan, args, stdout)
+                plan = plan_update_sources(root, None if args.all else (args.source_id,), policies, git, {args.source_id: args.track} if args.track else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
             if args.source_command == "adopt":
-                plan = plan_adopt_skill(root, args.source_id, args.skill_id, args.path, args.replace, git); _confirm(args, stdin, stdout); return _emit(plan, args, stdout)
+                plan = plan_adopt_skill(root, args.source_id, args.skill_id, args.path, args.replace, git); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
             if args.source_command == "ignore":
                 source = next((source for source in load_all_sources(root) if source.source_id == args.source_id), None)
                 if source is None: raise SourceMaintenanceError("unknown source id")
                 if args.ignore_command == "list":
                     data = {"status": "success", "source_id": source.source_id, "ignored": [{"path": item.path, "reason": item.reason} for item in source.upstream.ignore]}; stdout.write(format_json(data) if args.json else "\n".join(f"{item.path:<32} {item.reason}" for item in source.upstream.ignore) + "\n"); return 0
-                plan = plan_ignore_change(root, args.source_id, args.path, args.ignore_command, git if args.ignore_command == "remove" else None); _confirm(args, stdin, stdout); return _emit(plan, args, stdout)
+                plan = plan_ignore_change(root, args.source_id, args.path, args.ignore_command, git if args.ignore_command == "remove" else None); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
             if args.source_command == "delete":
                 if not args.skills: raise UsageError("source delete requires --skills delete or --skills manualize")
-                plan = plan_delete_source(root, args.source_id, args.skills, args.remove_from_profiles); _confirm(args, stdin, stdout); return _emit(plan, args, stdout)
+                plan = plan_delete_source(root, args.source_id, args.skills, args.remove_from_profiles); _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
         if args.command == "skill":
             if args.skill_command == "create":
                 if not args.description and not _interactive(stdin): raise UsageError("non-interactive skill create requires --description")
@@ -208,7 +221,7 @@ def run_maintenance_command(args, repo_root: Path, stdin: TextIO, stdout: TextIO
             elif args.skill_command == "delete": plan = plan_delete_skill(root, args.skill_id, args.remove_from_profiles)
             elif args.skill_command == "manualize": plan = plan_manualize_skill(root, args.skill_id)
             else: return None
-            _confirm(args, stdin, stdout); return _emit(plan, args, stdout)
+            _confirm(args, stdin, interaction); return _emit(plan, args, stdout)
     except UsageError as error:
         stderr.write(f"usage: {error}\n"); return 2
     except SourceManifestError as error:

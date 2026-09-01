@@ -10,7 +10,7 @@ def plan_data(plan: MaintenancePlan, *, status: str = "success") -> dict[str, ob
     return {
         "status": status,
         "operation": summary.operation,
-        "sources": list(summary.source_details) or [{"source_id": source, "status": status, "repository": None, "track": None, "old_revision": None, "new_revision": None, "deltas": {}} for source in summary.source_ids],
+        "sources": list(summary.source_details),
         "skills": {
             "added": list(summary.added_skill_ids),
             "updated": list(summary.updated_skill_ids),

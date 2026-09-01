@@ -138,6 +138,7 @@ def plan_add_source(
             return MaintenancePlan(tx, MaintenanceSummary(
                 operation="source-add", source_ids=(staged.source_id,),
                 added_skill_ids=tuple(item.skill_id for item in staged.skills),
+                source_details=({"source_id": staged.source_id, "status": "success", "repository": staged.upstream.repository, "track": staged.upstream.track, "old_revision": None, "new_revision": staged.resolved_revision, "deltas": {"added": [item.path for item in staged.skills], "updated": [], "removed": [], "ignored": [item.path for item in staged.upstream.ignore]}},),
             ))
         except BaseException:
             tx.discard()
@@ -391,6 +392,7 @@ def _stage_source_update(tx: RepositoryTransaction, snapshot: _MaterializedSourc
         added_skill_ids=tuple(sorted(added_ids)),
         updated_skill_ids=tuple(sorted(_infer_existing_id(by_path, item.path) for item in snapshot.inspection.updated)),
         removed_skill_ids=tuple(sorted(deleted)), manualized_skill_ids=tuple(sorted(manualized)),
+        source_details=({"source_id": staged.source_id, "status": "success", "repository": staged.upstream.repository, "track": staged.upstream.track, "old_revision": snapshot.inspection.old_revision, "new_revision": staged.resolved_revision, "deltas": {"added": [item.path for item in snapshot.inspection.added], "updated": [item.path for item in snapshot.inspection.updated], "removed": list(snapshot.inspection.removed), "ignored": list(snapshot.inspection.ignored)}},),
     )
 
 
@@ -611,6 +613,8 @@ def _combine_summaries(operation: str, summaries: list[MaintenanceSummary]) -> M
         removed_skill_ids=tuple(sorted(skill for summary in summaries for skill in summary.removed_skill_ids)),
         manualized_skill_ids=tuple(sorted(skill for summary in summaries for skill in summary.manualized_skill_ids)),
         affected_profile_ids=tuple(sorted(profile for summary in summaries for profile in summary.affected_profile_ids)),
+        affected_test_paths=tuple(sorted(path for summary in summaries for path in summary.affected_test_paths)),
+        source_details=tuple(sorted((detail for summary in summaries for detail in summary.source_details), key=lambda detail: str(detail["source_id"]))),
     )
 
 

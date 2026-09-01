@@ -2,6 +2,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 import shutil
+import json
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -150,6 +151,35 @@ class MaintenanceCliTest(unittest.TestCase):
         self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0, stderr.getvalue() + stdout.getvalue())
         source = load_source_manifest(self.repo / "sources/team.yaml")
         self.assertEqual((source.source_id, source.upstream.track, source.upstream.skills_path), ("team", "refs/heads/main", "library")); self.assertEqual(len(source.skills), 2)
+
+    def test_invalid_numeric_selections_raise_usage_error(self):
+        from hwskill.maintenance_cli import UsageError, _select_indices
+        for value in ("x", "0", "99", "1,1"):
+            with self.subTest(value=value), self.assertRaises(UsageError): _select_indices(value, 2)
+
+    def test_single_skill_detection_uses_parent_path(self):
+        from hwskill.maintenance_cli import _detect_skills_path
+        single = Path(self.temp.name) / "single"; path = single / "skills" / "only"; path.mkdir(parents=True); (path / "SKILL.md").write_text("---\nname: only\ndescription: only\n---\n")
+        self.assertEqual(_detect_skills_path("x", "refs/heads/main", FakeGitSourceClient(single)), "skills")
+
+    def test_interactive_source_add_json_is_stdout_only(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+        args = self._add_args(); stdin, stdout, stderr = self._streams("https://x/json.git\n\n\n\n\n\n\ny\n")
+        self.assertEqual(run_maintenance_command(args, self.repo, stdin, stdout, stderr, self.git), 0)
+        payload = json.loads(stdout.getvalue()); self.assertTrue(payload["sources"][0]["deltas"]); self.assertIn("Git repository URL", stderr.getvalue())
+
+    def test_select_track_numeric_blank_typed_and_invalid(self):
+        from hwskill.maintenance_cli import run_maintenance_command
+        write_source_manifest(self.repo / "sources/team.yaml", UpstreamSource("team", UpstreamConfig("https://x/team.git", "refs/heads/main", "library", ()), SourceDefaults("team", "l1", "MIT"), "a" * 40, ()))
+        plan = SimpleNamespace(apply=lambda: None, summary=MaintenanceSummary("source-update"))
+        for answer, expected in (("2", "refs/tags/v1"), ("", "refs/heads/main"), ("refs/heads/main", "refs/heads/main")):
+            args=self._update_args(select_track=True, yes=True)
+            with patch("hwskill.maintenance_cli.plan_update_sources", return_value=plan) as dispatch:
+                self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 0)
+            self.assertEqual(dispatch.call_args.args[4]["team"], expected)
+        for answer in ("0", "99", "x,y"):
+            args=self._update_args(select_track=True, yes=True)
+            self.assertEqual(run_maintenance_command(args, self.repo, *self._streams(answer + "\n"), self.git), 2)
 
     def test_source_add_retries_duplicate_source_id(self):
         from hwskill.maintenance_cli import run_maintenance_command
