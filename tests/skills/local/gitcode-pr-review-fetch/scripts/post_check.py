@@ -24,7 +24,7 @@ def main() -> int:
     try:
         context_path = _environment_path("HWSKILL_TEST_CONTEXT")
         artifacts = _environment_path("HWSKILL_TEST_ARTIFACTS")
-        workspace = _environment_path("HWSKILL_TEST_WORKSPACE")
+        workspace = _real_directory(_environment_path("HWSKILL_TEST_WORKSPACE"), "workspace")
         context = _load_context(context_path)
         _require_successful_agent(context)
         patch = workspace / "pr-587.patch"
@@ -34,7 +34,7 @@ def main() -> int:
             SKILL_ID,
             SCRIPT_NAME,
             expected_url=PR_URL,
-            expected_output="pr-587.patch",
+            expected_output=str(patch),
         )
         _require_resolution(resolution, patch)
         resolution["patch_path"] = str(patch)
@@ -55,6 +55,16 @@ def _environment_path(name: str) -> Path:
     if not path.is_absolute():
         raise ValueError(f"{name} must be absolute")
     return path
+
+
+def _real_directory(path: Path, label: str) -> Path:
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError as exc:
+        raise ValueError(f"{label} cannot be inspected") from exc
+    if not path.is_dir() or os.path.islink(path) or not os.path.isabs(path):
+        raise ValueError(f"{label} must be a real absolute directory")
+    return path.resolve(strict=True)
 
 
 def _load_context(path: Path) -> dict[str, object]:
@@ -85,6 +95,8 @@ def _require_resolution(resolution: dict[str, object], patch: Path) -> None:
         raise ValueError("Agent searched for the Skill location after loading it")
     if not resolution.get("execution_succeeded"):
         raise ValueError("Agent did not successfully run the Skill script")
+    if resolution.get("script_output_argument") != str(patch):
+        raise ValueError("script output argument is not the canonical workspace patch path")
     diagnostic = resolution.get("patch_diagnostic")
     if not isinstance(diagnostic, dict) or not isinstance(diagnostic.get("files"), int):
         raise ValueError("successful script invocation did not report patch diagnostics")

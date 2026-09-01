@@ -597,6 +597,30 @@ class TestLocalCaseRunner(unittest.TestCase):
         self.assertEqual(result.status, "BLOCKED")
         self.assertEqual(result.actions[0].status, "blocked")
 
+    def test_agent_prompt_renders_the_runner_owned_workspace_path(self) -> None:
+        """A collection can require an exact absolute Agent output path without trusting cwd."""
+        from hwskill.test_artifacts import ActionResult
+        from hwskill.test_manifest import AgentAction
+        from hwskill.test_runner import run_case
+
+        prompts: list[str] = []
+
+        class Agent:
+            def run(self, action, context):
+                prompts.append(action.prompt)
+                return ActionResult(action.action_id, "completed", 0, context.artifact_dir)
+
+        result = run_case(self.case(
+            steps=[AgentAction("agent", "write {{HWSKILL_TEST_WORKSPACE}}/out.txt")],
+            post_check=CommandAction("post-check", "true"),
+        ), self.environment(), self.artifacts, agent_executor=Agent())
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(len(prompts), 1)
+        self.assertNotIn("{{HWSKILL_TEST_WORKSPACE}}", prompts[0])
+        self.assertIn("/out.txt", prompts[0])
+        self.assertIn("/hwskill-test-workspace-", prompts[0])
+
     def test_run_collection_is_case_isolated_and_converts_case_exceptions_to_blocked(self) -> None:
         from hwskill.test_runner import run_collection
 

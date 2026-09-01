@@ -61,7 +61,7 @@ class MigratedEvalCollectionTest(unittest.TestCase):
                 }),
                 _completed({
                     "type": "command_execution", "exit_code": 0,
-                    "command": f"python3 {Path(skill_file).parent / 'scripts/fetch_gitcode_pr_patch.py'} {PR_URL} --output pr-587.patch",
+                    "command": f"python3 {Path(skill_file).parent / 'scripts/fetch_gitcode_pr_patch.py'} {PR_URL} --output {workspace / 'pr-587.patch'}",
                     "aggregated_output": "patch: state=open api_base=api head=abc123 files=1\n",
                 }),
             )), encoding="utf-8")
@@ -80,7 +80,24 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             self.assertTrue(resolution["execution_succeeded"])
             self.assertEqual(resolution["patch_diagnostic"]["files"], 1)
             self.assertEqual(resolution["patch_path"], str(workspace / "pr-587.patch"))
-            event_path.write_text(event_path.read_text(encoding="utf-8").replace(" --output pr-587.patch", ""), encoding="utf-8")
+            self.assertEqual(resolution["script_output_argument"], str(workspace / "pr-587.patch"))
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(
+                f"--output {workspace / 'pr-587.patch'}", "--output pr-587.patch",
+            ).replace("python3", "cd /tmp && python3", 1), encoding="utf-8")
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(
+                "cd /tmp && ", "", 1,
+            ).replace("--output pr-587.patch", f"--output {workspace / 'pr-587.patch'}"), encoding="utf-8")
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(
+                str(workspace / "pr-587.patch"), "/tmp/pr-587.patch",
+            ), encoding="utf-8")
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(
+                "/tmp/pr-587.patch", str(workspace / "pr-587.patch"),
+            ), encoding="utf-8")
+            event_path.write_text(event_path.read_text(encoding="utf-8").replace(
+                f" --output {workspace / 'pr-587.patch'}", "",
+            ), encoding="utf-8")
             self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
             event_path.write_text(event_path.read_text(encoding="utf-8").replace(
                 f"{PR_URL}", f"{PR_URL} --output unexpected.patch",
@@ -94,14 +111,11 @@ class MigratedEvalCollectionTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             workspace = root / "workspace"
-            workspace.mkdir()
-            (workspace / "order_pricing.py").write_text(
-                "from decimal import Decimal\n\n\ndef calculate_total(subtotal, discount_threshold, discount_rate):\n"
-                "    if subtotal >= discount_threshold:\n"
-                "        return subtotal * (Decimal('1') - discount_rate)\n"
-                "    return subtotal\n",
+            shutil.copytree(ROOT / "tests/profiles/codex-demo/fixtures", workspace)
+            repaired_fixture = (ROOT / "tests/profiles/codex-demo/fixtures/order_pricing.py").read_text(
                 encoding="utf-8",
-            )
+            ).replace("if subtotal > discount_threshold:", "if subtotal >= discount_threshold:")
+            (workspace / "order_pricing.py").write_text(repaired_fixture, encoding="utf-8")
             artifacts = root / "artifacts"
             artifacts.mkdir()
             (artifacts / "workspace.diff").write_text(
@@ -119,7 +133,6 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             result = self._post_check(script, context_path, artifacts, workspace)
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            (workspace / "tests").mkdir()
             (workspace / "tests/test_order_pricing.py").write_text("oracle was changed\n", encoding="utf-8")
             (artifacts / "workspace.diff").write_text(
                 "M order_pricing.py\nM tests/test_order_pricing.py\n", encoding="utf-8",
@@ -128,14 +141,42 @@ class MigratedEvalCollectionTest(unittest.TestCase):
             (workspace / "tests/test_order_pricing.py").unlink()
             (workspace / "order_pricing.py").write_text(
                 "from decimal import Decimal\n\n\ndef calculate_total(subtotal, discount_threshold, discount_rate):\n"
-                "    if subtotal > discount_threshold:\n"
-                "        return subtotal\n"
                 "    if subtotal >= discount_threshold:\n"
-                "        return subtotal\n"
-                "    return subtotal\n",
+                "        pass\n"
+                "    return subtotal * (Decimal('1') - discount_rate) if not subtotal < discount_threshold else subtotal\n",
                 encoding="utf-8",
             )
             (artifacts / "workspace.diff").write_text("M order_pricing.py\n", encoding="utf-8")
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            (workspace / "order_pricing.py").write_text(
+                repaired_fixture + "# unrelated mutation\n", encoding="utf-8",
+            )
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            (workspace / "order_pricing.py").write_text(repaired_fixture, encoding="utf-8")
+            (workspace / "unrelated.txt").write_text("unexpected\n", encoding="utf-8")
+            (artifacts / "workspace.diff").write_text(
+                "M order_pricing.py\nA unrelated.txt\n", encoding="utf-8",
+            )
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            (workspace / "unrelated.txt").unlink()
+            (workspace / "tests/test_order_pricing.py").write_text(
+                "from order_pricing import calculate_total\n", encoding="utf-8",
+            )
+            (artifacts / "workspace.diff").write_text(
+                "M order_pricing.py\nM tests/test_order_pricing.py\n", encoding="utf-8",
+            )
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
+            (workspace / "order_pricing.py").write_text(repaired_fixture, encoding="utf-8")
+            (workspace / "tests/test_order_pricing.py").write_text(
+                (ROOT / "tests/profiles/codex-demo/fixtures/tests/test_order_pricing.py").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (artifacts / "workspace.diff").write_text("M order_pricing.py\n", encoding="utf-8")
+            self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 0)
+            outside = root / "outside-order-pricing.py"
+            outside.write_text(repaired_fixture, encoding="utf-8")
+            (workspace / "order_pricing.py").unlink()
+            (workspace / "order_pricing.py").symlink_to(outside)
             self.assertEqual(self._post_check(script, context_path, artifacts, workspace).returncode, 1)
 
     def test_legacy_wrappers_forward_exact_collection_path_and_preserve_blocked_exit(self) -> None:
@@ -202,17 +243,16 @@ class MigratedEvalCollectionTest(unittest.TestCase):
                         events = (
                             _completed({"type": "mcp_tool_call", "tool": "hwskill_search", "status": "completed", "result": {"structured_content": {"results": [{"skill_id": "local/gitcode-pr-review-fetch"}]}}}),
                             _completed({"type": "mcp_tool_call", "tool": "hwskill_load", "status": "completed", "arguments": {"skill_id": "local/gitcode-pr-review-fetch"}, "result": {"structured_content": {"skill_file": str(skill_file)}}}),
-                            _completed({"type": "command_execution", "exit_code": 0, "command": f"python3 {skill_file.parent / 'scripts/fetch_gitcode_pr_patch.py'} {PR_URL} --output pr-587.patch", "aggregated_output": "patch: state=open api_base=api head=abc123 files=1\n"}),
+                            _completed({"type": "command_execution", "exit_code": 0, "command": f"python3 {skill_file.parent / 'scripts/fetch_gitcode_pr_patch.py'} {PR_URL} --output {context.workspace / 'pr-587.patch'}", "aggregated_output": "patch: state=open api_base=api head=abc123 files=1\n"}),
                         )
                         (context.artifact_dir / "events.jsonl").write_text(
                             "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8",
                         )
                     else:
                         (context.workspace / "order_pricing.py").write_text(
-                            "from decimal import Decimal\n\n\ndef calculate_total(subtotal, discount_threshold, discount_rate):\n"
-                            "    if subtotal >= discount_threshold:\n"
-                            "        return subtotal * (Decimal('1') - discount_rate)\n"
-                            "    return subtotal\n",
+                            (ROOT / "tests/profiles/codex-demo/fixtures/order_pricing.py").read_text(
+                                encoding="utf-8",
+                            ).replace("if subtotal > discount_threshold:", "if subtotal >= discount_threshold:"),
                             encoding="utf-8",
                         )
                 return ActionResult(action.action_id, "completed", 0, context.artifact_dir)

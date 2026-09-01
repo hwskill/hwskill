@@ -275,6 +275,13 @@ def _execute(
                 action.prompt, post_check_context, case_dir, workspace,
             ),
         )
+    if isinstance(action, AgentAction):
+        action = replace(
+            action,
+            prompt=action.prompt.replace(
+                "{{HWSKILL_TEST_WORKSPACE}}", str(context.workspace.absolute()),
+            ),
+        )
     executor = command_executor if isinstance(action, CommandAction) else agent_executor
     return executor.run(action, context)
 

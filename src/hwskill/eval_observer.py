@@ -81,7 +81,7 @@ def _invocation_argv(
     expected_script: str,
     expected_url: str | None,
     expected_output: str | None,
-) -> list[str] | None:
+) -> tuple[list[str], str | None] | None:
     for segment in _segments(_tokens(command)):
         argv = _command_argv(segment)
         if not argv:
@@ -97,20 +97,24 @@ def _invocation_argv(
             continue
         if expected_url is not None and expected_url not in arguments:
             continue
-        if expected_output is not None:
-            output_matches = any(
-                argument == f"--output={expected_output}"
-                or (
-                    argument == "--output"
-                    and index + 1 < len(arguments)
-                    and arguments[index + 1] == expected_output
-                )
-                for index, argument in enumerate(arguments)
-            )
-            if not output_matches:
-                continue
-        return argv
+        output_argument = _output_argument(arguments)
+        if expected_output is not None and output_argument != expected_output:
+            continue
+        return argv, output_argument
     return None
+
+
+def _output_argument(arguments: list[str]) -> str | None:
+    """Return the single parsed output value, rejecting ambiguous repeated flags."""
+    values: list[str] = []
+    for index, argument in enumerate(arguments):
+        if argument.startswith("--output="):
+            values.append(argument.removeprefix("--output="))
+        elif argument == "--output" and index + 1 < len(arguments):
+            values.append(arguments[index + 1])
+    if len(values) != 1:
+        return None
+    return values[0]
 
 
 def _is_discovery(command: str, skill_file: str, expected_script: str) -> bool:
@@ -200,7 +204,7 @@ def observe_script_resolution(
         raise ValueError(f"completed hwskill_search not found for {skill_id}")
 
     expected_script = str(Path(skill_file).parent / "scripts" / script_name)
-    command_items: list[tuple[int, dict[str, Any], list[str]]] = []
+    command_items: list[tuple[int, dict[str, Any], list[str], str | None]] = []
     for event_index, event in enumerate(events):
         if event.get("type") != "item.completed":
             continue
@@ -208,13 +212,14 @@ def observe_script_resolution(
         if item.get("type") != "command_execution":
             continue
         command = str(item.get("command", ""))
-        argv = _invocation_argv(command, expected_script, expected_url, expected_output)
-        if argv is not None:
-            command_items.append((event_index, item, argv))
+        invocation = _invocation_argv(command, expected_script, expected_url, expected_output)
+        if invocation is not None:
+            argv, output_argument = invocation
+            command_items.append((event_index, item, argv, output_argument))
 
     invocation_before_load = any(
         not _completed_before_call(load_item, load_index, item, index)
-        for index, item, _ in command_items
+        for index, item, _, _ in command_items
     )
     invocation_items = [
         entry for entry in command_items
@@ -225,7 +230,7 @@ def observe_script_resolution(
             f"script invocation not found after completed hwskill_load: {expected_script}"
         )
 
-    first_index, first_invocation, first_argv = invocation_items[0]
+    first_index, first_invocation, first_argv, first_output_argument = invocation_items[0]
     commands_before = []
     discovery = []
     for event in events[:first_index]:
@@ -275,6 +280,7 @@ def observe_script_resolution(
         "expected_script": expected_script,
         "expected_url": expected_url,
         "expected_output": expected_output,
+        "script_output_argument": first_output_argument,
         "parsed_script_argv": first_argv,
         "script_invocation_command": str(first_invocation.get("command", "")),
         "script_invocation_attempts": len(invocation_items),
