@@ -8,7 +8,6 @@ import os
 import sys
 from pathlib import Path
 
-import yaml
 
 from . import __version__
 from .audit import AuditWriter
@@ -23,10 +22,8 @@ from .configuration import (
 from .claude_code_adapter import run_session_start as run_claude_session_start
 from .codex_adapter import run_session_start as run_codex_session_start
 from .doctor import run_doctor
-from .importer import import_source
 from .info import collect_info, format_info_summary
 from .loader import load_skill
-from .models import SourceSpec
 from .profiles import (
     bind_profile,
     list_profiles,
@@ -46,6 +43,7 @@ from .skill_export import (
     skills_for_profiles,
 )
 from .mcp_server import run_server
+from .maintenance_cli import register_maintenance_commands, run_maintenance_command
 from .opencode_adapter import render_catalog as render_opencode_catalog
 from .paths import resolve_repo_root
 from .scopes import ScopeTarget, project_scope, user_scope
@@ -183,12 +181,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     info_parser.add_argument("--json", action="store_true")
     registry = _command(commands, "registry", "Manage the skill registry")
     registry_commands = _commands(registry, "registry_command")
-    import_parser = _command(
-        registry_commands, "import", "Import skills from a source manifest"
-    )
-    import_parser.add_argument("--source", required=True)
-    import_parser.add_argument("--repo-root")
-    import_parser.add_argument("--update", action="store_true")
     validate_parser = _command(registry_commands, "validate", "Validate registry contents")
     validate_parser.add_argument("--repo-root")
     build_parser = _command(registry_commands, "build", "Build the registry catalog")
@@ -297,6 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_parser.add_argument("--expected-digest")
     load_parser.add_argument("--raw", action="store_true")
     load_parser.add_argument("--json", action="store_true")
+    register_maintenance_commands(commands)
     setup_parser = _command(commands, "setup", "Configure a host integration")
     _add_host_argument(setup_parser)
     _add_scope_arguments(setup_parser)
@@ -358,6 +351,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     mcp_parser.add_argument("--audit-path")
     mcp_parser.add_argument("--scope", choices=("user", "project"), default="project")
     args = parser.parse_args(argv)
+    if args.command == "source" or (
+        args.command == "skill" and args.skill_command in {"create", "update", "move", "rename", "delete", "manualize"}
+    ):
+        maintenance_code = run_maintenance_command(
+            args, _repo_root(getattr(args, "repo_root", None)), sys.stdin, sys.stdout, sys.stderr,
+        )
+        if maintenance_code is not None:
+            return maintenance_code
     if args.version:
         print(f"hwskill {__version__}")
     elif args.command == "info":
@@ -370,16 +371,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(info, ensure_ascii=False, indent=2))
         else:
             print(format_info_summary(info), end="")
-    elif args.command == "registry" and args.registry_command == "import":
-        source_data = yaml.safe_load(Path(args.source).read_text(encoding="utf-8"))
-        records = import_source(
-            SourceSpec.from_mapping(source_data),
-            _repo_root(args.repo_root),
-            update=args.update,
-        )
-        print("ID\tREVISION\tDIGEST")
-        for record in records:
-            print(f"{record.skill_id}\t{record.revision}\t{record.content_digest}")
     elif args.command == "registry" and args.registry_command == "validate":
         records = validate_registry(_repo_root(args.repo_root))
         print("ID\tREVISION\tDIGEST")

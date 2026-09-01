@@ -19,6 +19,7 @@ class CliHelpTest(unittest.TestCase):
             (): {
                 "info": "Show installation and integration status",
                 "registry": "Manage the skill registry",
+                "source": "Manage upstream skill sources",
                 "profile": "Manage user and project profiles",
                 "skill": "Search and load effective skills",
                 "setup": "Configure a host integration",
@@ -28,7 +29,6 @@ class CliHelpTest(unittest.TestCase):
                 "serve-mcp": "Start the hwskill MCP server",
             },
             ("registry",): {
-                "import": "Import skills from a source manifest",
                 "validate": "Validate registry contents",
                 "build": "Build the registry catalog",
             },
@@ -47,6 +47,14 @@ class CliHelpTest(unittest.TestCase):
                 "dump-profile": "Export skills from profiles",
                 "search": "Search the effective skill catalog",
                 "load": "Load a skill from the effective catalog",
+                "create": "Create a manual Skill",
+                "manualize": "Convert an upstream Skill to manual",
+            },
+            ("source",): {
+                "add": "Add an upstream source",
+                "check": "Check upstream source revisions",
+                "update": "Update upstream source snapshots",
+                "adopt": "Adopt an upstream Skill",
             },
             ("adapter",): {
                 "codex": "Run Codex adapter commands",

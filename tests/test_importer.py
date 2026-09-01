@@ -5,7 +5,6 @@ import unittest
 from hwskill.digest import content_digest
 from hwskill.importer import ImportConflictError, SkillImportError, import_source
 from hwskill.models import SourceSpec
-from hwskill.cli import main
 
 
 class ImporterTest(unittest.TestCase):
@@ -81,27 +80,6 @@ class ImporterTest(unittest.TestCase):
         self.make_skill("example", "Changed body\n")
         with self.assertRaisesRegex(ImportConflictError, "--update"):
             import_source(self.spec(), self.repo)
-
-    def test_registry_import_command_reads_source_manifest(self):
-        import yaml
-
-        manifest = self.root / "source.yaml"
-        manifest.write_text(yaml.safe_dump({
-            "source_id": "local-test",
-            "kind": "local",
-            "root": str(self.source_root),
-            "namespace": "local",
-            "revision": "working-tree",
-            "license": "unknown",
-            "skills": [{"name": "example", "layer": "l1"}],
-        }), encoding="utf-8")
-        code = main([
-            "registry", "import", "--source", str(manifest),
-            "--repo-root", str(self.repo),
-        ])
-        self.assertEqual(code, 0)
-        self.assertTrue((self.repo / "skills-src/l1/local/example/SKILL.md").is_file())
-
 
 if __name__ == "__main__":
     unittest.main()
