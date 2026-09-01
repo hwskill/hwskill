@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from hwskill.test_manifest import CommandAction, TestCase, TestCollection, TestTarget
+
+
+class TestLocalCaseRunner(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.fixtures = self.repo / "tests/skills/team/review/fixtures"
+        self.fixtures.mkdir(parents=True)
+        (self.fixtures / "seed.txt").write_text("seed\n", encoding="utf-8")
+        self.artifacts = self.root / "artifacts"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def environment(self, **overrides: object):
+        from hwskill.test_runner import TestEnvironment
+
+        values: dict[str, object] = {
+            "repo_root": self.repo,
+            "runner": "local",
+            "host": "codex",
+            "model": "test-model",
+            "reasoning": "minimal",
+        }
+        values.update(overrides)
+        return TestEnvironment(**values)
+
+    def case(self, *, prepare=None, steps=None, post_check=None, workdir=None) -> TestCase:
+        return TestCase(
+            case_id="case-one",
+            description=None,
+            workdir=workdir,
+            prepare=prepare,
+            steps=tuple(steps or [CommandAction("write", "printf written > output.txt")]),
+            post_check=post_check or CommandAction("post-check", "test -f output.txt"),
+        )
+
+    def collection(self, *cases: TestCase) -> TestCollection:
+        return TestCollection(
+            manifest_path=self.repo / "tests/skills/team/review/test.yaml",
+            target=TestTarget("skill", "team/review"),
+            cases=tuple(cases),
+            fixtures_dir=self.fixtures,
+        )
+
+    def test_prepare_steps_and_post_check_share_workspace_and_context(self) -> None:
+        from hwskill.test_runner import run_case
+
+        result = run_case(self.case(
+            prepare=CommandAction("prepare", "printf prepared > prepared.txt"),
+            steps=[CommandAction("write", "test -f seed.txt && test -f prepared.txt && printf written > output.txt")],
+        ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual([action.action_id for action in result.actions], ["prepare", "write", "post-check"])
+        context = json.loads((result.artifact_dir / "context.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(context["actions"]), ["prepare", "write", "post-check"])
+        self.assertNotIn("stdout", json.dumps(context))
+        self.assertFalse(Path(context["workspace"]).exists())
+        self.assertTrue((result.artifact_dir / "workspace.diff").is_file())
+
+    def test_prepare_failure_blocks_steps_and_post_check(self) -> None:
+        from hwskill.test_runner import run_case
+
+        result = run_case(self.case(
+            prepare=CommandAction("prepare", "exit 9"),
+            steps=[CommandAction("step", "touch should-not-exist")],
+            post_check=CommandAction("post-check", "touch post-check-ran"),
+        ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual([item.action_id for item in result.actions], ["prepare"])
+        self.assertFalse((result.artifact_dir / "workspace" / "should-not-exist").exists())
+        self.assertFalse((result.artifact_dir / "workspace" / "post-check-ran").exists())
+
+    def test_failed_step_still_reaches_post_check_and_uses_its_exact_verdict(self) -> None:
+        from hwskill.test_runner import run_case
+
+        failing = run_case(self.case(
+            steps=[CommandAction("step", "exit 4")],
+            post_check=CommandAction("post-check", "exit 1"),
+        ), self.environment(), self.artifacts / "fail")
+        blocked = run_case(self.case(
+            steps=[CommandAction("step", "exit 4")],
+            post_check=CommandAction("post-check", "exit 2"),
+        ), self.environment(), self.artifacts / "blocked")
+
+        self.assertEqual(failing.status, "FAIL")
+        self.assertEqual([item.status for item in failing.actions], ["failed", "failed"])
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertEqual([item.status for item in blocked.actions], ["failed", "failed"])
+
+    def test_post_check_receives_absolute_context_artifact_and_workspace_paths(self) -> None:
+        from hwskill.test_runner import run_case
+
+        command = (
+            'python3 -c "import os,pathlib; '
+            'assert all(pathlib.Path(os.environ[name]).is_absolute() for name in '
+            "['HWSKILL_TEST_CONTEXT','HWSKILL_TEST_ARTIFACTS','HWSKILL_TEST_WORKSPACE'])\""
+        )
+        result = run_case(self.case(post_check=CommandAction("post-check", command)), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+
+    def test_action_workdir_symlink_escape_is_blocked_before_command_runs(self) -> None:
+        from hwskill.test_runner import run_case
+
+        outside = self.root / "outside"
+        outside.mkdir()
+        result = run_case(self.case(
+            prepare=CommandAction("prepare", f"ln -s {outside} escape"),
+            steps=[CommandAction("step", "touch escaped", workdir="escape")],
+            post_check=CommandAction("post-check", "exit 0"),
+        ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.actions[1].status, "blocked")
+        self.assertFalse((outside / "escaped").exists())
+
+    def test_case_workdir_applies_when_action_has_no_override(self) -> None:
+        from hwskill.test_runner import run_case
+
+        (self.fixtures / "case-dir").mkdir()
+        (self.fixtures / "action-dir").mkdir()
+        result = run_case(self.case(
+            workdir="case-dir",
+            steps=[
+                CommandAction("case", "printf case > case.txt"),
+                CommandAction("action", "printf action > action.txt", workdir="action-dir"),
+            ],
+            post_check=CommandAction("post-check", "test -f case.txt && test ! -f action.txt"),
+        ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+        diff = (result.artifact_dir / "workspace.diff").read_text(encoding="utf-8")
+        self.assertEqual(diff, "A action-dir/action.txt\nA case-dir/case.txt\n")
+
+    def test_timeout_kills_the_action_process_group(self) -> None:
+        from hwskill.test_runner import run_case
+
+        result = run_case(self.case(
+            steps=[CommandAction("step", "sleep 5")],
+            post_check=CommandAction("post-check", "exit 0"),
+        ), self.environment(timeout_seconds=0.1), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.actions[0].status, "blocked")
+        self.assertEqual(result.actions[1].status, "completed")
+        stderr = (result.actions[0].artifact_dir / "stderr.log").read_text(encoding="utf-8")
+        self.assertIn("timed out", stderr)
+
+    def test_minimal_environment_forwards_declared_variables_and_redacts_persisted_secrets(self) -> None:
+        from hwskill.test_runner import run_case
+
+        secret = "super-secret-value"
+        result = run_case(self.case(
+            steps=[CommandAction("step", 'printf "%s:%s" "$PATH" "$DECLARED"; printf "' + secret + '" >&2')],
+            post_check=CommandAction("post-check", "exit 0"),
+        ), self.environment(
+            environment_variables=(("DECLARED", "available"),),
+            secret_values=(secret,),
+        ), self.artifacts)
+
+        persisted = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in result.artifact_dir.rglob("*") if path.is_file()
+        )
+        self.assertEqual(result.status, "PASS")
+        self.assertIn(":available", persisted)
+        self.assertNotIn(secret, persisted)
+        self.assertIn("[REDACTED]", persisted)
+        self.assertNotIn(os.environ.get("HOME", ""), persisted)
+
+    def test_agent_without_a_required_executor_blocks_the_case(self) -> None:
+        from hwskill.test_manifest import AgentAction
+        from hwskill.test_runner import run_case
+
+        result = run_case(self.case(
+            steps=[AgentAction("agent", "do the work")],
+            post_check=CommandAction("post-check", "exit 0"),
+        ), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.actions[0].status, "blocked")
+
+    def test_run_collection_is_case_isolated_and_converts_case_exceptions_to_blocked(self) -> None:
+        from hwskill.test_runner import run_collection
+
+        first = self.case(
+            steps=[CommandAction("write", "printf one > unique.txt")],
+            post_check=CommandAction("post-check", "test -f unique.txt"),
+        )
+        second = TestCase(
+            case_id="case-two",
+            description=None,
+            workdir=None,
+            prepare=None,
+            steps=(CommandAction("write", "test ! -e unique.txt"),),
+            post_check=CommandAction("post-check", "exit 0"),
+        )
+        result = run_collection(self.collection(first, second), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual([case.case_id for case in result.cases], ["case-one", "case-two"])
+        self.assertEqual([case.status for case in result.cases], ["PASS", "PASS"])
+
+    def test_run_collection_converts_runner_exception_to_a_blocked_case(self) -> None:
+        from hwskill.test_runner import run_collection
+
+        self.artifacts.mkdir()
+        (self.artifacts / "case-one").write_text("not an artifact directory", encoding="utf-8")
+        result = run_collection(self.collection(self.case()), self.environment(), self.artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.cases[0].status, "BLOCKED")
+        self.assertEqual(result.cases[0].artifact_dir.name, "case-one-blocked")
+
+
+if __name__ == "__main__":
+    unittest.main()
