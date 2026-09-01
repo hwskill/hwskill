@@ -255,6 +255,11 @@ class DockerTestRunner:
         """Execute one immutable selection in Docker, with no local fallback."""
         try:
             artifacts = _real_directory(artifact_root, "artifact root")
+            if not collections:
+                return TestRunResult(
+                    "BLOCKED", artifacts, (), "docker", environment.host, environment.model,
+                    "unavailable", blocked_reason="test selection is empty",
+                )
             if self._image is None:
                 self._image = self.inspect_image()
             preflight_name = "hwskill-preflight-" + secrets.token_hex(16)

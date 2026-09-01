@@ -218,6 +218,14 @@ def run_test_command(
         _write_run(result, bool(args.json), stdout)
         return BLOCKED
 
+    if not selections:
+        result = _blocked_run(
+            root, args, "test selection is empty", runner=configuration.runner,
+            host=host, model=model.model,
+        )
+        _write_run(result, bool(args.json), stdout)
+        return BLOCKED
+
     try:
         material = credential_material or _environment_credential_material(host, os.environ)
         if material.host != host:

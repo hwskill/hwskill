@@ -167,6 +167,26 @@ class TestCliTest(unittest.TestCase):
         self.assertEqual(code, 3)
         cleared.assert_not_called()
 
+    def test_affected_empty_selection_blocks_without_running_or_clearing_pending(self) -> None:
+        from hwskill import test_cli
+
+        boundary = Mock()
+        selection = TestSelection()
+        with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(
+            "hwskill.test_cli.select_affected_tests", return_value=selection,
+        ), patch("hwskill.test_cli.clear_pending_verification") as cleared:
+            args = Namespace(
+                test_target="affected", test_id=None, runner="docker", host=None, base="HEAD^",
+                check=False, json=True, model=None, reasoning=None,
+            )
+            code = test_cli.run_test_command(
+                args, self.repo, StringIO(), StringIO(), execution_boundary=boundary,
+            )
+
+        self.assertEqual(code, 3)
+        boundary.run.assert_not_called()
+        cleared.assert_not_called()
+
     def test_test_command_does_not_call_integrity_check(self) -> None:
         self.manifest("tests/skills/team/review/test.yaml", kind="skill", target_id="team/review")
         with patch("hwskill.test_cli.load_test_configuration", return_value=self.config), patch(

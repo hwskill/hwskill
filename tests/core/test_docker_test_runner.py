@@ -495,6 +495,33 @@ class DockerExecutionTests(unittest.TestCase):
 
         return TestConfiguration("docker", "codex", {"codex": HostModel("gpt-5.6-terra", "high")})
 
+    def test_empty_selection_blocks_before_preflight_or_aggregate_write(self) -> None:
+        from hwskill.docker_test_runner import DockerTestRunner, ImageInfo
+        from hwskill.test_runner import TestEnvironment
+
+        calls = []
+
+        def execute(argv, **kwargs):
+            calls.append(tuple(argv))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            (repo / "tests/core").mkdir(parents=True)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            runner = DockerTestRunner(
+                repo, self._config(), image=ImageInfo("hwskill-test:0.1.0", "sha256:" + "a" * 64),
+                command_runner=execute,
+            )
+            result = runner.run((), TestEnvironment(repo, "docker", "codex", "model", "high"), artifacts)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.collections, ())
+        self.assertEqual(calls, [])
+        self.assertFalse((artifacts / "result.json").exists())
+
     def test_run_writes_secret_free_request_and_parses_actual_worker_result(self) -> None:
         from hwskill.docker_test_runner import CredentialFile, DockerTestRunner
         from hwskill.test_runner import TestEnvironment
