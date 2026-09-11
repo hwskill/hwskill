@@ -195,6 +195,21 @@ class DirectoryValidationTests(unittest.TestCase):
         self.assertNotEqual(clean.input_digest, invalid.input_digest)
         self.assertTrue(any(issue.file == "curation/topics.yaml" and issue.code == "schema-pattern" for issue in invalid.issues))
 
+    def test_curation_requires_both_final_sections_during_validation(self) -> None:
+        """A build-only missing-section failure is an input error, not an environment error."""
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        curation = root / "curation"
+        curation.mkdir()
+        (curation / "topics.yaml").write_text("topics: []\n", encoding="utf-8")
+        report = validate_repository(root)
+        self.assertEqual(report.result, "fail")
+        self.assertTrue(any(issue.code == "curation-missing-section" and issue.field == "synonyms" for issue in report.issues))
+
     def test_initial_external_entries_use_verified_skill_subdirectories(self) -> None:
         """Root repository references are not substitutes for a verified SKILL.md path."""
         from hwskill.directory.yaml_io import load_yaml
