@@ -20,7 +20,7 @@
 | 2 贡献与目录构建 | 已完成 | commits `f4b462c`、`0d603d6`、`580cf97`、`aa49e60`、`3d2505e`；38 项测试与最终复审 clean；6 个公开技能、2 篇 ready 推荐 |
 | 3 静态站 | 已完成 | Astro 7.0.0 构建 16 个静态路由；Pagefind 1.5.2 Extended 仅索引 6 个技能详情与 4 类筛选；33 项真实查询通过，最终复审 clean |
 | 4 安装验证 | 已完成 | 27 项验证测试与 39 项目录测试通过；dirfd 原子发布、Git object 快照、失败分阶段报告及最终独立复审 clean |
-| 5 发布恢复 | 未开始 | 依赖 Task 2/3/4 |
+| 5 发布恢复 | 已完成 | 52 项发布/恢复测试通过；不可变快照、原子 no-clobber、历史验真、显式 tombstone 与最终独立复审 clean |
 | 6 feed 读取筛选 | 未开始 | 依赖 Task 5 release Schema |
 | 7 SQLite 交接 | 未开始 | 依赖 Task 6 |
 | 8 Luna 体验验收 | 已完成（环境阻塞） | 17 项观察器测试与独立复审 clean；隔离 runner 生成 5/5 `not_run`，缺可用 Luna 凭据/受信宿主，未伪称通过 |

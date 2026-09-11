@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -84,6 +85,84 @@ class DirectoryValidationTests(unittest.TestCase):
     def test_rejects_unsafe_external_git_path(self) -> None:
         report = self.validate("external-path-escape")
         self.assertTrue(any(issue.code == "external-path-unsafe" for issue in report.issues))
+
+    def test_rejects_credentials_in_every_public_entry_url(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        for field in ("repository", "web", "instructions", "license", "evidence"):
+            with self.subTest(field=field):
+                temporary = TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                root = Path(temporary.name) / "repository"
+                fixture = "external-no-read" if field == "web" else "valid"
+                shutil.copytree(FIXTURES / fixture, root)
+                entry_path = (
+                    root / "entries/l1/local/external.yaml"
+                    if field == "web"
+                    else root / "entries/l2/upstream/external.yaml"
+                )
+                entry = entry_path.read_text(encoding="utf-8")
+                if field == "repository":
+                    entry = entry.replace(
+                        "https://example.com/org/repository.git",
+                        "https://user:secret@example.com/org/repository.git",
+                        1,
+                    )
+                elif field == "web":
+                    entry = entry.replace(
+                        "https://example.com/skill",
+                        "https://user:secret@example.com/skill",
+                    )
+                elif field == "instructions":
+                    entry = entry.replace(
+                        "https://example.com/org/repository/blob/v1.2.3/README.md",
+                        "https://user:secret@example.com/install",
+                    )
+                elif field == "license":
+                    entry = entry.replace("  identifier: MIT\n", "  url: https://user:secret@example.com/license\n")
+                else:
+                    recommendation_path = root / "recommendations/review-tools.yaml"
+                    recommendation_path.write_text(
+                        recommendation_path.read_text(encoding="utf-8")
+                        + "evidence:\n  - url: https://user:secret@example.com/evidence\n"
+                        + "    observed_at: 2026-09-11T00:00:00Z\n",
+                        encoding="utf-8",
+                    )
+                entry_path.write_text(entry, encoding="utf-8")
+
+                report = validate_repository(root)
+                self.assertTrue(
+                    any(issue.code == "public-url-unsafe" for issue in report.issues),
+                    report.issues,
+                )
+
+    def test_rejects_git_path_and_requested_ref_option_injection_shapes(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        cases = {
+            "path": ["/absolute", ".", "skills/../evil", "skills//evil", "skills\\evil"],
+            "requested_ref": ["", " v1", "v1 ", "--upload-pack=evil", "v1\tother"],
+        }
+        for field, values in cases.items():
+            for index, value in enumerate(values):
+                with self.subTest(field=field, value=value):
+                    temporary = TemporaryDirectory()
+                    self.addCleanup(temporary.cleanup)
+                    root = Path(temporary.name) / "repository"
+                    shutil.copytree(FIXTURES / "valid", root)
+                    entry_path = root / "entries/l2/upstream/external.yaml"
+                    entry = entry_path.read_text(encoding="utf-8")
+                    original = "skills/review" if field == "path" else "v1.2.3"
+                    replacement = value if field == "path" else json.dumps(value)
+                    entry_path.write_text(entry.replace(original, replacement, 1), encoding="utf-8")
+
+                    report = validate_repository(root)
+                    expected = "external-path-unsafe" if field == "path" else "external-ref-unsafe"
+                    self.assertTrue(
+                        any(issue.code == expected for issue in report.issues)
+                        or (value == "" and any(issue.code.startswith("schema-") for issue in report.issues)),
+                        report.issues,
+                    )
 
     def test_draft_recommendation_is_valid_but_not_publishable(self) -> None:
         report = self.validate("draft")

@@ -86,20 +86,76 @@ def _is_safe_hosted_path(root: Path, value: str) -> bool:
 
 
 def _url_is_http(value: object) -> bool:
-    if not isinstance(value, str) or any(character.isspace() for character in value):
+    if not isinstance(value, str) or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
         return False
     try:
         parsed = urlsplit(value)
-        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc) and bool(parsed.hostname)
+        return (
+            parsed.scheme.lower() in {"http", "https"}
+            and bool(parsed.netloc)
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+        )
     except ValueError:
         return False
 
 
 def _is_safe_external_path(value: object) -> bool:
-    if not isinstance(value, str):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.startswith("/")
+        or "\\" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
         return False
-    path = PurePosixPath(value)
-    return str(path) == "." or (bool(path.parts) and not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts))
+    return all(part not in {"", ".", ".."} for part in value.split("/"))
+
+
+def _is_safe_requested_ref(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not value.startswith("-")
+        and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
+    )
+
+
+def _validate_entry_public_security(
+    path: Path,
+    root: Path,
+    entry: dict[str, Any],
+    issues: list[DirectoryIssue],
+) -> None:
+    source = entry["source"]
+    if source["kind"] == "external":
+        locator = source["locator"]
+        url = locator.get("repository") if locator["type"] == "git" else locator.get("url")
+        if not _url_is_http(url):
+            issues.append(_issue(path, root, "source.locator", "public-url-unsafe", "External locator must be a credential-free http(s) URL.", "Use an explicit public URL without userinfo credentials."))
+        if locator["type"] == "git":
+            if not _is_safe_external_path(locator.get("path")):
+                issues.append(_issue(path, root, "source.locator.path", "external-path-unsafe", "External Git path must be a strict POSIX relative path.", "Use a non-empty relative path without traversal, empty segments, or backslashes."))
+            if not _is_safe_requested_ref(locator.get("requested_ref")):
+                issues.append(_issue(path, root, "source.locator.requested_ref", "external-ref-unsafe", "External Git requested_ref must not be blank, option-like, whitespace-bearing, or contain controls.", "Use an explicit safe revision without a leading dash."))
+    for field, value in (
+        ("install.instructions_url", entry["install"].get("instructions_url")),
+        ("license.url", entry["license"].get("url")),
+    ):
+        if value is not None and not _url_is_http(value):
+            issues.append(_issue(path, root, field, "public-url-unsafe", "Public URL must be credential-free http(s).", "Remove URL userinfo credentials and use a public http(s) URL."))
+
+
+def _validate_recommendation_public_security(
+    path: Path,
+    root: Path,
+    recommendation: dict[str, Any],
+    issues: list[DirectoryIssue],
+) -> None:
+    for index, evidence in enumerate(recommendation.get("evidence", [])):
+        if not _url_is_http(evidence.get("url")):
+            issues.append(_issue(path, root, f"evidence[{index}].url", "public-url-unsafe", "Evidence URL must be credential-free http(s).", "Remove URL userinfo credentials and use a public http(s) URL."))
 
 
 def _normalise_identity_path(value: str) -> str:
@@ -174,6 +230,10 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the field to match its JSON Schema contract."))
         if not schema_errors:
             destination.append((path, document))
+            if schema_name == "entry":
+                _validate_entry_public_security(path, root, document, issues)
+            else:
+                _validate_recommendation_public_security(path, root, document, issues)
 
     for path, schema_name in (
         *((path, "entry") for path in template_entry_paths),
@@ -189,6 +249,11 @@ def validate_repository(repo_root: Path) -> ValidationReport:
         schema_errors = sorted(_schema_errors(validator_for(schema_name).iter_errors(document)), key=lambda error: list(error.absolute_path))
         for error in schema_errors:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the template to match its JSON Schema contract."))
+        if not schema_errors:
+            if schema_name == "entry":
+                _validate_entry_public_security(path, root, document, issues)
+            else:
+                _validate_recommendation_public_security(path, root, document, issues)
 
     for path in curation_paths:
         try:
@@ -226,13 +291,6 @@ def validate_repository(repo_root: Path) -> ValidationReport:
                 hosted_root = root / Path(*PurePosixPath(source_path).parts)
                 if not (hosted_root / "SKILL.md").is_file():
                     issues.append(_issue(path, root, "source.path", "hosted-skill-missing", "Hosted source must contain SKILL.md.", "Add the complete hosted skill directory."))
-        else:
-            locator = source["locator"]
-            url = locator.get("repository") if locator["type"] == "git" else locator.get("url")
-            if not _url_is_http(url):
-                issues.append(_issue(path, root, "source.locator", "external-locator-unsafe", "External locator must use http or https.", "Use an explicit http(s) locator."))
-            if locator["type"] == "git" and not _is_safe_external_path(locator.get("path")):
-                issues.append(_issue(path, root, "source.locator.path", "external-path-unsafe", "External Git path must be a safe POSIX relative path.", "Use a relative path without traversal."))
         identity = _source_identity(entry)
         if identity:
             previous = identities.get(identity)
@@ -275,7 +333,8 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     publishable_entries = tuple(sorted(entry_id for entry_id, (path, entry) in by_id.items() if str(path.relative_to(root)) not in invalid_files))
     publishable_recommendations = tuple(sorted(
         recommendation["id"] for path, recommendation in recommendations
-        if recommendation["status"] == "ready" and str(path.relative_to(root)) not in invalid_files
+        if recommendation["status"] in {"ready", "withdrawn"}
+        and str(path.relative_to(root)) not in invalid_files
     ))
     issues.sort(key=lambda issue: (issue.file, issue.field, issue.code, issue.message))
     for _, entry in entries:

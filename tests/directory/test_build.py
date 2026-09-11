@@ -103,6 +103,26 @@ class DirectoryBuildTests(unittest.TestCase):
             self.assertIn("未提供可执行安装命令", markdown)
             self.assertNotIn("npx ", markdown)
 
+    def test_build_keeps_withdrawn_recommendation_tombstones_but_excludes_drafts(self) -> None:
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        (root / "recommendations/withdrawn.yaml").write_text(
+            "schema_version: 1\nid: retired-guide\nskills:\n  - id: local/hosted\n"
+            "title: Retired guide\nbody: Historical recommendation.\nauthor: test\n"
+            "status: withdrawn\nwithdrawal_reason: Superseded.\n",
+            encoding="utf-8",
+        )
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            recommendations = json.loads((output / "recommendations.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            [(item["id"], item["status"]) for item in recommendations["recommendations"]],
+            [("retired-guide", "withdrawn"), ("review-tools", "ready")],
+        )
+
     def test_hosted_source_identity_uses_the_fixed_build_revision(self) -> None:
         """A hosted report cannot bind a mutable working directory as its source revision."""
         from hwskill.directory.catalog import _identity
@@ -147,6 +167,38 @@ class DirectoryBuildTests(unittest.TestCase):
             self.assertIn("https://example.com/org/repository.git", markdown)
             self.assertIn("skills/review", markdown)
             self.assertIn(revision, markdown)
+
+    def test_external_web_install_uses_its_exact_locator_variant(self) -> None:
+        """A web URL must not be disguised as a git repository with a null path."""
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        (root / "entries/l1/local/web.yaml").write_text(
+            "schema_version: 1\nid: local/web\nname: Web source\n"
+            "summary: An externally hosted web skill.\nlayer: l1\npurposes: [testing]\n"
+            "examples:\n  - prompt: Test it.\n    expected_outcome: Evidence.\n"
+            "source:\n  kind: external\n  publicity: public\n  locator:\n"
+            "    type: web\n    url: HTTPS://SOURCE.example/skill/\n    version_note: stable\n"
+            "install:\n  method: unknown\n  default_scope: project\n"
+            "compatibility:\n  agents: [unknown]\n  systems: [unknown]\n  requirements: []\n"
+            "license:\n  status: unknown\n",
+            encoding="utf-8",
+        )
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            catalog = json.loads((output / "catalog.json").read_text(encoding="utf-8"))
+            item = next(item for item in catalog["entries"] if item["entry"]["id"] == "local/web")
+            install = json.loads((output / "skills/local/web/install.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            set(install["source"]),
+            {"kind", "url", "requested_ref", "resolved_revision"},
+        )
+        self.assertEqual(install["source"]["url"], "HTTPS://SOURCE.example/skill/")
+        self.assertEqual(install["source"]["requested_ref"], "stable")
+        self.assertEqual(item["source_identity"]["identity"], "web:https://source.example/skill")
+        self.assertEqual(item["source_identity"]["requested_ref"], "stable")
 
     def test_build_rejects_output_that_can_replace_human_sources(self) -> None:
         """Allowing these destinations can erase the repository before publication."""

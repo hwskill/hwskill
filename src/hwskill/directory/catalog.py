@@ -42,7 +42,7 @@ def _identity(entry: dict[str, Any], root: Path, source_commit: str | None = Non
         from .hosted_content import directory_digest
         return {"kind": "hosted", "identity": _source_identity(entry), "resolved_revision": source_commit, "content_digest": directory_digest(source_root)}
     locator = source["locator"]
-    return {"kind": "external", "identity": _source_identity(entry), "requested_ref": locator.get("requested_ref"), "resolved_revision": None, "content_digest": None}
+    return {"kind": "external", "identity": _source_identity(entry), "requested_ref": locator.get("requested_ref", locator.get("version_note")), "resolved_revision": None, "content_digest": None}
 
 
 def _summary() -> dict[str, dict[str, Any]]:
@@ -87,7 +87,10 @@ def _install_data(entry: dict[str, Any], entry_digest: str, identity: dict[str, 
     source = entry["source"]
     if source["kind"] == "external":
         locator = source["locator"]
-        public_source = {"kind": "external", "repository": locator.get("repository", locator.get("url")), "path": locator.get("path"), "requested_ref": locator.get("requested_ref"), "resolved_revision": None}
+        if locator["type"] == "git":
+            public_source = {"kind": "external", "repository": locator["repository"], "path": locator["path"], "requested_ref": locator["requested_ref"], "resolved_revision": None}
+        else:
+            public_source = {"kind": "external", "url": locator["url"], "requested_ref": locator.get("version_note"), "resolved_revision": None}
     else:
         public_source = {"kind": "hosted", "path": source["path"], "resolved_revision": identity["resolved_revision"]}
     return {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source": public_source, "install": {"method": entry["install"]["method"], "default_scope": entry["install"]["default_scope"], "instructions_url": entry["install"].get("instructions_url")}, "verification_summary": summary}

@@ -38,6 +38,7 @@ export type Recommendation = {
   topics?: string[];
   evidence?: Array<{ url: string; description?: string }>;
   status: "draft" | "ready" | "withdrawn";
+  withdrawal_reason?: string;
 };
 
 const directory = resolve(process.env.HWSKILL_DIRECTORY ?? resolve(process.cwd(), ".generated/directory"));

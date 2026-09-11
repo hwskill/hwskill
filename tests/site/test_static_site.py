@@ -94,7 +94,13 @@ class StaticSiteContractTests(unittest.TestCase):
 
     def test_drafts_and_badges_follow_fail_safe_contract(self) -> None:
         recommendation = (SITE / "src/pages/recommendations/[id].astro").read_text(encoding="utf-8")
-        self.assertRegex(recommendation, r"status\s*===?\s*[\"']ready[\"']")
+        data = (SITE / "src/lib/data.ts").read_text(encoding="utf-8")
+        self.assertRegex(recommendation, r"status\s*!==?\s*[\"']draft[\"']")
+        self.assertIn("withdrawal_reason", recommendation)
+        self.assertRegex(recommendation, r"status\s*===?\s*[\"']withdrawn[\"']")
+        self.assertRegex(recommendation, r"status\s*===?\s*[\"']ready[\"'][^\n]+SkillCard")
+        self.assertIn("recommendationData.recommendations.filter", data)
+        self.assertRegex(data, r"status\s*===?\s*[\"']ready[\"']")
         card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
         self.assertIn("source", card)
         self.assertRegex(card, r"badge|stars")

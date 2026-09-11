@@ -5,18 +5,20 @@ import { entries, recommendationData, type Recommendation } from "../../lib/data
 
 export function getStaticPaths() {
   return recommendationData.recommendations
-    .filter((item) => item.status === "ready")
+    .filter((item) => item.status !== "draft")
     .map((recommendation) => ({ params: { id: recommendation.id }, props: { recommendation } }));
 }
 interface Props { recommendation: Recommendation }
 const { recommendation } = Astro.props;
 const linked = entries.filter((item) => recommendation.skills.some((skill) => skill.id === item.entry.id));
+const withdrawn = recommendation.status === "withdrawn";
 ---
 <BaseLayout title={recommendation.title} description={recommendation.body}>
   <article class="recommendation-detail">
-    <header class="page-heading"><p class="eyebrow">独立推荐</p><h1>{recommendation.title}</h1><p>由 {recommendation.author} 推荐</p></header>
+    <header class="page-heading"><p class="eyebrow">{withdrawn ? "已撤回推荐" : "独立推荐"}</p><h1>{recommendation.title}</h1><p>由 {recommendation.author} 推荐</p></header>
+    {withdrawn && <aside class="notice"><strong>此推荐已撤回，请勿继续采用。</strong><p>{recommendation.withdrawal_reason}</p></aside>}
     <div class="prose"><p>{recommendation.body}</p></div>
-    {recommendation.evidence?.length && <section><h2>公开依据</h2><ul>{recommendation.evidence.map((evidence) => <li><a href={evidence.url} rel="noreferrer">{evidence.description ?? evidence.url}</a></li>)}</ul></section>}
-    <section class="section-block"><h2>关联技能</h2><div class="card-grid">{linked.map((item) => <SkillCard item={item} />)}</div></section>
+    {!withdrawn && recommendation.evidence?.length && <section><h2>公开依据</h2><ul>{recommendation.evidence.map((evidence) => <li><a href={evidence.url} rel="noreferrer">{evidence.description ?? evidence.url}</a></li>)}</ul></section>}
+    <section class="section-block"><h2>关联技能</h2>{recommendation.status === "ready" ? <div class="card-grid">{linked.map((item) => <SkillCard item={item} />)}</div> : <ul>{recommendation.skills.map((skill) => <li>{skill.id}</li>)}</ul>}</section>
   </article>
 </BaseLayout>
