@@ -11,6 +11,7 @@ from typing import Any
 from .digest import canonical_json, sha256_bytes
 from .entries import _source_identity, validate_repository
 from .hosted_content import copy_hosted_content, hosted_directory
+from .models import DirectoryIssue
 from .yaml_io import load_yaml
 
 
@@ -21,6 +22,12 @@ class BuildResult:
     output_dir: Path
     entry_count: int
     recommendation_count: int
+
+
+class BuildInputError(ValueError):
+    def __init__(self, issue: DirectoryIssue):
+        super().__init__(issue.message)
+        self.issue = issue
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -45,7 +52,7 @@ def _summary() -> dict[str, dict[str, Any]]:
 
 def _normalized(entry: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
     source = {"kind": entry["source"]["kind"], "identity": identity["identity"]}
-    return {
+    normalized = {
         "schema_version": 1, "id": entry["id"], "name": entry["name"], "summary": entry["summary"],
         "layer": entry["layer"], "purposes": entry["purposes"], "examples": entry["examples"],
         "source": source,
@@ -53,16 +60,47 @@ def _normalized(entry: dict[str, Any], identity: dict[str, Any]) -> dict[str, An
         "compatibility": entry["compatibility"], "license": entry["license"],
         "lifecycle": entry.get("lifecycle", "active"), "lifecycle_reason": entry.get("lifecycle_reason"), "replacement_id": entry.get("replacement_id"),
     }
+    for field in ("owner", "keywords", "limitations"):
+        if field in entry:
+            normalized[field] = entry[field]
+    return normalized
 
 
 def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
     install = entry["install"]
-    lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", "默认范围：project", "", "## 来源", "", str(identity["identity"]), "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
+    source = entry["source"]
+    if source["kind"] == "external":
+        locator = source["locator"]
+        url = locator.get("repository", locator.get("url"))
+        source_lines = [str(url), f"路径：{locator.get('path', '不适用')}", f"固定版本：{locator.get('requested_ref', locator.get('version_note', 'unknown'))}"]
+    else:
+        source_lines = [source["path"]]
+    lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", f"默认范围：{install['default_scope']}", "", "## 来源", "", *source_lines, "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
     if install["method"] == "unknown":
         lines.extend(["未提供可执行安装命令；请按来源人工确认安装方式。", ""])
     elif install.get("instructions_url"):
         lines.extend([f"上游指引：{install['instructions_url']}", ""])
     return "\n".join(lines)
+
+
+def _install_data(entry: dict[str, Any], entry_digest: str, identity: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+    source = entry["source"]
+    if source["kind"] == "external":
+        locator = source["locator"]
+        public_source = {"kind": "external", "repository": locator.get("repository", locator.get("url")), "path": locator.get("path"), "resolved_revision": locator.get("requested_ref", locator.get("version_note"))}
+    else:
+        public_source = {"kind": "hosted", "path": source["path"], "resolved_revision": identity["resolved_revision"]}
+    return {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source": public_source, "install": {"method": entry["install"]["method"], "default_scope": entry["install"]["default_scope"], "instructions_url": entry["install"].get("instructions_url")}, "verification_summary": summary}
+
+
+def _assert_safe_output(root: Path, out_dir: Path) -> Path:
+    output = out_dir.resolve()
+    if output == root or output in root.parents:
+        raise BuildInputError(DirectoryIssue("--out", "out", "unsafe-output-path", "error", "Output path overlaps repository source material.", "Choose a separate derived output directory."))
+    sources = [root / "entries", root / "recommendations", root / "curation", root / "skills-src", root / "schemas", root / "templates", root / "CONTRIBUTING.md", root / "docs/guides/agent-contribution.md"]
+    if any(output == source or output in source.parents or source in output.parents for source in sources):
+        raise BuildInputError(DirectoryIssue("--out", "out", "unsafe-output-path", "error", "Output path overlaps repository source material.", "Choose a separate derived output directory."))
+    return output
 
 
 def _copy_public_resources(root: Path, output: Path) -> None:
@@ -86,7 +124,8 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
     report = validate_repository(root)
     if report.result != "pass":
         raise ValueError("cannot build an invalid directory")
-    parent = out_dir.resolve().parent
+    output = _assert_safe_output(root, out_dir)
+    parent = output.parent
     parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.tmp-", dir=parent))
     try:
@@ -101,7 +140,7 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             summary = _summary()
             entries.append({"entry": normalized, "entry_digest": entry_digest, "source_identity": identity, "lifecycle": normalized["lifecycle"], "install_capability": "guidance_only" if entry["install"]["method"] == "unknown" else "installable", "verification_summary": summary})
             skill_dir = staging / "skills" / entry["id"]
-            _write_json(skill_dir / "install.json", {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source_identity": identity, "install": normalized["install"], "verification_summary": summary})
+            _write_json(skill_dir / "install.json", _install_data(entry, entry_digest, identity, summary))
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "install.md").write_text(_install_markdown(entry, identity), encoding="utf-8")
             if entry["source"]["kind"] == "hosted":
@@ -113,24 +152,30 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             if recommendation["id"] in report.publishable_recommendation_ids:
                 recommendations.append(recommendation)
         recommendations.sort(key=lambda item: item["id"])
+        curation = {}
+        for path in sorted((root / "curation").glob("*.yaml")) if (root / "curation").is_dir() else []:
+            curation.update(load_yaml(path))
         _write_json(staging / "catalog.json", {"schema_version": 1, "source_commit": report.source_commit, "entries": entries})
         _write_json(staging / "recommendations.json", {"schema_version": 1, "recommendations": recommendations})
+        _write_json(staging / "curation.json", curation)
         _write_json(staging / "status.json", {"schema_version": 1, "input_digest": report.input_digest, "result": "pass", "entry_count": len(entries), "recommendation_count": len(recommendations), "verification_note": "installation/behavior 未运行"})
         _copy_public_resources(root, staging)
-        backup = parent / f".{out_dir.name}.previous"
-        if backup.exists():
-            shutil.rmtree(backup)
-        if out_dir.exists():
-            out_dir.replace(backup)
+        legacy_backup = parent / f".{output.name}.previous"
+        if legacy_backup.exists():
+            raise BuildInputError(DirectoryIssue("--out", "out", "output-backup-conflict", "error", "Output backup sibling already exists and is preserved.", "Choose another output path or move the existing sibling yourself."))
+        backup = Path(tempfile.mkdtemp(prefix=f".{output.name}.previous-", dir=parent))
+        backup.rmdir()
+        if output.exists():
+            output.replace(backup)
         try:
-            staging.replace(out_dir)
+            staging.replace(output)
         except Exception:
             if backup.exists():
-                backup.replace(out_dir)
+                backup.replace(output)
             raise
         if backup.exists():
             shutil.rmtree(backup)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return BuildResult(report.input_digest, report.source_commit, out_dir, len(entries), len(recommendations))
+    return BuildResult(report.input_digest, report.source_commit, output, len(entries), len(recommendations))

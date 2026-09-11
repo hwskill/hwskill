@@ -16,4 +16,3 @@ def canonical_json(data: Any) -> bytes:
 
 def digest_file(path: Path) -> str:
     return sha256_bytes(path.read_bytes())
-

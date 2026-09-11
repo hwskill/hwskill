@@ -47,6 +47,17 @@ class DirectoryCliTests(unittest.TestCase):
 
         self.assertEqual(main(["validate", "--repo-root", "/definitely/not/a/repository", "--json"]), 3)
 
+    def test_build_unsafe_output_is_input_error_with_structured_issue(self) -> None:
+        from hwskill.directory.cli import main
+
+        root = self.repository("valid")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            self.assertEqual(main(["build", "--repo-root", str(root), "--out", str(root), "--json"]), 1)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["result"], "fail")
+        self.assertEqual(report["issues"][0]["code"], "unsafe-output-path")
+
 
 if __name__ == "__main__":
     unittest.main()

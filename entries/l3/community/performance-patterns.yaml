@@ -12,8 +12,8 @@ source:
   publicity: public
   locator:
     type: git
-    repository: https://github.com/anthropics/skills.git
-    path: skills/performance-patterns
+    repository: https://github.com/2233admin/performance-patterns-skill.git
+    path: .
     requested_ref: 144ab7cd163f9eeda23479be2bfde603fa3b2106
 install:
   method: unknown
@@ -25,5 +25,5 @@ compatibility:
 license:
   status: known
   identifier: MIT
-  url: https://github.com/anthropics/skills/blob/144ab7cd163f9eeda23479be2bfde603fa3b2106/LICENSE
+  url: https://github.com/2233admin/performance-patterns-skill/blob/144ab7cd163f9eeda23479be2bfde603fa3b2106/LICENSE
 limitations: [external 正文未复制；安装、行为和目标硬件效果均未运行]

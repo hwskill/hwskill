@@ -159,6 +159,42 @@ class DirectoryValidationTests(unittest.TestCase):
             with self.subTest(schema=root_schema.name):
                 self.assertEqual(root_schema.read_bytes(), package_schemas.joinpath(root_schema.name).read_bytes())
 
+    def test_templates_are_schema_validated_and_part_of_input_digest(self) -> None:
+        """A malformed template must not silently pass or retain its old digest."""
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        template = root / "templates/entries/hosted.yaml"
+        template.parent.mkdir(parents=True)
+        template.write_text((FIXTURES / "valid/entries/l1/local/hosted.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+        clean = validate_repository(root)
+        template.write_text(template.read_text(encoding="utf-8") + "unexpected: value\n", encoding="utf-8")
+        invalid = validate_repository(root)
+        self.assertNotEqual(clean.input_digest, invalid.input_digest)
+        issue = next(issue for issue in invalid.issues if issue.file == "templates/entries/hosted.yaml")
+        self.assertEqual(issue.field, "$")
+        self.assertEqual(issue.code, "schema-additionalProperties")
+
+    def test_curation_is_validated_and_part_of_input_digest(self) -> None:
+        """Site-facing curation must be a validated derived input, not free YAML."""
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        curation = root / "curation/topics.yaml"
+        curation.parent.mkdir(parents=True)
+        curation.write_text("topics:\n  - slug: testing\n    title: 测试\n", encoding="utf-8")
+        clean = validate_repository(root)
+        curation.write_text("topics:\n  - slug: invalid slug\n    title: 测试\n", encoding="utf-8")
+        invalid = validate_repository(root)
+        self.assertNotEqual(clean.input_digest, invalid.input_digest)
+        self.assertTrue(any(issue.file == "curation/topics.yaml" and issue.code == "schema-pattern" for issue in invalid.issues))
+
 
 if __name__ == "__main__":
     unittest.main()

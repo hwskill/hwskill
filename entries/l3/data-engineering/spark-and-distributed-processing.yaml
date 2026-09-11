@@ -12,8 +12,8 @@ source:
   publicity: public
   locator:
     type: git
-    repository: https://github.com/anthropics/skills.git
-    path: skills/spark-and-distributed-processing
+    repository: https://github.com/vaquarkhan/data-engineering-agent-skills.git
+    path: .
     requested_ref: 421ef57e8d42c464b29339193c18dd5bd2946bc2
 install:
   method: unknown
@@ -25,5 +25,5 @@ compatibility:
 license:
   status: known
   identifier: MIT
-  url: https://github.com/anthropics/skills/blob/421ef57e8d42c464b29339193c18dd5bd2946bc2/LICENSE
+  url: https://github.com/vaquarkhan/data-engineering-agent-skills/blob/421ef57e8d42c464b29339193c18dd5bd2946bc2/LICENSE
 limitations: [官方安装器默认整仓；本平台只提供单目录安装提示且不执行整包脚本；安装和行为未运行]

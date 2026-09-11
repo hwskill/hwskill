@@ -99,7 +99,7 @@ def _is_safe_external_path(value: object) -> bool:
     if not isinstance(value, str):
         return False
     path = PurePosixPath(value)
-    return bool(path.parts) and not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
+    return str(path) == "." or (bool(path.parts) and not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts))
 
 
 def _normalise_identity_path(value: str) -> str:
@@ -149,7 +149,10 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     root = repo_root.resolve()
     entry_paths = sorted((root / "entries").rglob("*.yaml")) if (root / "entries").is_dir() else []
     recommendation_paths = sorted((root / "recommendations").rglob("*.yaml")) if (root / "recommendations").is_dir() else []
-    all_paths = [*entry_paths, *recommendation_paths]
+    template_entry_paths = sorted((root / "templates" / "entries").rglob("*.yaml")) if (root / "templates" / "entries").is_dir() else []
+    template_recommendation_paths = sorted((root / "templates" / "recommendations").rglob("*.yaml")) if (root / "templates" / "recommendations").is_dir() else []
+    curation_paths = sorted((root / "curation").glob("*.yaml")) if (root / "curation").is_dir() else []
+    all_paths = [*entry_paths, *recommendation_paths, *template_entry_paths, *template_recommendation_paths, *curation_paths]
     issues: list[DirectoryIssue] = []
     entries: list[tuple[Path, dict[str, Any]]] = []
     recommendations: list[tuple[Path, dict[str, Any]]] = []
@@ -170,6 +173,31 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the field to match its JSON Schema contract."))
         if not schema_errors:
             destination.append((path, document))
+
+    for path, schema_name in (
+        *((path, "entry") for path in template_entry_paths),
+        *((path, "recommendation") for path in template_recommendation_paths),
+    ):
+        try:
+            document = load_yaml(path)
+        except (OSError, YamlContractError) as exc:
+            text = str(exc)
+            code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
+            issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML with unique keys."))
+            continue
+        schema_errors = sorted(_schema_errors(validator_for(schema_name).iter_errors(document)), key=lambda error: list(error.absolute_path))
+        for error in schema_errors:
+            issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the template to match its JSON Schema contract."))
+
+    for path in curation_paths:
+        try:
+            document = load_yaml(path)
+        except (OSError, YamlContractError) as exc:
+            issues.append(_issue(path, root, "$", "yaml-invalid", str(exc), "Use JSON-compatible YAML with unique keys."))
+            continue
+        schema_errors = sorted(_schema_errors(validator_for("curation").iter_errors(document)), key=lambda error: list(error.absolute_path))
+        for error in schema_errors:
+            issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update curation to match its JSON Schema contract."))
 
     by_id: dict[str, tuple[Path, dict[str, Any]]] = {}
     entry_paths_by_id: dict[str, list[Path]] = {}
@@ -239,10 +267,17 @@ def validate_repository(repo_root: Path) -> ValidationReport:
                 issues.append(_issue(path, root, "skills", "recommendation-unpublishable-entry", f"Ready recommendation references invalid entry {skill['id']!r}.", "Fix the entry before publishing this recommendation."))
 
     invalid_files = {issue.file for issue in issues}
-    publishable_entries = tuple(sorted(entry_id for entry_id, (path, _) in by_id.items() if str(path.relative_to(root)) not in invalid_files))
+    publishable_entries = tuple(sorted(entry_id for entry_id, (path, entry) in by_id.items() if str(path.relative_to(root)) not in invalid_files and entry.get("lifecycle", "active") == "active"))
     publishable_recommendations = tuple(sorted(
         recommendation["id"] for path, recommendation in recommendations
         if recommendation["status"] == "ready" and str(path.relative_to(root)) not in invalid_files
     ))
     issues.sort(key=lambda issue: (issue.file, issue.field, issue.code, issue.message))
+    for _, entry in entries:
+        source = entry["source"]
+        if source["kind"] == "hosted" and _is_safe_hosted_path(root, source["path"]):
+            all_paths.extend(path for path in (root / Path(*PurePosixPath(source["path"]).parts)).rglob("*") if path.is_file())
+    for path in (root / "CONTRIBUTING.md", root / "docs/guides/agent-contribution.md"):
+        if path.is_file():
+            all_paths.append(path)
     return ValidationReport(1, _source_commit(root), _input_digest(root, all_paths), "pass" if not issues else "fail", tuple(issues), publishable_entries, publishable_recommendations)

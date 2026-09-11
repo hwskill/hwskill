@@ -5,7 +5,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from .catalog import build_repository
+from .catalog import BuildInputError, build_repository
 from .entries import validate_repository
 
 
@@ -36,7 +36,14 @@ def main(argv: list[str] | None = None) -> int:
         if report.result != "pass":
             print(json.dumps(_report_data(report), ensure_ascii=False, sort_keys=True) if args.json else report.result)
             return 1
-        result = build_repository(root, Path(args.out))
+        try:
+            result = build_repository(root, Path(args.out))
+        except BuildInputError as exc:
+            data = _report_data(report)
+            data["result"] = "fail"
+            data["issues"] = [*data["issues"], asdict(exc.issue)]
+            print(json.dumps(data, ensure_ascii=False, sort_keys=True) if args.json else exc.issue.message)
+            return 1
         print(json.dumps(asdict(result), ensure_ascii=False, default=str, sort_keys=True) if args.json else str(result.output_dir))
         return 0
     except (OSError, ValueError) as exc:

@@ -25,3 +25,5 @@ compatibility:
 license:
   status: unknown
 limitations: [可能依赖 Node、PPT 工具、字体与渲染环境；安装和行为未运行]
+lifecycle: withdrawn
+lifecycle_reason: 固定 revision 49f948faa9258a0c61caceaf225e179651397431 未找到 skills/.curated/slides，暂不作为可解析首批技能发布。
