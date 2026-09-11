@@ -9,6 +9,7 @@ description = "Git-backed virtual catalog for Agent Skills"
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6,<7",
+  "jsonschema>=4.23,<5",
   "mcp>=1,<2",
 ]
 

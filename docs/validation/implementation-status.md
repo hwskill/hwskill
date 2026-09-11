@@ -15,7 +15,7 @@
 
 | Task | 状态 | 证据/下一步 |
 | --- | --- | --- |
-| 0 基线与计划 | 进行中 | 三份规格 SHA-256 与原目录一致；需提交阶段 0 |
+| 0 基线与计划 | 已完成 | commit `90d34a0`；三份规格 SHA-256 与原目录一致 |
 | 1 目录契约 | 未开始 | 先写失败测试 |
 | 2 贡献与目录构建 | 未开始 | 依赖 Task 1 |
 | 3 静态站 | 未开始 | 依赖 Task 2 规范化 JSON |
@@ -31,7 +31,7 @@
 ## 已知边界与决定
 
 - Context7 MCP 在本会话工具列表中不可用；已改查 Astro、Pagefind、jsonschema 官方文档，实施时锁定实际版本并记录日期。
-- 当前 Python 环境没有 pytest；仓库测试可用 `unittest`。旧基线以 `PYTHONPATH=src python -m unittest discover -s tests -t . -v` 运行 557 项，其中 556 通过，1 项因 worktree 中可发现 `superpowers` Profile 而失败。
+- 当前 Python 环境没有 pytest；仓库测试可用 `unittest`。旧基线以 `PYTHONPATH=src python -m unittest discover -s tests -t . -v` 运行 557 项，其中 556 通过，1 项因 worktree 中可发现 `superpowers` Profile 而失败。阶段 0 已提交为 `90d34a0`。
 - 蓝区 Git/CI、静态托管域名/base path、不可变发布存储、高区持久卷和可用 Luna 测试凭据尚未知；先以文件系统发布适配器、fixture、本地 HTTP 和隔离目录完成独立模块。
 - 本期不实现 bot 发送器、SDK/HTTP transport、平台签名、群卡、群回执或 bot mock。
 - 远端 push、PR、合入、正式部署和发群均未授权。

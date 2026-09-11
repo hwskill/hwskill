@@ -1,0 +1,21 @@
+schema_version: 1
+id: local/escape
+name: Escape
+summary: Attempts to escape the hosted root.
+layer: l1
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: hosted
+  path: ../outside
+install:
+  method: directory
+  default_scope: project
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/schemas/verification.schema.json",
+  "title": "VerificationReport v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "report_id", "skill_id", "source_identity", "entry_digest", "install_digest", "host", "runner_identity", "executed_at", "stages", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": 1}, "report_id": {"type": "string", "minLength": 1}, "skill_id": {"type": "string", "minLength": 1}, "source_identity": {"type": "object"}, "entry_digest": {"type": "string", "minLength": 1}, "install_digest": {"type": "string", "minLength": 1}, "host": {"type": "string", "minLength": 1}, "runner_identity": {"type": "string", "minLength": 1}, "executed_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}, "evidence_refs": {"type": "array", "items": {"type": "string", "format": "uri"}},
+    "stages": {"type": "object", "additionalProperties": false, "required": ["metadata", "acquisition", "installation", "behavior"], "properties": {"metadata": {"$ref": "#/$defs/stage"}, "acquisition": {"$ref": "#/$defs/stage"}, "installation": {"$ref": "#/$defs/stage"}, "behavior": {"$ref": "#/$defs/stage"}}}
+  },
+  "$defs": {"stage": {"type": "object", "additionalProperties": false, "required": ["result", "reason"], "properties": {"result": {"enum": ["pass", "fail", "blocked", "not_run"]}, "reason": {"type": "string", "minLength": 1}}}}
+}

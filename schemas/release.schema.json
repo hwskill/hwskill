@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/schemas/release.schema.json",
+  "title": "Release v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "release_id", "sequence", "source_commit", "publication_time", "committed_at", "events"],
+  "properties": {"schema_version": {"const": 1}, "release_id": {"type": "string", "minLength": 1}, "sequence": {"type": "integer", "minimum": 1}, "source_commit": {"type": "string", "minLength": 1}, "publication_time": {"type": "string", "format": "date-time"}, "committed_at": {"type": "string", "format": "date-time"}, "events": {"type": "array", "items": {"type": "object"}}}
+}

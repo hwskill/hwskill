@@ -66,6 +66,7 @@ git commit -m "docs: freeze skill sharing implementation baseline"
 ### Task 1: 建立 SkillEntry 与 Recommendation 契约
 
 **Files:**
+- Modify: `pyproject.toml`
 - Create: `schemas/entry.schema.json`
 - Create: `schemas/recommendation.schema.json`
 - Create: `schemas/catalog.schema.json`
@@ -91,7 +92,7 @@ Expected: 因 `hwskill.directory` 尚不存在而失败。
 
 - [ ] **Step 3: 实现最小安全读取与校验**
 
-使用 `yaml.SafeLoader` 的自定义 mapping constructor 拒绝重复 key/merge key；用 `Draft202012Validator(schema, format_checker=FormatChecker())` 验证；额外检查跨文件关系、hosted 安全相对路径和 external locator。外部条目绝不打开 `skills-src` 正文。
+使用 `yaml.SafeLoader` 的自定义 mapping constructor 拒绝重复 key/merge key；用 `Draft202012Validator(schema, format_checker=FormatChecker())` 验证；额外检查跨文件关系、hosted 安全相对路径和 external locator。外部条目绝不打开 `skills-src` 正文。在 `pyproject.toml` 增加运行时依赖 `jsonschema>=4.23,<5`；不因 Task 1 删除旧依赖，旧运行时依赖在 Task 9 一次清理。
 
 - [ ] **Step 4: 验证 GREEN 并提交**
 
@@ -429,4 +430,3 @@ Expected: 所有适用本地检查通过；设施、Luna 或真实外部网络�
 - [ ] **Step 4: 更新最终证据并形成本地可审阅提交**
 
 不得 push、创建 PR、合入、正式部署或发群。
-

@@ -1,0 +1,25 @@
+schema_version: 1
+id: local/unknown
+name: Unknown field
+summary: This has a typo.
+layer: l1
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: external
+  publicity: unknown
+  locator:
+    type: web
+    url: https://example.com/skill
+install:
+  method: unknown
+  default_scope: project
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown
+summray: Typo must not be ignored.

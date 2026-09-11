@@ -1,0 +1,24 @@
+schema_version: 1
+id: local/external
+name: External only
+summary: This must not read a local source body.
+layer: l1
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: external
+  publicity: private
+  locator:
+    type: web
+    url: https://example.com/skill
+install:
+  method: unknown
+  default_scope: project
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown

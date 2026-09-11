@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/schemas/catalog.schema.json",
+  "title": "Catalog v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "source_commit", "entries"],
+  "properties": {"schema_version": {"const": 1}, "source_commit": {"type": ["string", "null"]}, "entries": {"type": "array", "items": {"type": "object"}}}
+}

@@ -1,0 +1,11 @@
+schema_version: 1
+id: bad-evidence
+skills:
+  - id: local/missing
+title: Bad evidence
+body: A draft can reference a future entry.
+author: directory-team
+status: draft
+evidence:
+  - url: not-a-url
+    observed_at: 2026-99-99T30:00:00Z

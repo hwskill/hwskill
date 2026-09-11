@@ -1,0 +1,21 @@
+schema_version: 1
+id: local/hosted
+name: Hosted skill
+summary: A locally hosted skill.
+layer: l1
+purposes: [Review pull requests]
+examples:
+  - prompt: Review this pull request.
+    expected_outcome: A concise review report.
+source:
+  kind: hosted
+  path: skills-src/l1/local/hosted
+install:
+  method: directory
+  default_scope: project
+compatibility:
+  agents: [codex]
+  systems: [linux]
+  requirements: []
+license:
+  status: unknown

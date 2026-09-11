@@ -1,0 +1,6 @@
+schema_version: 1
+id: local/merge
+name: Merge
+base: &base
+  summary: A summary.
+<<: *base

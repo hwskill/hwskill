@@ -1,0 +1,27 @@
+schema_version: 1
+id: local/one
+name: One
+summary: First reference.
+layer: l1
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://example.com/org/repository.git
+    path: skills/shared
+    requested_ref: v1
+install:
+  method: upstream
+  default_scope: project
+  instructions_url: https://example.com/install
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown

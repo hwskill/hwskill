@@ -1,0 +1,8 @@
+schema_version: 1
+id: missing
+skills:
+  - id: local/absent
+title: Missing skill
+body: This should not publish.
+author: directory-team
+status: ready
