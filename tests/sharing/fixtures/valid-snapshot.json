@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "feed_url": "https://directory.test/feed",
+  "feed_id": "hwskill-main",
+  "head": {
+    "schema_version": 1,
+    "sequence": 1,
+    "release_id": "release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "records": [
+    {
+      "schema_version": 1,
+      "release_id": "release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sequence": 1,
+      "source_commit": "1111111111111111111111111111111111111111",
+      "publication_time": "2026-09-11T01:00:00Z",
+      "committed_at": "2026-09-11T01:01:00Z",
+      "previous_sequence": null,
+      "events": [
+        {
+          "schema_version": 1,
+          "feed_id": "hwskill-main",
+          "event_id": "event-52ecf3debcbc2bf0a56c9d5eeeaae5669f89e6617c5125130d8fb3f1bc9ae3c7",
+          "sequence": 1,
+          "release_id": "release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "type": "recommendation.published",
+          "subject_id": "alpha-guide",
+          "subject_revision": "sha256:19063e6cefbd8590afe76368a3713a34879d5245dd5d58ef163d1727dee84aa3",
+          "skill_ids": ["acme/alpha"],
+          "published_at": "2026-09-11T01:00:00Z",
+          "page_url": "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/recommendations/alpha-guide/",
+          "machine_url": "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/data/recommendations.json"
+        },
+        {
+          "schema_version": 1,
+          "feed_id": "hwskill-main",
+          "event_id": "event-e5ab9a33e8d1ffd38a9e6fcf7f6d6d8e25a3c1efb1e22cd22a589a951f012f93",
+          "sequence": 1,
+          "release_id": "release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "type": "skill.added",
+          "subject_id": "acme/alpha",
+          "subject_revision": "sha256:4a80e9aa73c1281a27dc6a442271e5abcb5208c270a261ada8da47d0482c393c",
+          "skill_ids": ["acme/alpha"],
+          "published_at": "2026-09-11T01:00:00Z",
+          "page_url": "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/acme/alpha/",
+          "machine_url": "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/data/skills/acme/alpha/install.json"
+        }
+      ]
+    }
+  ],
+  "documents": {
+    "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/data/catalog.json": {
+      "schema_version": 1,
+      "source_commit": "1111111111111111111111111111111111111111",
+      "entries": [
+        {
+          "entry": {
+            "schema_version": 1,
+            "id": "acme/alpha",
+            "name": "Alpha 调试",
+            "summary": "定位服务故障并形成可复查证据。",
+            "layer": "l2",
+            "purposes": ["debugging"],
+            "examples": [
+              {
+                "prompt": "定位这个服务故障。",
+                "expected_outcome": "形成可复查的证据链。"
+              }
+            ],
+            "source": {"kind": "external", "identity": "git:https://source.example/alpha.git\u0000skills/alpha"},
+            "install": {
+              "method": "upstream",
+              "default_scope": "project",
+              "instructions_url": "https://source.example/alpha"
+            },
+            "compatibility": {
+              "agents": ["codex"],
+              "systems": ["linux"],
+              "requirements": []
+            },
+            "license": {"status": "unknown"},
+            "lifecycle": "active",
+            "lifecycle_reason": null,
+            "replacement_id": null
+          },
+          "entry_digest": "sha256:61f537b7a217ad3e1ac4928c443598aac6549cdf99a6b13c830793acd34749d3",
+          "source_identity": {
+            "kind": "external",
+            "identity": "git:https://source.example/alpha.git\u0000skills/alpha",
+            "requested_ref": "v1",
+            "resolved_revision": null,
+            "content_digest": null
+          },
+          "lifecycle": "active",
+          "install_capability": "installable",
+          "verification_summary": {
+            "metadata": {"result": "not_run", "report_id": null, "executed_at": null},
+            "acquisition": {"result": "not_run", "report_id": null, "executed_at": null},
+            "installation": {"result": "not_run", "report_id": null, "executed_at": null},
+            "behavior": {"result": "not_run", "report_id": null, "executed_at": null}
+          }
+        }
+      ]
+    },
+    "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/data/skills/acme/alpha/install.json": {
+      "schema_version": 1,
+      "skill_id": "acme/alpha",
+      "entry_digest": "sha256:61f537b7a217ad3e1ac4928c443598aac6549cdf99a6b13c830793acd34749d3",
+      "source": {
+        "kind": "external",
+        "repository": "https://source.example/alpha.git",
+        "path": "skills/alpha",
+        "requested_ref": "v1",
+        "resolved_revision": null
+      },
+      "install": {
+        "method": "upstream",
+        "default_scope": "project",
+        "instructions_url": "https://source.example/alpha"
+      },
+      "verification_summary": {
+        "metadata": {"result": "not_run", "report_id": null, "executed_at": null},
+        "acquisition": {"result": "not_run", "report_id": null, "executed_at": null},
+        "installation": {"result": "not_run", "report_id": null, "executed_at": null},
+        "behavior": {"result": "not_run", "report_id": null, "executed_at": null}
+      },
+      "install_digest": "sha256:8773df3aa9abb12f88f04b6b87eb5514d32268203a88f48ffa5ceecd6a78ed11"
+    },
+    "https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/data/recommendations.json": {
+      "schema_version": 1,
+      "recommendations": [
+        {
+          "schema_version": 1,
+          "id": "alpha-guide",
+          "skills": [{"id": "acme/alpha"}],
+          "title": "用 Alpha 定位故障",
+          "body": "适合需要从现象推进到证据链的任务。",
+          "author": "tests",
+          "topics": ["debugging"],
+          "status": "ready"
+        }
+      ]
+    }
+  },
+  "snapshot_identity": "sha256:f8ae642749b14b8dd4921385da2499fe895fc23522f06b916ff34ab11e5c812a"
+}
