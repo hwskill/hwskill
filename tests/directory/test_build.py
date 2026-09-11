@@ -21,7 +21,7 @@ class DirectoryBuildTests(unittest.TestCase):
             "schema_version: 1\nid: draft\nskills:\n  - id: local/hosted\ntitle: Draft\nbody: Never publish this.\nauthor: test\nstatus: draft\n",
             encoding="utf-8",
         )
-        (root / "curation").mkdir()
+        (root / "curation").mkdir(exist_ok=True)
         (root / "curation/topics.yaml").write_text("topics:\n  - slug: testing\n    title: 测试\n", encoding="utf-8")
         (root / "curation/synonyms.yaml").write_text("synonyms:\n  testing: [tests]\n", encoding="utf-8")
         return root

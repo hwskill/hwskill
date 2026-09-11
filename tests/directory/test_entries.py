@@ -187,7 +187,7 @@ class DirectoryValidationTests(unittest.TestCase):
         root = Path(temporary.name) / "repository"
         shutil.copytree(FIXTURES / "valid", root)
         curation = root / "curation/topics.yaml"
-        curation.parent.mkdir(parents=True)
+        curation.parent.mkdir(parents=True, exist_ok=True)
         curation.write_text("topics:\n  - slug: testing\n    title: 测试\n", encoding="utf-8")
         clean = validate_repository(root)
         curation.write_text("topics:\n  - slug: invalid slug\n    title: 测试\n", encoding="utf-8")
@@ -204,11 +204,23 @@ class DirectoryValidationTests(unittest.TestCase):
         root = Path(temporary.name) / "repository"
         shutil.copytree(FIXTURES / "valid", root)
         curation = root / "curation"
-        curation.mkdir()
+        curation.mkdir(exist_ok=True)
+        (curation / "synonyms.yaml").unlink()
         (curation / "topics.yaml").write_text("topics: []\n", encoding="utf-8")
         report = validate_repository(root)
         self.assertEqual(report.result, "fail")
         self.assertTrue(any(issue.code == "curation-missing-section" and issue.field == "synonyms" for issue in report.issues))
+
+    def test_curation_directory_is_required_during_validation(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        shutil.rmtree(root / "curation")
+        report = validate_repository(root)
+        self.assertTrue(any(issue.code == "curation-missing-section" and issue.field == "topics" for issue in report.issues))
 
     def test_initial_external_entries_use_verified_skill_subdirectories(self) -> None:
         """Root repository references are not substitutes for a verified SKILL.md path."""

@@ -201,9 +201,8 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update curation to match its JSON Schema contract."))
         if not schema_errors:
             curation_sections.update(document)
-    if (root / "curation").is_dir():
-        for section in sorted({"topics", "synonyms"} - curation_sections):
-            issues.append(DirectoryIssue("curation", section, "curation-missing-section", "error", f"Curation requires {section!r} for the published aggregate.", "Add a valid curation source file for this section."))
+    for section in sorted({"topics", "synonyms"} - curation_sections):
+        issues.append(DirectoryIssue("curation", section, "curation-missing-section", "error", f"Curation requires {section!r} for the published aggregate.", "Add a valid curation source file for this section."))
 
     by_id: dict[str, tuple[Path, dict[str, Any]]] = {}
     entry_paths_by_id: dict[str, list[Path]] = {}
