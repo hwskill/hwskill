@@ -17,8 +17,8 @@
 | --- | --- | --- |
 | 0 基线与计划 | 已完成 | commit `90d34a0`；三份规格 SHA-256 与原目录一致 |
 | 1 目录契约 | 已完成 | commits `b3e93b4`、`31383e8`、`a133f8b`；22 项目录与 wheel 测试通过，任务复审 clean |
-| 2 贡献与目录构建 | 未开始 | 依赖 Task 1 |
-| 3 静态站 | 未开始 | 依赖 Task 2 规范化 JSON |
+| 2 贡献与目录构建 | 已完成 | commits `f4b462c`、`0d603d6`、`580cf97`、`aa49e60`、`3d2505e`；38 项测试与最终复审 clean；6 个公开技能、2 篇 ready 推荐 |
+| 3 静态站 | 进行中 | Astro 7.0.0 已构建 16 个静态路由；Pagefind 1.5.2 Extended 已索引 4 类筛选，正在完成真实查询评估与审查 |
 | 4 安装验证 | 未开始 | 依赖 Task 2 安装材料 |
 | 5 发布恢复 | 未开始 | 依赖 Task 2/3/4 |
 | 6 feed 读取筛选 | 未开始 | 依赖 Task 5 release Schema |
@@ -40,4 +40,4 @@
 
 - Ruling: 新版直接采用独立 `directory/publishing/sharing/verification` 包，不扩展旧 `SkillRecord` — external-only 来源与旧 Path/SKILL.md 强绑定不兼容 — 若判断错误的成本是迁移代码重写，但可避免永久双运行时。
 - Ruling: 首批技能允许多个领域以候选+明确未验证状态进入目录，但首页精选优先有安装证据者 — 规格允许待验证收录 — 若来源最终不适配则撤回条目并保留调研记录。
-- Ruling: Astro 使用当前官方文档对应的 7.x 与 Node 22.12+，Pagefind 锁定 1.5.x extended — 当前官方文档已进入 v7 且 Pagefind 文档显示 1.5.2 — 若组织镜像不支持则保留静态 JSON/HTML 构建边界并在设施适配阶段调整锁定版本。
+- Ruling: Astro 锁定 7.0.0，Pagefind 锁定 1.5.2 Extended，Node 下限采用 22.19.0 — `npm ci` 的锁定依赖 `undici@8.10.2` 要求该下限，22.12 会产生 EBADENGINE — 若组织镜像不支持则保留静态 JSON/HTML 边界并记录设施阻碍，不伪称站点通过。
