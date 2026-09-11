@@ -1,0 +1,39 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import SkillCard from "../components/SkillCard.astro";
+import { curation, entries, recommendations } from "../lib/data";
+import { sitePath } from "../lib/urls";
+
+const featured = entries.slice(0, 4);
+---
+<BaseLayout title="跨项目技能目录">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">固定来源 · 明确边界 · 项目级默认</p>
+      <h1>先看证据，再把技能交给 Agent</h1>
+      <p class="hero-copy">按工作目的找到可复用技能。每个条目都说明来源、固定版本、兼容声明和实际验证状态。</p>
+    </div>
+    <a class="primary-action" href={sitePath("/skills/")}>开始找技能 <span aria-hidden="true">→</span></a>
+  </section>
+  <section class="metric-strip" aria-label="目录摘要">
+    <div><strong>{entries.length}</strong><span>个公开技能</span></div>
+    <div><strong>{curation.topics?.length ?? 0}</strong><span>个用途主题</span></div>
+    <div><strong>{recommendations.length}</strong><span>篇维护者推荐</span></div>
+  </section>
+  <section class="section-block">
+    <div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>从真实任务开始</h2></div><a href={sitePath("/skills/")}>查看全部</a></div>
+    <div class="card-grid">{featured.map((item) => <SkillCard item={item} />)}</div>
+  </section>
+  <section class="section-block split-section">
+    <div>
+      <p class="eyebrow">主题入口</p>
+      <h2>按目的浏览</h2>
+      <div class="topic-links">{curation.topics?.map((topic) => <a href={sitePath(`/topics/${topic.slug}/`)}>{topic.title}<span>↗</span></a>)}</div>
+    </div>
+    <div>
+      <p class="eyebrow">推荐</p>
+      <h2>为什么值得尝试</h2>
+      <div class="recommendation-list">{recommendations.map((item) => <article><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a><p>{item.body}</p><span>由 {item.author} 推荐</span></article>)}</div>
+    </div>
+  </section>
+</BaseLayout>

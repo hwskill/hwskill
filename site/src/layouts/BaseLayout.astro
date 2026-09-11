@@ -1,0 +1,38 @@
+---
+import "../styles/global.css";
+import { sitePath } from "../lib/urls";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "跨项目技能目录：按用途发现、核验并交给 Agent 安装。" } = Astro.props;
+---
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <title>{title} · HWSkill</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header" data-pagefind-ignore>
+      <a class="brand" href={sitePath("/")} aria-label="HWSkill 首页"><span>HW</span>Skill</a>
+      <nav aria-label="主导航">
+        <a href={sitePath("/skills/")}>找技能</a>
+        <a href={sitePath("/contribute/")}>贡献</a>
+        <a href={sitePath("/data/catalog.json")}>机器目录</a>
+      </nav>
+    </header>
+    <main id="main" data-pagefind-body>
+      <slot />
+    </main>
+    <footer data-pagefind-ignore>
+      <p>目录内容来自固定版本；“兼容”不等于“已验证”。</p>
+      <a href={sitePath("/contribute/")}>修正条目</a>
+    </footer>
+  </body>
+</html>

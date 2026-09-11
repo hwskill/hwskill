@@ -1,0 +1,83 @@
+---
+interface Props { synonyms: Record<string, string[]> }
+const { synonyms } = Astro.props;
+const pagefindBase = import.meta.env.BASE_URL;
+---
+<section class="search-panel" data-pagefind-ignore data-synonyms={JSON.stringify(synonyms)} data-pagefind-base={pagefindBase}>
+  <label class="search-field">
+    <span>你想让 Agent 做什么？</span>
+    <input id="skill-search" type="search" placeholder="例如：排查 Spark 性能、检视 PR、制作测试" autocomplete="off" />
+  </label>
+  <div class="filters" aria-label="技能筛选">
+    <label>层级
+      <select id="layer-filter"><option value="">全部</option>{["l1", "l2", "l3", "l4", "l5"].map((v) => <option value={v}>{v.toUpperCase()}</option>)}</select>
+    </label>
+    <label>来源
+      <select id="source-filter"><option value="">全部</option><option value="hosted">本目录托管</option><option value="external">外部来源</option></select>
+    </label>
+    <label>Agent
+      <select id="agent-filter"><option value="">全部</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option><option value="gemini-cli">Gemini CLI</option></select>
+    </label>
+  </div>
+  <p id="search-status" class="search-status" role="status">输入用途，或直接使用筛选浏览。</p>
+  <div id="search-results" class="search-results"></div>
+</section>
+<script>
+  const panel = document.querySelector<HTMLElement>(".search-panel");
+  const input = document.querySelector<HTMLInputElement>("#skill-search");
+  const layer = document.querySelector<HTMLSelectElement>("#layer-filter");
+  const source = document.querySelector<HTMLSelectElement>("#source-filter");
+  const agent = document.querySelector<HTMLSelectElement>("#agent-filter");
+  const status = document.querySelector<HTMLElement>("#search-status");
+  const results = document.querySelector<HTMLElement>("#search-results");
+  const synonyms = JSON.parse(panel?.dataset.synonyms ?? "{}") as Record<string, string[]>;
+
+  function queryVariants(value: string): string[] {
+    const lowered = value.trim().toLowerCase();
+    const cjkPairs = /^[\p{Script=Han}]{4,}$/u.test(lowered) ? lowered.match(/[\p{Script=Han}]{2}/gu)?.join(" ") ?? "" : "";
+    const additions = Object.entries(synonyms)
+      .filter(([key, values]) => key.toLowerCase() === lowered || values.some((item) => item.toLowerCase() === lowered))
+      .flatMap(([key, values]) => [key, ...values]);
+    return [...new Set([value, cjkPairs, ...additions].filter(Boolean))];
+  }
+
+  async function search() {
+    if (!input || !layer || !source || !agent || !status || !results) return;
+    const queries = queryVariants(input.value);
+    const filters = Object.fromEntries(Object.entries({ layer: layer.value, source: source.value, agent: agent.value }).filter(([, value]) => value));
+    if (queries.length === 0 && Object.keys(filters).length === 0) {
+      results.replaceChildren();
+      status.textContent = "输入用途，或直接使用筛选浏览。";
+      document.querySelector<HTMLElement>("#all-skills")?.removeAttribute("hidden");
+      return;
+    }
+    try {
+      const pagefindUrl = `${panel?.dataset.pagefindBase ?? "/"}pagefind/pagefind.js`;
+      const pagefind = await import(/* @vite-ignore */ pagefindUrl);
+      await pagefind.options({ ranking: { termSimilarity: 0 } });
+      const responses = queries.length
+        ? await Promise.all(queries.map((query) => pagefind.search(query, { filters })))
+        : [await pagefind.search(null, { filters })];
+      const resultMap = new Map<string, { data: () => Promise<{ url: string; meta: Record<string, string>; excerpt: string }> }>();
+      for (const response of responses) for (const result of response.results) if (!resultMap.has(result.id)) resultMap.set(result.id, result);
+      const records = await Promise.all([...resultMap.values()].slice(0, 20).map((result) => result.data()));
+      results.replaceChildren(...records.map((record) => {
+        const article = document.createElement("article");
+        article.className = "search-hit";
+        const link = document.createElement("a");
+        link.href = record.url;
+        link.textContent = record.meta.title ?? record.url;
+        const excerpt = document.createElement("p");
+        excerpt.innerHTML = record.excerpt;
+        article.append(link, excerpt);
+        return article;
+      }));
+      document.querySelector<HTMLElement>("#all-skills")?.setAttribute("hidden", "");
+      status.textContent = records.length ? `找到 ${records.length} 项` : "没有匹配项。可换一个用途词或清除筛选。";
+    } catch {
+      status.textContent = "搜索索引暂不可用；下面仍可浏览完整目录。";
+      document.querySelector<HTMLElement>("#all-skills")?.removeAttribute("hidden");
+    }
+  }
+  [input, layer, source, agent].forEach((element) => element?.addEventListener("input", search));
+</script>

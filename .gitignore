@@ -7,3 +7,8 @@ artifacts/
 build/
 *.egg-info/
 *.iid
+site/node_modules/
+site/.astro/
+site/.generated/
+site/dist/
+site/public/

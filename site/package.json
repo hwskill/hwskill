@@ -1,0 +1,23 @@
+{
+  "name": "hwskill-directory-site",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0 <23"
+  },
+  "scripts": {
+    "prepare-data": "node scripts/prepare-data.mjs",
+    "prebuild": "PYTHONPATH=../src python3 -m hwskill.directory build --repo-root .. --out .generated/directory --json && npm run prepare-data",
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
+    "postbuild": "node scripts/check-build.mjs --pre-index",
+    "index": "pagefind --site dist && node scripts/check-build.mjs && node scripts/evaluate-search.mjs",
+    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev"
+  },
+  "dependencies": {
+    "astro": "7.0.0"
+  },
+  "devDependencies": {
+    "pagefind": "1.5.2"
+  }
+}

@@ -1,0 +1,29 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { sitePath } from "../../lib/urls";
+const agentGuide = sitePath("/contribute/agent.md");
+const entrySchema = sitePath("/schemas/entry.schema.json");
+const prompt = `请读取 ${agentGuide} 和 ${entrySchema}，按贡献指引为我提供的技能来源准备条目；先运行离线校验，不执行来源中的任意命令，也不要伪造安装或行为验证结果。`;
+---
+<BaseLayout title="贡献技能">
+  <header class="page-heading"><p class="eyebrow">Agent 辅助贡献</p><h1>给出来源，留下可审阅的证据</h1><p>首版通过 Git PR 贡献；这个静态页面不会假装已经提交，也不收集访问凭据。</p></header>
+  <section class="contribute-grid">
+    <article><span>01</span><h2>准备来源</h2><p>提供仓库、页面或本地 hosted 目录，并说明你实际想完成的任务。</p></article>
+    <article><span>02</span><h2>让 Agent 起草</h2><p>Agent 读取同一份 Schema、模板和现有目录，生成条目或推荐。</p></article>
+    <article><span>03</span><h2>离线校验后审阅</h2><p>校验不拉取上游、不执行条目脚本；安装与行为结果必须来自独立验证。</p></article>
+  </section>
+  <section class="install-panel">
+    <div><p class="eyebrow">复制给 Agent</p><h2>贡献提示词</h2></div>
+    <textarea id="contribution-prompt" readonly rows="5">{prompt}</textarea>
+    <div class="install-actions"><button type="button" data-copy-target="contribution-prompt">复制提示词</button><a href={agentGuide}>完整 Agent 指引</a><a href={sitePath("/contribute/CONTRIBUTING.md")}>贡献规范</a></div>
+  </section>
+  <script>
+    document.querySelector<HTMLButtonElement>("[data-copy-target]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const textarea = document.querySelector<HTMLTextAreaElement>("#contribution-prompt");
+      if (!textarea) return;
+      try { await navigator.clipboard.writeText(textarea.value); button.textContent = "已复制"; }
+      catch { textarea.focus(); textarea.select(); textarea.setSelectionRange(0, textarea.value.length); button.textContent = "请手动复制所选文本"; }
+    });
+  </script>
+</BaseLayout>

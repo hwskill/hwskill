@@ -1,0 +1,7 @@
+site: dist
+output_path: dist/pagefind
+root_selector: "[data-pagefind-body]"
+exclude_selectors:
+  - "[data-pagefind-ignore]"
+force_language: zh-cn
+verbose: true

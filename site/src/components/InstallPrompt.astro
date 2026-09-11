@@ -1,0 +1,37 @@
+---
+interface Props { id: string; installCapability: string }
+import { sitePath } from "../lib/urls";
+const { id, installCapability } = Astro.props;
+const url = sitePath(`/data/skills/${id}/install.md`);
+const prompt = installCapability === "guidance_only"
+  ? `请读取 ${url}，先核对来源与固定版本。该条目未提供可执行安装方式，请不要猜测命令；请说明需要我确认的最短人工步骤。`
+  : `请读取 ${url}，核对技能 ID、来源版本和项目级目标后安装。不要覆盖同名技能；完成后报告实际目标、版本和识别结果。`;
+---
+<section class="install-panel" data-pagefind-ignore>
+  <div>
+    <p class="eyebrow">交给 Agent</p>
+    <h2>{installCapability === "guidance_only" ? "先核对，再决定安装" : "复制项目级安装提示"}</h2>
+  </div>
+  <textarea id={`install-${id.replaceAll("/", "-")}`} readonly rows="5">{prompt}</textarea>
+  <div class="install-actions">
+    <button type="button" data-copy-target={`install-${id.replaceAll("/", "-")}`}>复制提示词</button>
+    <a href={url}>查看安装说明</a>
+  </div>
+</section>
+<script>
+  document.querySelectorAll<HTMLButtonElement>("[data-copy-target]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const textarea = document.getElementById(button.dataset.copyTarget ?? "") as HTMLTextAreaElement | null;
+      if (!textarea) return;
+      try {
+        await navigator.clipboard.writeText(textarea.value);
+        button.textContent = "已复制";
+      } catch {
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        button.textContent = "请手动复制所选文本";
+      }
+    });
+  });
+</script>
