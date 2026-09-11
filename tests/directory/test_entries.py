@@ -58,6 +58,14 @@ class DirectoryValidationTests(unittest.TestCase):
         report = self.validate("duplicate-source")
         self.assertTrue(any(issue.code == "duplicate-source-identity" for issue in report.issues))
 
+    def test_normalizes_equivalent_web_source_identity(self) -> None:
+        report = self.validate("duplicate-web-source")
+        self.assertTrue(any(issue.code == "duplicate-source-identity" for issue in report.issues))
+
+    def test_invalid_uri_port_is_a_schema_issue_not_a_crash(self) -> None:
+        report = self.validate("invalid-uri-port")
+        self.assertTrue(any(issue.code == "schema-format" for issue in report.issues))
+
     def test_ready_recommendation_requires_existing_active_entry(self) -> None:
         report = self.validate("ready-missing-reference")
         self.assertTrue(any(issue.code == "recommendation-missing-entry" for issue in report.issues))
@@ -110,6 +118,7 @@ class DirectoryValidationTests(unittest.TestCase):
         checker = validator_for("recommendation").format_checker
         self.assertFalse(checker.conforms("http://", "uri"))
         self.assertFalse(checker.conforms("https://exa mple.test/path", "uri"))
+        self.assertFalse(checker.conforms("https://example.test:not-a-port/path", "uri"))
         self.assertFalse(checker.conforms("2026-01-01T00:00Z", "date-time"))
         self.assertFalse(checker.conforms("2026-01-01T00:00:00+00:00:30", "date-time"))
         self.assertTrue(checker.conforms("2026-01-01T00:00:00+00:00", "date-time"))

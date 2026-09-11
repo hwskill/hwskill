@@ -34,6 +34,22 @@ def _schema_field(error: Any) -> str:
     return _field(error.absolute_path)
 
 
+def _schema_errors(errors: Iterable[Any]) -> Iterable[Any]:
+    """Prefer actionable format leaves over an enclosing oneOf failure."""
+    for error in errors:
+        if error.validator != "oneOf":
+            yield error
+            continue
+        pending = list(error.context)
+        format_errors: list[Any] = []
+        while pending:
+            child = pending.pop()
+            if child.validator == "format":
+                format_errors.append(child)
+            pending.extend(child.context)
+        yield from format_errors or [error]
+
+
 def _source_commit(root: Path) -> str | None:
     completed = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True, capture_output=True, check=False
@@ -100,7 +116,7 @@ def _normalise_repository(value: str) -> str:
         if parsed.password is not None:
             userinfo += f":{parsed.password}"
         userinfo += "@"
-    return urlunsplit((parsed.scheme.lower(), f"{userinfo}{host}{port}", path, parsed.query, ""))
+    return urlunsplit((parsed.scheme.lower(), f"{userinfo}{host}{port}", path, parsed.query, parsed.fragment))
 
 
 def _source_identity(entry: dict[str, Any]) -> str | None:
@@ -115,9 +131,15 @@ def _source_identity(entry: dict[str, Any]) -> str | None:
     if locator.get("type") == "git":
         repository, path = locator.get("repository"), locator.get("path")
         if isinstance(repository, str) and isinstance(path, str):
-            return f"git:{_normalise_repository(repository)}\0{_normalise_identity_path(path)}"
+            try:
+                return f"git:{_normalise_repository(repository)}\0{_normalise_identity_path(path)}"
+            except ValueError:
+                return None
     if locator.get("type") == "web" and isinstance(locator.get("url"), str):
-        return f"web:{locator['url']}"
+        try:
+            return f"web:{_normalise_repository(locator['url'])}"
+        except ValueError:
+            return None
     return None
 
 
@@ -142,7 +164,7 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
             issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML with unique keys."))
             continue
-        schema_errors = sorted(validator_for(schema_name).iter_errors(document), key=lambda error: list(error.absolute_path))
+        schema_errors = sorted(_schema_errors(validator_for(schema_name).iter_errors(document)), key=lambda error: list(error.absolute_path))
         for error in schema_errors:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the field to match its JSON Schema contract."))
         if not schema_errors:

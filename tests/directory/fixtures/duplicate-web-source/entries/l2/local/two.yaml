@@ -1,0 +1,24 @@
+schema_version: 1
+id: local/two
+name: Two web source
+summary: Equivalent spelling of the first web source.
+layer: l2
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: web
+    url: https://example.test/Skill
+install:
+  method: unknown
+  default_scope: project
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown

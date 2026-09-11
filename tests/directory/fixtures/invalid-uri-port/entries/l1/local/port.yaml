@@ -1,0 +1,27 @@
+schema_version: 1
+id: local/port
+name: Invalid port
+summary: A malformed authority must be a format error.
+layer: l1
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://example.test:not-a-port/skill.git
+    path: skills/review
+    requested_ref: v1
+install:
+  method: upstream
+  default_scope: project
+  instructions_url: https://example.test/install
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown

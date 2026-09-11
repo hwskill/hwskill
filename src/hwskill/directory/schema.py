@@ -23,6 +23,7 @@ def _is_http_uri(value: object) -> bool:
     try:
         parsed = urlsplit(value)
         host = parsed.hostname
+        parsed.port
     except ValueError:
         return False
     return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc) and bool(host)

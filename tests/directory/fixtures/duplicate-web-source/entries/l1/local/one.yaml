@@ -1,0 +1,24 @@
+schema_version: 1
+id: local/one
+name: One web source
+summary: First spelling of one web source.
+layer: l1
+purposes: [Testing]
+examples:
+  - prompt: Test it.
+    expected_outcome: A result.
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: web
+    url: HTTPS://EXAMPLE.test/Skill/
+install:
+  method: unknown
+  default_scope: project
+compatibility:
+  agents: [unknown]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown
