@@ -267,7 +267,7 @@ def validate_repository(repo_root: Path) -> ValidationReport:
                 issues.append(_issue(path, root, "skills", "recommendation-unpublishable-entry", f"Ready recommendation references invalid entry {skill['id']!r}.", "Fix the entry before publishing this recommendation."))
 
     invalid_files = {issue.file for issue in issues}
-    publishable_entries = tuple(sorted(entry_id for entry_id, (path, entry) in by_id.items() if str(path.relative_to(root)) not in invalid_files and entry.get("lifecycle", "active") == "active"))
+    publishable_entries = tuple(sorted(entry_id for entry_id, (path, entry) in by_id.items() if str(path.relative_to(root)) not in invalid_files))
     publishable_recommendations = tuple(sorted(
         recommendation["id"] for path, recommendation in recommendations
         if recommendation["status"] == "ready" and str(path.relative_to(root)) not in invalid_files

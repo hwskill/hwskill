@@ -195,6 +195,19 @@ class DirectoryValidationTests(unittest.TestCase):
         self.assertNotEqual(clean.input_digest, invalid.input_digest)
         self.assertTrue(any(issue.file == "curation/topics.yaml" and issue.code == "schema-pattern" for issue in invalid.issues))
 
+    def test_initial_external_entries_use_verified_skill_subdirectories(self) -> None:
+        """Root repository references are not substitutes for a verified SKILL.md path."""
+        from hwskill.directory.yaml_io import load_yaml
+
+        entries = Path("entries")
+        expected = {
+            "community/performance-patterns.yaml": "skills/performance-patterns",
+            "data-engineering/spark-and-distributed-processing.yaml": "skills/spark-and-distributed-processing",
+        }
+        for relative, skill_path in expected.items():
+            document = load_yaml(next(entries.rglob(relative)))
+            self.assertEqual(document["source"]["locator"]["path"], skill_path)
+
 
 if __name__ == "__main__":
     unittest.main()

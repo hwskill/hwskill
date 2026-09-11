@@ -13,7 +13,7 @@ source:
   locator:
     type: git
     repository: https://github.com/2233admin/performance-patterns-skill.git
-    path: .
+    path: skills/performance-patterns
     requested_ref: 144ab7cd163f9eeda23479be2bfde603fa3b2106
 install:
   method: unknown

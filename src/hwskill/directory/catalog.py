@@ -138,7 +138,8 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             normalized = _normalized(entry, identity)
             entry_digest = sha256_bytes(canonical_json(normalized))
             summary = _summary()
-            entries.append({"entry": normalized, "entry_digest": entry_digest, "source_identity": identity, "lifecycle": normalized["lifecycle"], "install_capability": "guidance_only" if entry["install"]["method"] == "unknown" else "installable", "verification_summary": summary})
+            capability = "disabled" if normalized["lifecycle"] == "withdrawn" else "guidance_only" if entry["install"]["method"] == "unknown" else "installable"
+            entries.append({"entry": normalized, "entry_digest": entry_digest, "source_identity": identity, "lifecycle": normalized["lifecycle"], "install_capability": capability, "verification_summary": summary})
             skill_dir = staging / "skills" / entry["id"]
             _write_json(skill_dir / "install.json", _install_data(entry, entry_digest, identity, summary))
             skill_dir.mkdir(parents=True, exist_ok=True)
@@ -155,6 +156,8 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
         curation = {}
         for path in sorted((root / "curation").glob("*.yaml")) if (root / "curation").is_dir() else []:
             curation.update(load_yaml(path))
+        if set(curation) != {"topics", "synonyms"}:
+            raise ValueError("curation output requires topics and synonyms")
         _write_json(staging / "catalog.json", {"schema_version": 1, "source_commit": report.source_commit, "entries": entries})
         _write_json(staging / "recommendations.json", {"schema_version": 1, "recommendations": recommendations})
         _write_json(staging / "curation.json", curation)

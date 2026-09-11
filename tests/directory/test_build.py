@@ -21,6 +21,9 @@ class DirectoryBuildTests(unittest.TestCase):
             "schema_version: 1\nid: draft\nskills:\n  - id: local/hosted\ntitle: Draft\nbody: Never publish this.\nauthor: test\nstatus: draft\n",
             encoding="utf-8",
         )
+        (root / "curation").mkdir()
+        (root / "curation/topics.yaml").write_text("topics:\n  - slug: testing\n    title: 测试\n", encoding="utf-8")
+        (root / "curation/synonyms.yaml").write_text("synonyms:\n  testing: [tests]\n", encoding="utf-8")
         return root
 
     def test_build_is_deterministic_and_keeps_external_content_out(self) -> None:
@@ -46,7 +49,10 @@ class DirectoryBuildTests(unittest.TestCase):
             self.assertTrue((first / "skills/local/hosted/content/SKILL.md").is_file())
             self.assertTrue((first / "skills/local/hosted/content/reference.md").is_file())
             self.assertFalse((first / "skills/upstream/external/content").exists())
-            self.assertEqual(json.loads((first / "curation.json").read_text(encoding="utf-8")), {})
+            curation = json.loads((first / "curation.json").read_text(encoding="utf-8"))
+            from hwskill.directory.schema import validator_for
+            self.assertEqual(set(curation), {"topics", "synonyms"})
+            self.assertEqual(list(validator_for("curation").iter_errors(curation)), [])
 
     def test_input_digest_tracks_hosted_content_and_copied_contribution_documents(self) -> None:
         """Omitting either input permits stale public output under the same digest."""

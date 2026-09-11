@@ -13,7 +13,7 @@ source:
   locator:
     type: git
     repository: https://github.com/vaquarkhan/data-engineering-agent-skills.git
-    path: .
+    path: skills/spark-and-distributed-processing
     requested_ref: 421ef57e8d42c464b29339193c18dd5bd2946bc2
 install:
   method: unknown
