@@ -1,0 +1,22 @@
+schema_version: 1
+id: local/gitcode-pr-review-fetch
+name: GitCode Pull Request Review Fetch
+summary: 获取 GitCode Pull Request 的变更、行级评论与讨论状态，供可追溯检视使用。
+layer: l2
+purposes: [GitCode PR 检视, 获取完整差异与评论]
+examples:
+  - prompt: 获取 GitCode PR 的完整 patch 和未解决评论。
+    expected_outcome: 形成带 head/base SHA 的本地检视材料。
+source:
+  kind: hosted
+  path: skills-src/l2/local/gitcode-pr-review-fetch
+install:
+  method: directory
+  default_scope: project
+compatibility:
+  agents: [codex]
+  systems: [linux, windows]
+  requirements: [GitCode 访问凭据和网络访问]
+license:
+  status: unknown
+limitations: [未在本目录构建中执行联网获取或行为验证]

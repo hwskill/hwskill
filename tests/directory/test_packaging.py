@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -33,6 +34,27 @@ class DirectoryWheelTests(unittest.TestCase):
                 check=True, capture_output=True, text=True, env=environment,
             )
             self.assertEqual(completed.stdout, "ok\n")
+
+    def test_installed_wheel_digest_tracks_packaged_schema_bytes(self) -> None:
+        """A checkout-relative schema glob would leave this digest unchanged."""
+        fixture = Path(__file__).parent / "fixtures" / "valid"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            wheels, target, repository = root / "wheels", root / "installed", root / "repository"
+            wheels.mkdir()
+            shutil.copytree(fixture, repository)
+            build_environment = dict(os.environ)
+            build_environment.pop("PYTHONPATH", None)
+            subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation", ".", "--wheel-dir", str(wheels)], check=True, capture_output=True, text=True, env=build_environment)
+            wheel = next(wheels.glob("hwskill-*.whl"))
+            subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(target), str(wheel)], check=True, capture_output=True, text=True, env=build_environment)
+            environment = {**os.environ, "PYTHONPATH": f"{target}:/usr/lib/python3/dist-packages"}
+            command = [sys.executable, "-c", "from hwskill.directory import validate_repository; from pathlib import Path; print(validate_repository(Path(__import__('sys').argv[1])).input_digest)", str(repository)]
+            before = subprocess.run(command, check=True, capture_output=True, text=True, env=environment).stdout
+            schema = target / "hwskill/directory/schemas/entry.schema.json"
+            schema.write_bytes(schema.read_bytes() + b" ")
+            after = subprocess.run(command, check=True, capture_output=True, text=True, env=environment).stdout
+            self.assertNotEqual(before, after)
 
 
 if __name__ == "__main__":

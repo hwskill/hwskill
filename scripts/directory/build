@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+if [ "$#" -ne 2 ]; then
+  echo "usage: scripts/directory/build REPO_ROOT OUT_DIR" >&2
+  exit 2
+fi
+exec python -m hwskill.directory build --repo-root "$1" --out "$2" --json

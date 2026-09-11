@@ -1,0 +1,29 @@
+schema_version: 1
+id: community/performance-patterns
+name: Performance Patterns
+summary: 面向 C/C++、perf 与 CUDA 的性能分析和优化工作流技能。
+layer: l3
+purposes: [C++ 性能分析, perf 工具使用, CUDA 性能优化]
+examples:
+  - prompt: 分析这个 C++ 热点并给出可验证的性能实验建议。
+    expected_outcome: 形成假设、测量和验证步骤。
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://github.com/anthropics/skills.git
+    path: skills/performance-patterns
+    requested_ref: 144ab7cd163f9eeda23479be2bfde603fa3b2106
+install:
+  method: unknown
+  default_scope: project
+compatibility:
+  agents: [codex, claude-code]
+  systems: [linux]
+  requirements: [C/C++ 工具链, perf 或 CUDA 工具按具体任务需要]
+license:
+  status: known
+  identifier: MIT
+  url: https://github.com/anthropics/skills/blob/144ab7cd163f9eeda23479be2bfde603fa3b2106/LICENSE
+limitations: [external 正文未复制；安装、行为和目标硬件效果均未运行]

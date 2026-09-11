@@ -1,0 +1,14 @@
+schema_version: 1
+id: data-and-performance
+skills:
+  - id: community/performance-patterns
+  - id: data-engineering/spark-and-distributed-processing
+  - id: openai/slides
+title: 性能、数据工程与结果呈现
+body: 覆盖 C++ 性能、Spark 分布式处理与演示文稿交付；三个外部条目均仅有来源与元数据核验，未执行安装或行为测试。
+author: hwskill-maintainers
+topics: [performance, spark, data-engineering, presentations]
+evidence:
+  - url: https://github.com/openai/skills
+    observed_at: 2026-09-11T00:00:00+08:00
+status: ready

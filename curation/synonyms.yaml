@@ -1,0 +1,5 @@
+synonyms:
+  spark: [pyspark, 分布式处理]
+  performance: [perf, 性能分析, c++]
+  review: [pr, 代码检视, gitcode]
+  slides: [ppt, pptx, 演示文稿]

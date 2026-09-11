@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.resources import files
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
@@ -64,8 +65,8 @@ def _input_digest(root: Path, paths: Iterable[Path]) -> str:
         digest.update(b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")
-    schema_root = Path(__file__).resolve().parents[3] / "schemas"
-    for path in sorted(schema_root.glob("*.schema.json")):
+    schema_root = files("hwskill.directory").joinpath("schemas")
+    for path in sorted((item for item in schema_root.iterdir() if item.name.endswith(".schema.json")), key=lambda item: item.name):
         digest.update(path.name.encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())

@@ -1,0 +1,27 @@
+schema_version: 1
+id: superpowers/test-driven-development
+name: Test-Driven Development
+summary: 要求先写失败测试、再最小实现并验证的测试驱动开发技能。
+layer: l1
+purposes: [TDD, 回归测试设计]
+examples:
+  - prompt: 为这个缺陷先写一个失败测试，再实现最小修复。
+    expected_outcome: 留下 RED/GREEN 证据和可重复测试。
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://github.com/obra/superpowers.git
+    path: skills/test-driven-development
+    requested_ref: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
+install:
+  method: unknown
+  default_scope: project
+compatibility:
+  agents: [codex, claude-code, cursor, gemini-cli]
+  systems: [linux, macos, windows]
+  requirements: [项目自身的测试框架]
+license:
+  status: unknown
+limitations: [外部正文未复制；不同项目的测试命令需按实际环境确认；安装和行为未运行]

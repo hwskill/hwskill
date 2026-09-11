@@ -1,0 +1,22 @@
+schema_version: 1
+id: local/gitcode-discussion-fetch
+name: GitCode Discussion Fetch
+summary: 获取 GitCode Discussion 的正文、顶层评论和嵌套回复并保存为可读 Markdown。
+layer: l2
+purposes: [GitCode Discussion 归档, 获取讨论回复]
+examples:
+  - prompt: 归档指定 GitCode Discussion 的完整正文和回复。
+    expected_outcome: 形成可读 Markdown 材料并保留来源定位。
+source:
+  kind: hosted
+  path: skills-src/l2/local/gitcode-discussion-fetch
+install:
+  method: directory
+  default_scope: project
+compatibility:
+  agents: [codex]
+  systems: [linux, windows]
+  requirements: [GitCode 访问凭据和网络访问]
+license:
+  status: unknown
+limitations: [未在本目录构建中执行联网获取或行为验证]

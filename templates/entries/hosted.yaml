@@ -1,0 +1,21 @@
+schema_version: 1
+id: namespace/skill-name
+name: 技能名称
+summary: 一句话说明技能解决的问题。
+layer: l2
+purposes: [明确用途]
+examples:
+  - prompt: 用户如何请求这个技能。
+    expected_outcome: 可观察的结果，不宣称未经验证的行为。
+source:
+  kind: hosted
+  path: skills-src/l2/namespace/skill-name
+install:
+  method: directory
+  default_scope: project
+compatibility:
+  agents: [codex]
+  systems: [unknown]
+  requirements: []
+license:
+  status: unknown
