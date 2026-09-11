@@ -50,8 +50,9 @@ export const entries = catalog.entries;
 export const recommendations = recommendationData.recommendations.filter((item) => item.status === "ready");
 
 export function sourceRepository(identity: string): string | null {
-  if (!identity.startsWith("git:")) return null;
-  return identity.slice(4).split("\0", 1)[0].replace(/\.git$/, "");
+  if (identity.startsWith("git:")) return identity.slice(4).split("\0", 1)[0].replace(/\.git$/, "");
+  if (identity.startsWith("web:")) return identity.slice(4);
+  return null;
 }
 
 export function verificationLabel(item: CatalogItem): string {
@@ -60,10 +61,34 @@ export function verificationLabel(item: CatalogItem): string {
   return installation === "pass" && behavior === "pass" ? "已验证" : "未完成安装与行为验证";
 }
 
-export function topicEntries(slug: string): CatalogItem[] {
+export function verificationState(item: CatalogItem): StageResult {
+  const results = [item.verification_summary.installation?.result, item.verification_summary.behavior?.result];
+  if (results.every((result) => result === "pass")) return "pass";
+  for (const state of ["fail", "blocked", "unknown"] as const) if (results.includes(state)) return state;
+  return "not_run";
+}
+
+export function topicAliases(slug: string): Set<string> {
   const topic = curation.topics?.find((item) => item.slug === slug);
-  if (!topic) return [];
-  const aliases = new Set([slug, topic.title, ...(curation.synonyms?.[slug] ?? [])].map((value) => value.toLowerCase()));
+  if (!topic) return new Set();
+  const aliases = new Set([slug, topic.title].map((value) => value.toLowerCase()));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [key, values] of Object.entries(curation.synonyms ?? {})) {
+      const group = [key, ...values].map((value) => value.toLowerCase());
+      if (!group.some((alias) => aliases.has(alias))) continue;
+      for (const alias of group) {
+        if (!aliases.has(alias)) changed = true;
+        aliases.add(alias);
+      }
+    }
+  }
+  return aliases;
+}
+
+export function topicEntries(slug: string): CatalogItem[] {
+  const aliases = topicAliases(slug);
   return entries.filter(({ entry }) => {
     const terms = [...entry.purposes, ...(entry.keywords ?? [])].join(" ").toLowerCase();
     return [...aliases].some((alias) => terms.includes(alias));

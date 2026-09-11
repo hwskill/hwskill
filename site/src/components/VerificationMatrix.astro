@@ -4,9 +4,10 @@ interface Props { summary: CatalogItem["verification_summary"] }
 const { summary } = Astro.props;
 const labels: Record<string, string> = { metadata: "元数据", acquisition: "来源取得", installation: "安装", behavior: "行为" };
 const results: Record<string, string> = { pass: "通过", fail: "失败", blocked: "受阻", not_run: "未运行", unknown: "未知" };
+const stages = ["metadata", "acquisition", "installation", "behavior"];
 ---
 <div class="verification-matrix">
-  {Object.entries(summary).map(([stage, value]) => (
+  {stages.map((stage) => ({ stage, value: summary[stage] })).filter(({ value }) => value).map(({ stage, value }) => (
     <div class={`verification-cell result-${value.result}`}>
       <span>{labels[stage] ?? stage}</span>
       <strong>{results[value.result] ?? value.result}</strong>

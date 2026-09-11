@@ -1,12 +1,21 @@
 ---
-interface Props { id: string; installCapability: string }
+interface Props { id: string; installCapability: string; lifecycleReason?: string | null }
 import { sitePath } from "../lib/urls";
-const { id, installCapability } = Astro.props;
+const { id, installCapability, lifecycleReason = null } = Astro.props;
 const url = sitePath(`/data/skills/${id}/install.md`);
 const prompt = installCapability === "guidance_only"
   ? `请读取 ${url}，先核对来源与固定版本。该条目未提供可执行安装方式，请不要猜测命令；请说明需要我确认的最短人工步骤。`
   : `请读取 ${url}，核对技能 ID、来源版本和项目级目标后安装。不要覆盖同名技能；完成后报告实际目标、版本和识别结果。`;
 ---
+{installCapability === "disabled" ? (
+<section class="install-panel" data-pagefind-ignore>
+  <div>
+    <p class="eyebrow">安装已停用</p>
+    <h2>已撤回：停止新安装</h2>
+    <p>{lifecycleReason ?? "该技能当前已撤回；历史材料仅用于理解既有安装。"}</p>
+  </div>
+</section>
+) : (
 <section class="install-panel" data-pagefind-ignore>
   <div>
     <p class="eyebrow">交给 Agent</p>
@@ -18,6 +27,7 @@ const prompt = installCapability === "guidance_only"
     <a href={url}>查看安装说明</a>
   </div>
 </section>
+)}
 <script>
   document.querySelectorAll<HTMLButtonElement>("[data-copy-target]").forEach((button) => {
     button.addEventListener("click", async () => {

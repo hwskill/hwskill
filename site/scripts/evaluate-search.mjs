@@ -7,6 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
 const cases = JSON.parse(readFileSync(resolve(root, "search-cases.json"), "utf8"));
 const curation = JSON.parse(readFileSync(resolve(root, ".generated/directory/curation.json"), "utf8"));
+const MIN_RELATIVE_SCORE = 0.85;
 const mime = { ".js": "text/javascript", ".json": "application/json", ".wasm": "application/wasm", ".css": "text/css", ".html": "text/html" };
 
 const server = createServer((request, response) => {
@@ -28,11 +29,10 @@ const origin = `http://127.0.0.1:${address.port}`;
 
 function queryVariants(value) {
   const normalized = value.trim().toLowerCase();
-  const cjkPairs = /^[\p{Script=Han}]{4,}$/u.test(normalized) ? normalized.match(/[\p{Script=Han}]{2}/gu)?.join(" ") ?? "" : "";
-  const additions = Object.entries(curation.synonyms ?? {})
-    .filter(([key, values]) => key.toLowerCase() === normalized || values.some((item) => item.toLowerCase() === normalized))
-    .flatMap(([key, values]) => [key, ...values]);
-  return [...new Set([value, cjkPairs, ...additions].filter(Boolean))];
+  if (!normalized) return [];
+  const canonical = Object.entries(curation.synonyms ?? {}).find(([, values]) => values.some((item) => item.toLowerCase() === normalized))?.[0];
+  if (canonical && normalized.length <= 3) return [canonical];
+  return canonical ? [value, canonical] : [value];
 }
 
 try {
@@ -42,22 +42,36 @@ try {
   for (const test of cases) {
     const filters = test.filters ?? {};
     const variants = queryVariants(test.query);
-    const responses = variants.length
-      ? await Promise.all(variants.map((query) => pagefind.search(query, { filters })))
-      : [await pagefind.search(null, { filters })];
+    const responses = variants.length ? [await pagefind.search(variants[0], { filters })] : [await pagefind.search(null, { filters })];
+    if (variants.length > 1 && responses[0].results.length === 0) responses.push(await pagefind.search(variants[1], { filters }));
     const resultMap = new Map();
-    for (const response of responses) for (const result of response.results) if (!resultMap.has(result.id)) resultMap.set(result.id, result);
-    const records = await Promise.all([...resultMap.values()].slice(0, 20).map((result) => result.data()));
-    const actual = [...new Set(records.map((record) => record.meta["skill-id"]).filter(Boolean))].slice(0, 5);
+    for (const response of responses) for (const result of response.results) {
+      const prior = resultMap.get(result.id);
+      if (!prior || result.score > prior.score) resultMap.set(result.id, result);
+    }
+    const ranked = [...resultMap.values()].sort((left, right) => right.score - left.score);
+    const topScore = ranked[0]?.score ?? 0;
+    const rankedResults = variants.length ? ranked.filter((result) => result.score >= topScore * MIN_RELATIVE_SCORE).slice(0, 5) : ranked;
+    const records = await Promise.all(rankedResults.map(async (result) => ({ ...(await result.data()), score: result.score })));
+    const non_skill_results = records.filter((record) => !record.meta["skill-id"]);
+    const skillIds = records.map((record) => record.meta["skill-id"]).filter(Boolean);
+    const duplicateSkillIds = skillIds.filter((id, index) => skillIds.indexOf(id) !== index);
+    const actual = [...new Set(skillIds)];
     const missing = test.expected_ids.filter((id) => !actual.includes(id));
-    if (missing.length || (test.expected_ids.length === 0 && actual.length)) {
+    const allowed = test.allowed_ids ?? test.expected_ids;
+    const unexpected = actual.filter((id) => !allowed.includes(id));
+    if (missing.length || unexpected.length || non_skill_results.length || duplicateSkillIds.length) {
       failures.push({
         query: test.query,
         query_variants: variants,
         filters,
         expected: test.expected_ids,
+        allowed,
         actual,
-        observed: records.slice(0, 5).map((record) => ({ url: record.url, title: record.meta.title, skill_id: record.meta["skill-id"] ?? null })),
+        unexpected,
+        non_skill_results: non_skill_results.map((record) => record.url),
+        duplicate_skill_ids: [...new Set(duplicateSkillIds)],
+        observed: records.slice(0, 5).map((record) => ({ url: record.url, title: record.meta.title, skill_id: record.meta["skill-id"] ?? null, score: record.score })),
       });
     }
   }

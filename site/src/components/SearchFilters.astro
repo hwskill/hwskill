@@ -18,6 +18,9 @@ const pagefindBase = import.meta.env.BASE_URL;
     <label>Agent
       <select id="agent-filter"><option value="">全部</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option><option value="gemini-cli">Gemini CLI</option></select>
     </label>
+    <label>验证
+      <select id="verification-filter"><option value="">全部</option><option value="pass">安装与行为已验证</option><option value="not_run">未完成验证</option><option value="blocked">验证受阻</option><option value="fail">验证失败</option><option value="unknown">状态未知</option></select>
+    </label>
   </div>
   <p id="search-status" class="search-status" role="status">输入用途，或直接使用筛选浏览。</p>
   <div id="search-results" class="search-results"></div>
@@ -28,23 +31,26 @@ const pagefindBase = import.meta.env.BASE_URL;
   const layer = document.querySelector<HTMLSelectElement>("#layer-filter");
   const source = document.querySelector<HTMLSelectElement>("#source-filter");
   const agent = document.querySelector<HTMLSelectElement>("#agent-filter");
+  const verification = document.querySelector<HTMLSelectElement>("#verification-filter");
   const status = document.querySelector<HTMLElement>("#search-status");
   const results = document.querySelector<HTMLElement>("#search-results");
   const synonyms = JSON.parse(panel?.dataset.synonyms ?? "{}") as Record<string, string[]>;
+  const MIN_RELATIVE_SCORE = 0.85;
+  let latestRequest = 0;
 
   function queryVariants(value: string): string[] {
-    const lowered = value.trim().toLowerCase();
-    const cjkPairs = /^[\p{Script=Han}]{4,}$/u.test(lowered) ? lowered.match(/[\p{Script=Han}]{2}/gu)?.join(" ") ?? "" : "";
-    const additions = Object.entries(synonyms)
-      .filter(([key, values]) => key.toLowerCase() === lowered || values.some((item) => item.toLowerCase() === lowered))
-      .flatMap(([key, values]) => [key, ...values]);
-    return [...new Set([value, cjkPairs, ...additions].filter(Boolean))];
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return [];
+    const canonical = Object.entries(synonyms).find(([, values]) => values.some((item) => item.toLowerCase() === normalized))?.[0];
+    if (canonical && normalized.length <= 3) return [canonical];
+    return canonical ? [value, canonical] : [value];
   }
 
   async function search() {
-    if (!input || !layer || !source || !agent || !status || !results) return;
+    if (!input || !layer || !source || !agent || !verification || !status || !results) return;
+    const requestId = ++latestRequest;
     const queries = queryVariants(input.value);
-    const filters = Object.fromEntries(Object.entries({ layer: layer.value, source: source.value, agent: agent.value }).filter(([, value]) => value));
+    const filters = Object.fromEntries(Object.entries({ layer: layer.value, source: source.value, agent: agent.value, verification: verification.value }).filter(([, value]) => value));
     if (queries.length === 0 && Object.keys(filters).length === 0) {
       results.replaceChildren();
       status.textContent = "输入用途，或直接使用筛选浏览。";
@@ -55,12 +61,18 @@ const pagefindBase = import.meta.env.BASE_URL;
       const pagefindUrl = `${panel?.dataset.pagefindBase ?? "/"}pagefind/pagefind.js`;
       const pagefind = await import(/* @vite-ignore */ pagefindUrl);
       await pagefind.options({ ranking: { termSimilarity: 0 } });
-      const responses = queries.length
-        ? await Promise.all(queries.map((query) => pagefind.search(query, { filters })))
-        : [await pagefind.search(null, { filters })];
-      const resultMap = new Map<string, { data: () => Promise<{ url: string; meta: Record<string, string>; excerpt: string }> }>();
-      for (const response of responses) for (const result of response.results) if (!resultMap.has(result.id)) resultMap.set(result.id, result);
-      const records = await Promise.all([...resultMap.values()].slice(0, 20).map((result) => result.data()));
+      const responses = queries.length ? [await pagefind.search(queries[0], { filters })] : [await pagefind.search(null, { filters })];
+      if (queries.length > 1 && responses[0].results.length === 0) responses.push(await pagefind.search(queries[1], { filters }));
+      const resultMap = new Map<string, { id: string; score: number; data: () => Promise<{ url: string; meta: Record<string, string>; excerpt: string }> }>();
+      for (const response of responses) for (const result of response.results) {
+        const prior = resultMap.get(result.id);
+        if (!prior || result.score > prior.score) resultMap.set(result.id, result);
+      }
+      const ranked = [...resultMap.values()].sort((left, right) => right.score - left.score);
+      const topScore = ranked[0]?.score ?? 0;
+      const rankedResults = queries.length ? ranked.filter((result) => result.score >= topScore * MIN_RELATIVE_SCORE).slice(0, 5) : ranked;
+      const records = await Promise.all(rankedResults.map((result) => result.data()));
+      if (requestId !== latestRequest) return;
       results.replaceChildren(...records.map((record) => {
         const article = document.createElement("article");
         article.className = "search-hit";
@@ -75,9 +87,10 @@ const pagefindBase = import.meta.env.BASE_URL;
       document.querySelector<HTMLElement>("#all-skills")?.setAttribute("hidden", "");
       status.textContent = records.length ? `找到 ${records.length} 项` : "没有匹配项。可换一个用途词或清除筛选。";
     } catch {
+      if (requestId !== latestRequest) return;
       status.textContent = "搜索索引暂不可用；下面仍可浏览完整目录。";
       document.querySelector<HTMLElement>("#all-skills")?.removeAttribute("hidden");
     }
   }
-  [input, layer, source, agent].forEach((element) => element?.addEventListener("input", search));
+  [input, layer, source, agent, verification].forEach((element) => element?.addEventListener("input", search));
 </script>

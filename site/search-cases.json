@@ -4,7 +4,7 @@
   {"kind":"zh","query":"根因","expected_ids":["superpowers/systematic-debugging"]},
   {"kind":"zh","query":"回归测试","expected_ids":["superpowers/test-driven-development"]},
   {"kind":"zh","query":"测试驱动","expected_ids":["superpowers/test-driven-development"]},
-  {"kind":"zh","query":"讨论回复","expected_ids":["local/gitcode-discussion-fetch"]},
+  {"kind":"zh","query":"讨论回复","expected_ids":["local/gitcode-discussion-fetch","local/gitcode-pr-review-fetch"]},
   {"kind":"zh","query":"完整差异","expected_ids":["local/gitcode-pr-review-fetch"]},
   {"kind":"zh","query":"分布式数据处理","expected_ids":["data-engineering/spark-and-distributed-processing"]},
   {"kind":"zh","query":"数据工程","expected_ids":["data-engineering/spark-and-distributed-processing"]},
@@ -23,11 +23,13 @@
   {"kind":"mixed","query":"CUDA 优化","expected_ids":["community/performance-patterns"]},
   {"kind":"synonym","query":"pyspark","expected_ids":["data-engineering/spark-and-distributed-processing"]},
   {"kind":"synonym","query":"perf","expected_ids":["community/performance-patterns"]},
-  {"kind":"synonym","query":"代码检视","expected_ids":["local/gitcode-pr-review-fetch"]},
+  {"kind":"synonym","query":"代码检视","expected_ids":["local/gitcode-discussion-fetch","local/gitcode-pr-review-fetch"]},
+  {"kind":"synonym","query":"pr","expected_ids":["local/gitcode-pr-review-fetch"]},
   {"kind":"filter","query":"","filters":{"layer":"l1"},"expected_ids":["superpowers/systematic-debugging","superpowers/test-driven-development"]},
   {"kind":"filter","query":"","filters":{"source":"hosted"},"expected_ids":["local/gitcode-discussion-fetch","local/gitcode-pr-review-fetch"]},
   {"kind":"filter","query":"","filters":{"agent":"cursor"},"expected_ids":["superpowers/systematic-debugging","superpowers/test-driven-development"]},
   {"kind":"filter","query":"","filters":{"layer":"l3","source":"external"},"expected_ids":["community/performance-patterns","data-engineering/spark-and-distributed-processing"]},
+  {"kind":"filter","query":"","filters":{"verification":"not_run"},"expected_ids":["community/performance-patterns","data-engineering/spark-and-distributed-processing","local/gitcode-discussion-fetch","local/gitcode-pr-review-fetch","superpowers/systematic-debugging","superpowers/test-driven-development"]},
   {"kind":"zero","query":"量子烹饪","expected_ids":[]},
-  {"kind":"zero","query":"__不存在__","expected_ids":[]}
+  {"kind":"zero","query":"qzxwvnomatchtoken","expected_ids":[]}
 ]

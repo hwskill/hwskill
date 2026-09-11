@@ -5,9 +5,10 @@ import { sitePath } from "../lib/urls";
 interface Props {
   title: string;
   description?: string;
+  searchable?: boolean;
 }
 
-const { title, description = "跨项目技能目录：按用途发现、核验并交给 Agent 安装。" } = Astro.props;
+const { title, description = "跨项目技能目录：按用途发现、核验并交给 Agent 安装。", searchable = false } = Astro.props;
 ---
 <!doctype html>
 <html lang="zh-CN">
@@ -27,7 +28,7 @@ const { title, description = "跨项目技能目录：按用途发现、核验�
         <a href={sitePath("/data/catalog.json")}>机器目录</a>
       </nav>
     </header>
-    <main id="main" data-pagefind-body>
+    <main id="main" data-pagefind-body={searchable ? "" : undefined}>
       <slot />
     </main>
     <footer data-pagefind-ignore>

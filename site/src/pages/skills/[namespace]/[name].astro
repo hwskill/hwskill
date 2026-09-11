@@ -2,11 +2,11 @@
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import InstallPrompt from "../../../components/InstallPrompt.astro";
 import VerificationMatrix from "../../../components/VerificationMatrix.astro";
-import { curation, entries, recommendations, sourceRepository, topicEntries, verificationLabel, type CatalogItem } from "../../../lib/data";
+import { curation, entries, recommendations, sourceRepository, topicAliases, topicEntries, verificationLabel, verificationState, type CatalogItem } from "../../../lib/data";
 import { sitePath } from "../../../lib/urls";
 
 export function getStaticPaths() {
-  return entries.filter((item) => item.entry.lifecycle === "active").map((item) => {
+  return entries.map((item) => {
     const [namespace, name] = item.entry.id.split("/");
     return { params: { namespace, name }, props: { item } };
   });
@@ -18,22 +18,26 @@ const { entry } = item;
 const related = recommendations.filter((recommendation) => recommendation.skills.some((skill) => skill.id === entry.id));
 const repository = sourceRepository(entry.source.identity);
 const verification = verificationLabel(item);
+const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.source_identity.resolved_revision ? "外部固定来源" : "外部来源（版本未固定）";
+const resolvedVersion = item.source_identity.resolved_revision ?? (entry.source.kind === "hosted" ? "随本目录版本" : "外部版本未固定");
+const lifecycleLabel = entry.lifecycle === "active" ? "正常收录" : entry.lifecycle === "deprecated" ? "已弃用" : "已撤回";
 const searchTerms = (curation.topics ?? [])
   .filter((topic) => topicEntries(topic.slug).some((candidate) => candidate.entry.id === entry.id))
-  .flatMap((topic) => [topic.title, topic.slug, ...(curation.synonyms?.[topic.slug] ?? [])]);
+  .flatMap((topic) => [...topicAliases(topic.slug)]);
 ---
-<BaseLayout title={entry.name} description={entry.summary}>
+<BaseLayout title={entry.name} description={entry.summary} searchable>
   <article class="detail">
     <header class="detail-heading">
-      <div class="card-topline"><span class={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</span><span>{entry.source.kind === "hosted" ? "本目录托管" : "外部固定来源"}</span></div>
+      <div class="card-topline"><span class={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</span><span>{sourceLabel}</span><span>{lifecycleLabel}</span></div>
       <h1 data-pagefind-meta="title">{entry.name}</h1>
       <p class="detail-summary">{entry.summary}</p>
+      {entry.lifecycle !== "active" && <div class="lifecycle-notice"><strong>{lifecycleLabel}</strong><p>{entry.lifecycle_reason}</p>{entry.replacement_id && <a href={sitePath(`/skills/${entry.replacement_id}/`)}>查看替代技能：{entry.replacement_id}</a>}</div>}
       {searchTerms.length > 0 && <div class="search-terms"><strong>检索词</strong><ul>{[...new Set(searchTerms)].map((term) => <li>{term}</li>)}</ul></div>}
       <span hidden data-pagefind-meta="skill-id">{entry.id}</span>
       <span hidden data-pagefind-filter="layer">{entry.layer}</span>
       {entry.compatibility.agents.map((agent) => <span hidden data-pagefind-filter="agent">{agent}</span>)}
       <span hidden data-pagefind-filter="source">{entry.source.kind}</span>
-      <span hidden data-pagefind-filter="verification">{verification}</span>
+      <span hidden data-pagefind-filter="verification">{verificationState(item)}</span>
       <span class="detail-id">{entry.id}</span>
     </header>
     <section class="detail-grid">
@@ -45,17 +49,17 @@ const searchTerms = (curation.topics ?? [])
       <aside class="facts" data-pagefind-ignore>
         <h2>使用前核对</h2>
         <dl>
-          <div><dt>来源</dt><dd>{entry.source.kind === "hosted" ? "本目录" : "外部仓库"}</dd></div>
-          <div><dt>固定版本</dt><dd class="mono">{item.source_identity.resolved_revision ?? "随本目录版本"}</dd></div>
+          <div><dt>来源</dt><dd>{entry.source.kind === "hosted" ? "本目录" : "外部来源"}</dd></div>
+          <div><dt>固定版本</dt><dd class="mono">{resolvedVersion}</dd></div>
           <div><dt>默认范围</dt><dd>{entry.install.default_scope}</dd></div>
           <div><dt>许可证</dt><dd>{entry.license.status === "known" ? entry.license.identifier : "未独立确认"}</dd></div>
         </dl>
-        {repository && <a href={repository} rel="noreferrer">打开来源仓库 ↗</a>}
-        <a href={sitePath(`/data/skills/${entry.id}/install.json`)}>读取安装 JSON</a>
+        {repository && <a href={repository} rel="noreferrer">打开来源 ↗</a>}
+        <a href={sitePath(`/data/skills/${entry.id}/install.json`)}>{entry.lifecycle === "withdrawn" ? "读取历史安装记录（勿用于新安装）" : "读取安装 JSON"}</a>
       </aside>
     </section>
     <section class="section-block"><div class="section-heading"><div><p class="eyebrow">验证矩阵</p><h2>{verification}</h2></div></div><VerificationMatrix summary={item.verification_summary} /></section>
-    <InstallPrompt id={entry.id} installCapability={item.install_capability} />
+    <InstallPrompt id={entry.id} installCapability={item.install_capability} lifecycleReason={entry.lifecycle_reason} />
     {related.length > 0 && <section class="section-block"><p class="eyebrow">关联推荐</p><div class="recommendation-list">{related.map((rec) => <article><a href={sitePath(`/recommendations/${rec.id}/`)}>{rec.title}</a><p>{rec.body}</p></article>)}</div></section>}
   </article>
 </BaseLayout>

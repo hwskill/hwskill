@@ -57,12 +57,40 @@ class StaticSiteContractTests(unittest.TestCase):
 
     def test_skill_detail_exposes_pagefind_filters_and_copy_fallback(self) -> None:
         detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
+        layout = (SITE / "src/layouts/BaseLayout.astro").read_text(encoding="utf-8")
         for metadata in ("layer", "agent", "source", "verification"):
             with self.subTest(metadata=metadata):
                 self.assertRegex(detail, rf'data-pagefind-filter=["\'][^"\']*{metadata}')
         prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
         self.assertIn("navigator.clipboard", prompt)
         self.assertRegex(prompt, r"select\(\)|setSelectionRange")
+        self.assertRegex(detail, r"<BaseLayout[^>]+searchable")
+        self.assertRegex(layout, r"data-pagefind-body=\{searchable")
+
+    def test_search_only_commits_latest_async_request(self) -> None:
+        search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
+        self.assertRegex(search, r"let\s+latestRequest\s*=\s*0")
+        self.assertRegex(search, r"const\s+requestId\s*=\s*\+\+latestRequest")
+        self.assertGreaterEqual(search.count("requestId !== latestRequest"), 2)
+
+    def test_verification_stages_have_explicit_lifecycle_order(self) -> None:
+        matrix = (SITE / "src/components/VerificationMatrix.astro").read_text(encoding="utf-8")
+        positions = [matrix.index(f'"{stage}"') for stage in ("metadata", "acquisition", "installation", "behavior")]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("Object.entries(summary)", matrix)
+
+    def test_lifecycle_pages_are_retained_but_not_featured_or_installable_when_withdrawn(self) -> None:
+        data = (SITE / "src/lib/data.ts").read_text(encoding="utf-8")
+        detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
+        home = (SITE / "src/pages/index.astro").read_text(encoding="utf-8")
+        prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
+
+        self.assertNotRegex(detail, r"entries\.filter\([^\n]+lifecycle[^\n]+active")
+        self.assertIn("lifecycle_reason", detail)
+        self.assertIn("replacement_id", detail)
+        self.assertRegex(home, r"entries\.filter\([^\n]+lifecycle\s*===\s*[\"']active[\"']")
+        self.assertRegex(prompt, r"installCapability\s*===\s*[\"']disabled[\"']")
+        self.assertRegex(prompt, r"停止新安装|已撤回")
 
     def test_drafts_and_badges_follow_fail_safe_contract(self) -> None:
         recommendation = (SITE / "src/pages/recommendations/[id].astro").read_text(encoding="utf-8")
@@ -72,6 +100,18 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(card, r"badge|stars")
         self.assertRegex(card, r"onerror|onError")
 
+    def test_topic_alias_groups_and_web_sources_preserve_discovery_links(self) -> None:
+        data = (SITE / "src/lib/data.ts").read_text(encoding="utf-8")
+        detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
+        card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
+        self.assertIn('identity.startsWith("web:")', data)
+        self.assertIn("topicAliases", data)
+        self.assertRegex(data, r"Object\.entries\(curation\.synonyms")
+        self.assertRegex(data, r"group\.some\([^\n]+aliases\.has")
+        self.assertRegex(detail, r"entry\.source\.kind\s*===\s*[\"']hosted[\"'][^\n]+随本目录版本")
+        self.assertIn("外部版本未固定", detail)
+        self.assertIn("外部来源", card)
+
     def test_query_evaluation_covers_at_least_thirty_cases(self) -> None:
         cases = json.loads((SITE / "search-cases.json").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(cases), 30)
@@ -80,7 +120,14 @@ class StaticSiteContractTests(unittest.TestCase):
         for case in cases:
             self.assertIn("query", case)
             self.assertIn("expected_ids", case)
-            self.assertLessEqual(len(case["expected_ids"]), 5)
+            if case["query"]:
+                self.assertLessEqual(len(case["expected_ids"]), 5)
+        evaluator = (SITE / "scripts/evaluate-search.mjs").read_text(encoding="utf-8")
+        self.assertIn("non_skill_results", evaluator)
+        self.assertIn("unexpected", evaluator)
+        search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
+        self.assertIn('id="verification-filter"', search)
+        self.assertRegex(search, r"verification:\s*verification\.value")
 
     def test_build_output_contract_is_checked_by_script(self) -> None:
         checker = (SITE / "scripts/check-build.mjs").read_text(encoding="utf-8")

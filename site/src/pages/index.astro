@@ -4,7 +4,7 @@ import SkillCard from "../components/SkillCard.astro";
 import { curation, entries, recommendations } from "../lib/data";
 import { sitePath } from "../lib/urls";
 
-const featured = entries.slice(0, 4);
+const featured = entries.filter((item) => item.entry.lifecycle === "active").slice(0, 4);
 ---
 <BaseLayout title="跨项目技能目录">
   <section class="hero">
