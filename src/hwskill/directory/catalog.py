@@ -35,14 +35,14 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_bytes(canonical_json(data))
 
 
-def _identity(entry: dict[str, Any], root: Path) -> dict[str, Any]:
+def _identity(entry: dict[str, Any], root: Path, source_commit: str | None = None) -> dict[str, Any]:
     source = entry["source"]
     if source["kind"] == "hosted":
         source_root = hosted_directory(root, source["path"])
         from .hosted_content import directory_digest
-        return {"kind": "hosted", "identity": _source_identity(entry), "resolved_revision": None, "content_digest": directory_digest(source_root)}
+        return {"kind": "hosted", "identity": _source_identity(entry), "resolved_revision": source_commit, "content_digest": directory_digest(source_root)}
     locator = source["locator"]
-    return {"kind": "external", "identity": _source_identity(entry), "resolved_revision": locator.get("requested_ref"), "content_digest": None}
+    return {"kind": "external", "identity": _source_identity(entry), "requested_ref": locator.get("requested_ref"), "resolved_revision": None, "content_digest": None}
 
 
 def _summary() -> dict[str, dict[str, Any]]:
@@ -72,7 +72,7 @@ def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
     if source["kind"] == "external":
         locator = source["locator"]
         url = locator.get("repository", locator.get("url"))
-        source_lines = [str(url), f"路径：{locator.get('path', '不适用')}", f"固定版本：{locator.get('requested_ref', locator.get('version_note', 'unknown'))}"]
+        source_lines = [str(url), f"路径：{locator.get('path', '不适用')}", f"请求版本：{locator.get('requested_ref', locator.get('version_note', 'unknown'))}", "解析提交：未解析（验证阶段记录实际 commit）"]
     else:
         source_lines = [source["path"]]
     lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", f"默认范围：{install['default_scope']}", "", "## 来源", "", *source_lines, "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
@@ -87,7 +87,7 @@ def _install_data(entry: dict[str, Any], entry_digest: str, identity: dict[str, 
     source = entry["source"]
     if source["kind"] == "external":
         locator = source["locator"]
-        public_source = {"kind": "external", "repository": locator.get("repository", locator.get("url")), "path": locator.get("path"), "resolved_revision": locator.get("requested_ref", locator.get("version_note"))}
+        public_source = {"kind": "external", "repository": locator.get("repository", locator.get("url")), "path": locator.get("path"), "requested_ref": locator.get("requested_ref"), "resolved_revision": None}
     else:
         public_source = {"kind": "hosted", "path": source["path"], "resolved_revision": identity["resolved_revision"]}
     return {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source": public_source, "install": {"method": entry["install"]["method"], "default_scope": entry["install"]["default_scope"], "instructions_url": entry["install"].get("instructions_url")}, "verification_summary": summary}
@@ -134,14 +134,16 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             entry = load_yaml(path)
             if entry["id"] not in report.publishable_entry_ids:
                 continue
-            identity = _identity(entry, root)
+            identity = _identity(entry, root, report.source_commit)
             normalized = _normalized(entry, identity)
             entry_digest = sha256_bytes(canonical_json(normalized))
             summary = _summary()
             capability = "disabled" if normalized["lifecycle"] == "withdrawn" else "guidance_only" if entry["install"]["method"] == "unknown" else "installable"
             entries.append({"entry": normalized, "entry_digest": entry_digest, "source_identity": identity, "lifecycle": normalized["lifecycle"], "install_capability": capability, "verification_summary": summary})
             skill_dir = staging / "skills" / entry["id"]
-            _write_json(skill_dir / "install.json", _install_data(entry, entry_digest, identity, summary))
+            install_data = _install_data(entry, entry_digest, identity, summary)
+            install_data["install_digest"] = sha256_bytes(canonical_json(install_data))
+            _write_json(skill_dir / "install.json", install_data)
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "install.md").write_text(_install_markdown(entry, identity), encoding="utf-8")
             if entry["source"]["kind"] == "hosted":

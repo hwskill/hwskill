@@ -93,12 +93,26 @@ class DirectoryBuildTests(unittest.TestCase):
             self.assertEqual([item["id"] for item in recommendations["recommendations"]], ["review-tools"])
             install = json.loads((out / "skills/upstream/external/install.json").read_text(encoding="utf-8"))
             self.assertEqual(install["skill_id"], "upstream/external")
+            from hwskill.directory.digest import canonical_json, sha256_bytes
+            expected = dict(install)
+            self.assertEqual(install["install_digest"], sha256_bytes(canonical_json({key: value for key, value in expected.items() if key != "install_digest"})))
             self.assertEqual(install["install"]["method"], "unknown")
             self.assertEqual(install["verification_summary"]["installation"]["result"], "not_run")
             markdown = (out / "skills/upstream/external/install.md").read_text(encoding="utf-8")
             self.assertIn("安装方式：unknown", markdown)
             self.assertIn("未提供可执行安装命令", markdown)
             self.assertNotIn("npx ", markdown)
+
+    def test_hosted_source_identity_uses_the_fixed_build_revision(self) -> None:
+        """A hosted report cannot bind a mutable working directory as its source revision."""
+        from hwskill.directory.catalog import _identity
+
+        identity = _identity(
+            {"source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"}},
+            Path("/repository"),
+            "a" * 40,
+        )
+        self.assertEqual(identity["resolved_revision"], "a" * 40)
 
     def test_catalog_keeps_display_metadata_and_external_install_is_human_readable(self) -> None:
         """Dropping display fields or exposing the internal NUL identity breaks consumers."""
@@ -115,15 +129,19 @@ class DirectoryBuildTests(unittest.TestCase):
             build_repository(root, out)
             catalog = json.loads((out / "catalog.json").read_text(encoding="utf-8"))
             hosted_catalog = next(item["entry"] for item in catalog["entries"] if item["entry"]["id"] == "local/hosted")
+            external_catalog = next(item for item in catalog["entries"] if item["entry"]["id"] == "upstream/external")
             self.assertEqual(hosted_catalog["owner"], "directory-team")
             self.assertEqual(hosted_catalog["keywords"], ["review", "evidence"])
             self.assertEqual(hosted_catalog["limitations"], ["requires local checkout"])
+            self.assertEqual(external_catalog["source_identity"]["requested_ref"], revision)
+            self.assertIsNone(external_catalog["source_identity"]["resolved_revision"])
             install = json.loads((out / "skills/upstream/external/install.json").read_text(encoding="utf-8"))
             markdown = (out / "skills/upstream/external/install.md").read_text(encoding="utf-8")
             self.assertEqual(install["skill_id"], "upstream/external")
             self.assertEqual(install["source"]["repository"], "https://example.com/org/repository.git")
             self.assertEqual(install["source"]["path"], "skills/review")
-            self.assertEqual(install["source"]["resolved_revision"], revision)
+            self.assertEqual(install["source"]["requested_ref"], revision)
+            self.assertIsNone(install["source"]["resolved_revision"])
             self.assertEqual(install["install"]["default_scope"], "project")
             self.assertNotIn("\0", markdown)
             self.assertIn("https://example.com/org/repository.git", markdown)

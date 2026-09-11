@@ -298,6 +298,12 @@
                     "type": "string",
                     "minLength": 1
                 },
+                "requested_ref": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
                 "resolved_revision": {
                     "type": [
                         "string",
