@@ -1,0 +1,8 @@
+schema_version: 1
+id: broken
+skills:
+  - id: local/not-broken
+title: Broken reference
+body: A ready recommendation cannot publish an invalid entry.
+author: directory-team
+status: ready

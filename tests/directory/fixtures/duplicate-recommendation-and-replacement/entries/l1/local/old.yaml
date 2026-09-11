@@ -1,7 +1,7 @@
 schema_version: 1
-id: local/one
-name: One
-summary: First reference.
+id: local/old
+name: Old skill
+summary: A deprecated skill without its replacement.
 layer: l1
 purposes: [Testing]
 examples:
@@ -9,19 +9,19 @@ examples:
     expected_outcome: A result.
 source:
   kind: external
-  publicity: public
+  publicity: unknown
   locator:
-    type: git
-    repository: https://EXAMPLE.com/org/repository.git/
-    path: skills/shared/
-    requested_ref: v1
+    type: web
+    url: https://example.com/old
 install:
-  method: upstream
+  method: unknown
   default_scope: project
-  instructions_url: https://example.com/install
 compatibility:
   agents: [unknown]
   systems: [unknown]
   requirements: []
 license:
   status: unknown
+lifecycle: deprecated
+lifecycle_reason: Replaced upstream.
+replacement_id: local/missing

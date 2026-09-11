@@ -1,7 +1,7 @@
 schema_version: 1
-id: local/one
-name: One
-summary: First reference.
+id: local/escape
+name: External escape
+summary: An external path must not traverse a repository.
 layer: l1
 purposes: [Testing]
 examples:
@@ -12,8 +12,8 @@ source:
   publicity: public
   locator:
     type: git
-    repository: https://EXAMPLE.com/org/repository.git/
-    path: skills/shared/
+    repository: https://example.com/org/repository.git
+    path: skills/../private
     requested_ref: v1
 install:
   method: upstream

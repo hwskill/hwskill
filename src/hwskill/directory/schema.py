@@ -1,39 +1,48 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
-from pathlib import Path
+import re
 from datetime import datetime
-from urllib.parse import urlparse
+from functools import lru_cache
+from importlib.resources import files
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, FormatChecker
 
 
-_SCHEMA_ROOT = Path(__file__).resolve().parents[3] / "schemas"
 _FORMAT_CHECKER = FormatChecker()
+_RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 
 
 @_FORMAT_CHECKER.checks("uri")
 def _is_http_uri(value: object) -> bool:
     if not isinstance(value, str):
         return True
-    parsed = urlparse(value)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    if any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc) and bool(host)
 
 
 @_FORMAT_CHECKER.checks("date-time")
 def _is_rfc3339_datetime(value: object) -> bool:
     if not isinstance(value, str):
         return True
+    if not _RFC3339.fullmatch(value):
+        return False
     try:
         datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
-    return "T" in value and (value.endswith("Z") or "+" in value[10:] or "-" in value[10:])
+    return True
 
 
 @lru_cache(maxsize=None)
 def validator_for(name: str) -> Draft202012Validator:
-    with (_SCHEMA_ROOT / f"{name}.schema.json").open(encoding="utf-8") as handle:
-        schema = json.load(handle)
+    resource = files("hwskill.directory").joinpath("schemas", f"{name}.schema.json")
+    schema = json.loads(resource.read_text(encoding="utf-8"))
     return Draft202012Validator(schema, format_checker=_FORMAT_CHECKER)

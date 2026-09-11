@@ -4,6 +4,7 @@ import hashlib
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from .models import DirectoryIssue, ValidationReport
 from .schema import validator_for
@@ -68,7 +69,38 @@ def _is_safe_hosted_path(root: Path, value: str) -> bool:
 
 
 def _url_is_http(value: object) -> bool:
-    return isinstance(value, str) and (value.startswith("https://") or value.startswith("http://"))
+    if not isinstance(value, str) or any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc) and bool(parsed.hostname)
+    except ValueError:
+        return False
+
+
+def _is_safe_external_path(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    path = PurePosixPath(value)
+    return bool(path.parts) and not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
+
+
+def _normalise_identity_path(value: str) -> str:
+    return value.rstrip("/") or "."
+
+
+def _normalise_repository(value: str) -> str:
+    parsed = urlsplit(value)
+    path = parsed.path.rstrip("/")
+    host = parsed.hostname.lower() if parsed.hostname else ""
+    port = f":{parsed.port}" if parsed.port else ""
+    userinfo = ""
+    if parsed.username is not None:
+        userinfo = parsed.username
+        if parsed.password is not None:
+            userinfo += f":{parsed.password}"
+        userinfo += "@"
+    return urlunsplit((parsed.scheme.lower(), f"{userinfo}{host}{port}", path, parsed.query, ""))
 
 
 def _source_identity(entry: dict[str, Any]) -> str | None:
@@ -76,14 +108,14 @@ def _source_identity(entry: dict[str, Any]) -> str | None:
     if not isinstance(source, dict):
         return None
     if source.get("kind") == "hosted" and isinstance(source.get("path"), str):
-        return f"hosted:{source['path']}"
+        return f"hosted:{_normalise_identity_path(source['path'])}"
     locator = source.get("locator")
     if not isinstance(locator, dict):
         return None
     if locator.get("type") == "git":
         repository, path = locator.get("repository"), locator.get("path")
         if isinstance(repository, str) and isinstance(path, str):
-            return f"git:{repository}\0{path}"
+            return f"git:{_normalise_repository(repository)}\0{_normalise_identity_path(path)}"
     if locator.get("type") == "web" and isinstance(locator.get("url"), str):
         return f"web:{locator['url']}"
     return None
@@ -117,9 +149,11 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             destination.append((path, document))
 
     by_id: dict[str, tuple[Path, dict[str, Any]]] = {}
+    entry_paths_by_id: dict[str, list[Path]] = {}
     identities: dict[str, Path] = {}
     for path, entry in entries:
         entry_id = entry["id"]
+        entry_paths_by_id.setdefault(entry_id, []).append(path)
         expected = root / "entries" / entry["layer"] / f"{entry_id}.yaml"
         if path != expected:
             issues.append(_issue(path, root, "id", "entry-path-mismatch", "Entry ID and layer must match its entries/<layer>/<namespace>/<name>.yaml path.", "Move the file or correct id/layer."))
@@ -141,6 +175,8 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             url = locator.get("repository") if locator["type"] == "git" else locator.get("url")
             if not _url_is_http(url):
                 issues.append(_issue(path, root, "source.locator", "external-locator-unsafe", "External locator must use http or https.", "Use an explicit http(s) locator."))
+            if locator["type"] == "git" and not _is_safe_external_path(locator.get("path")):
+                issues.append(_issue(path, root, "source.locator.path", "external-path-unsafe", "External Git path must be a safe POSIX relative path.", "Use a relative path without traversal."))
         identity = _source_identity(entry)
         if identity:
             previous = identities.get(identity)
@@ -149,7 +185,26 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             else:
                 identities[identity] = path
 
+    for path, entry in entries:
+        replacement_id = entry.get("replacement_id")
+        if replacement_id is not None and replacement_id not in by_id:
+            issues.append(_issue(path, root, "replacement_id", "replacement-entry-missing", f"Replacement entry {replacement_id!r} does not exist.", "Reference an existing entry ID or remove replacement_id."))
+
+    recommendation_paths_by_id: dict[str, list[Path]] = {}
+    for path, recommendation in recommendations:
+        recommendation_paths_by_id.setdefault(recommendation["id"], []).append(path)
+    for recommendation_id, paths in recommendation_paths_by_id.items():
+        if len(paths) > 1:
+            for path in paths:
+                issues.append(_issue(path, root, "id", "duplicate-recommendation-id", f"Duplicate recommendation ID {recommendation_id!r}.", "Use one stable ID per recommendation."))
+
     invalid_files = {issue.file for issue in issues}
+    publishable_entry_ids = {
+        entry_id for entry_id, (path, entry) in by_id.items()
+        if len(entry_paths_by_id[entry_id]) == 1
+        and str(path.relative_to(root)) not in invalid_files
+        and entry.get("lifecycle", "active") == "active"
+    }
     for path, recommendation in recommendations:
         if recommendation["status"] != "ready":
             continue
@@ -157,6 +212,8 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             target = by_id.get(skill["id"])
             if target is None or target[1].get("lifecycle", "active") != "active":
                 issues.append(_issue(path, root, "skills", "recommendation-missing-entry", f"Ready recommendation references unavailable active entry {skill['id']!r}.", "Reference an active entry in this repository or keep the recommendation draft."))
+            elif skill["id"] not in publishable_entry_ids:
+                issues.append(_issue(path, root, "skills", "recommendation-unpublishable-entry", f"Ready recommendation references invalid entry {skill['id']!r}.", "Fix the entry before publishing this recommendation."))
 
     invalid_files = {issue.file for issue in issues}
     publishable_entries = tuple(sorted(entry_id for entry_id, (path, _) in by_id.items() if str(path.relative_to(root)) not in invalid_files))

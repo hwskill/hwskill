@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import math
 
 import yaml
 
@@ -47,4 +48,27 @@ def load_yaml(path: Path) -> dict[str, Any]:
         raise YamlContractError(str(exc)) from exc
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise YamlContractError("YAML document must be an object with string keys")
+    _require_json_value(value)
     return value
+
+
+def _require_json_value(value: Any, depth: int = 0) -> None:
+    if depth > 100:
+        raise YamlContractError("YAML nesting exceeds the JSON safety limit")
+    if value is None or isinstance(value, (bool, str, int)):
+        return
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return
+        raise YamlContractError("YAML numbers must be finite")
+    if isinstance(value, list):
+        for item in value:
+            _require_json_value(item, depth + 1)
+        return
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise YamlContractError("YAML objects must use string keys")
+        for item in value.values():
+            _require_json_value(item, depth + 1)
+        return
+    raise YamlContractError(f"YAML value type {type(value).__name__} is not JSON-compatible")

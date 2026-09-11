@@ -63,6 +63,20 @@ class DirectoryValidationTests(unittest.TestCase):
         self.assertTrue(any(issue.code == "recommendation-missing-entry" for issue in report.issues))
         self.assertEqual(report.publishable_recommendation_ids, ())
 
+    def test_ready_recommendation_rejects_entry_that_is_not_publishable(self) -> None:
+        report = self.validate("ready-invalid-entry")
+        self.assertTrue(any(issue.code == "recommendation-unpublishable-entry" for issue in report.issues))
+
+    def test_rejects_duplicate_recommendation_id_and_missing_replacement(self) -> None:
+        report = self.validate("duplicate-recommendation-and-replacement")
+        codes = {issue.code for issue in report.issues}
+        self.assertIn("duplicate-recommendation-id", codes)
+        self.assertIn("replacement-entry-missing", codes)
+
+    def test_rejects_unsafe_external_git_path(self) -> None:
+        report = self.validate("external-path-escape")
+        self.assertTrue(any(issue.code == "external-path-unsafe" for issue in report.issues))
+
     def test_draft_recommendation_is_valid_but_not_publishable(self) -> None:
         report = self.validate("draft")
         self.assertEqual(report.result, "pass")
@@ -89,6 +103,52 @@ class DirectoryValidationTests(unittest.TestCase):
         with patch.object(Path, "read_text", reject_skill_body):
             report = validate_repository(root)
         self.assertEqual(report.result, "pass")
+
+    def test_uri_and_rfc3339_checks_reject_near_misses(self) -> None:
+        from hwskill.directory.schema import validator_for
+
+        checker = validator_for("recommendation").format_checker
+        self.assertFalse(checker.conforms("http://", "uri"))
+        self.assertFalse(checker.conforms("https://exa mple.test/path", "uri"))
+        self.assertFalse(checker.conforms("2026-01-01T00:00Z", "date-time"))
+        self.assertFalse(checker.conforms("2026-01-01T00:00:00+00:00:30", "date-time"))
+        self.assertTrue(checker.conforms("2026-01-01T00:00:00+00:00", "date-time"))
+
+    def test_yaml_loader_rejects_non_json_values(self) -> None:
+        from hwskill.directory.yaml_io import YamlContractError, load_yaml
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, text in {
+                "set.yaml": "value: !!set {one: null}\n",
+                "bytes.yaml": "value: !!binary SGVsbG8=\n",
+                "nan.yaml": "value: .nan\n",
+                "key.yaml": "1: value\n",
+            }.items():
+                path = root / name
+                path.write_text(text, encoding="utf-8")
+                with self.subTest(name=name), self.assertRaises(YamlContractError):
+                    load_yaml(path)
+
+    def test_output_schemas_reject_incomplete_nested_contracts(self) -> None:
+        from hwskill.directory.schema import validator_for
+
+        cases = {
+            "catalog": {"schema_version": 1, "source_commit": None, "entries": [{}]},
+            "verification": {"schema_version": 1, "report_id": "r", "skill_id": "local/test", "source_identity": {}, "entry_digest": "a", "install_digest": "b", "host": "codex", "runner_identity": "runner", "executed_at": "2026-01-01T00:00:00Z", "stages": {}, "evidence_refs": []},
+            "release": {"schema_version": 1, "release_id": "r", "sequence": 1, "source_commit": "abc", "publication_time": "2026-01-01T00:00:00Z", "committed_at": "2026-01-01T00:00:00Z", "events": [{}]},
+        }
+        for name, document in cases.items():
+            with self.subTest(schema=name):
+                self.assertTrue(list(validator_for(name).iter_errors(document)))
+
+    def test_root_schemas_match_packaged_resources(self) -> None:
+        from importlib.resources import files
+
+        package_schemas = files("hwskill.directory").joinpath("schemas")
+        for root_schema in Path("schemas").glob("*.schema.json"):
+            with self.subTest(schema=root_schema.name):
+                self.assertEqual(root_schema.read_bytes(), package_schemas.joinpath(root_schema.name).read_bytes())
 
 
 if __name__ == "__main__":

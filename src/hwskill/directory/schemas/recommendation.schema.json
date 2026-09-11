@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/schemas/recommendation.schema.json",
+  "title": "Recommendation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "skills", "title", "body", "author", "status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "skills": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["id"], "properties": {"id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"}, "experience_version": {"type": "string", "minLength": 1}}}},
+    "title": {"type": "string", "minLength": 1}, "body": {"type": "string", "minLength": 1}, "author": {"type": "string", "minLength": 1},
+    "topics": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "evidence": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["url", "observed_at"], "properties": {"url": {"type": "string", "format": "uri"}, "observed_at": {"type": "string", "format": "date-time"}}}},
+    "status": {"enum": ["draft", "ready", "withdrawn"]}, "withdrawal_reason": {"type": "string", "minLength": 1}
+  },
+  "allOf": [{"if": {"properties": {"status": {"const": "withdrawn"}}, "required": ["status"]}, "then": {"required": ["withdrawal_reason"]}}]
+}
