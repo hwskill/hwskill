@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "hosted-install-holdout",
+  "workflow": "hosted_install",
+  "tuning": "holdout",
+  "prompt": "请把目录里的 local/gitcode-pr-review-fetch 技能安装到这个临时 Codex 项目，并留下机器可读的验证结果。",
+  "public_inputs": [
+    "site/.generated/directory/catalog.json",
+    "site/.generated/directory/skills/local/gitcode-pr-review-fetch/install.json",
+    "site/.generated/directory/skills/local/gitcode-pr-review-fetch/install.md",
+    "site/.generated/directory/skills/local/gitcode-pr-review-fetch/content/SKILL.md",
+    "scripts/verification/run_install_check.py",
+    "schemas/verification.schema.json"
+  ],
+  "allowed_changes": [".codex/skills/local/gitcode-pr-review-fetch/**", "results/hosted-install.json"],
+  "required_paths": [
+    {"path": ".codex/skills/local/gitcode-pr-review-fetch", "kind": "directory"},
+    {"path": ".codex/skills/local/gitcode-pr-review-fetch/SKILL.md", "kind": "file"},
+    {"path": "results/hosted-install.json", "kind": "file"}
+  ],
+  "schema_checks": [{"path": "results/hosted-install.json", "schema": "schemas/verification.schema.json"}],
+  "directory_checks": [{"actual": ".codex/skills/local/gitcode-pr-review-fetch", "expected": "site/.generated/directory/skills/local/gitcode-pr-review-fetch/content"}],
+  "repository_validation": false,
+  "host_expectation": {"host": "codex", "model": "gpt-5.6-luna", "reasoning_effort": "medium"},
+  "source_revision_checks": [],
+  "json_outputs": [
+    {
+      "path": "results/hosted-install.json",
+      "required_values": [
+        {"pointer": "/skill_id", "equals": "local/gitcode-pr-review-fetch"},
+        {"pointer": "/host", "equals": "codex"},
+        {"pointer": "/stages/metadata/result", "equals": "pass"},
+        {"pointer": "/stages/acquisition/result", "equals": "pass"},
+        {"pointer": "/stages/installation/result", "equals": "pass"}
+      ]
+    }
+  ],
+  "yaml_outputs": []
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/tests/agent-experience/evaluation.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evaluation_id", "model", "reasoning_effort", "status", "reason", "generated_at", "isolation", "tasks", "summary"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "evaluation_id": {"type": "string", "minLength": 1},
+    "model": {"const": "gpt-5.6-luna"},
+    "reasoning_effort": {"const": "medium"},
+    "status": {"enum": ["pass", "fail", "blocked", "not_run"]},
+    "reason": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "isolation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["temporary_home", "temporary_config_root", "temporary_project", "inherited_skills", "inherited_profile", "inherited_hooks", "inherited_mcp", "public_inputs_only", "minimal_authentication"],
+      "properties": {
+        "temporary_home": {"const": true}, "temporary_config_root": {"const": true}, "temporary_project": {"const": true},
+        "inherited_skills": {"const": false}, "inherited_profile": {"const": false}, "inherited_hooks": {"const": false},
+        "inherited_mcp": {"const": false}, "public_inputs_only": {"const": true}, "minimal_authentication": {"const": true}
+      }
+    },
+    "tasks": {
+      "type": "array", "minItems": 5, "maxItems": 5,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["task_id", "workflow", "tuning", "status", "checks", "metrics"],
+        "properties": {
+          "task_id": {"type": "string", "minLength": 1},
+          "workflow": {"type": "string", "minLength": 1},
+          "tuning": {"enum": ["baseline", "optimized", "holdout"]},
+          "status": {"enum": ["pass", "fail", "blocked", "not_run"]},
+          "checks": {"type": "array", "items": {"type": "object"}},
+          "metrics": {
+            "type": "object", "additionalProperties": false,
+            "required": ["attempts", "success_rate", "tool_calls", "human_interventions", "duration_ms", "token_usage"],
+            "properties": {
+              "attempts": {"type": "integer", "minimum": 0},
+              "success_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "tool_calls": {"type": ["integer", "null"], "minimum": 0},
+              "human_interventions": {"type": ["integer", "null"], "minimum": 0},
+              "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+              "token_usage": {"type": ["integer", "null"], "minimum": 0}
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "passed", "failed", "blocked", "not_run", "success_rate"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 1}, "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0}, "blocked": {"type": "integer", "minimum": 0},
+        "not_run": {"type": "integer", "minimum": 0}, "success_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "information-correction",
+  "workflow": "correction",
+  "tuning": "optimized",
+  "prompt": "请把 community/performance-patterns 的摘要修正为“面向 C/C++、perf 与 CUDA 的性能分析工作流技能，不代表目标硬件效果已经验证。”，按公开指引保持其他事实不变，并把校验 JSON 写到 results/correction-validation.json；不要提交或推送。",
+  "public_inputs": [
+    "CONTRIBUTING.md",
+    "docs/guides/agent-contribution.md",
+    "entries/l3/community/performance-patterns.yaml",
+    "schemas/entry.schema.json"
+  ],
+  "allowed_changes": ["entries/l3/community/performance-patterns.yaml", "results/correction-validation.json"],
+  "required_paths": [
+    {"path": "entries/l3/community/performance-patterns.yaml", "kind": "file"},
+    {"path": "results/correction-validation.json", "kind": "file"}
+  ],
+  "schema_checks": [{"path": "results/correction-validation.json", "schema": "tests/agent-experience/tasks/validation-output.schema.json"}],
+  "directory_checks": [],
+  "repository_validation": true,
+  "host_expectation": {"host": "codex", "model": "gpt-5.6-luna", "reasoning_effort": "medium"},
+  "source_revision_checks": [],
+  "json_outputs": [
+    {"path": "results/correction-validation.json", "required_values": [{"pointer": "/result", "equals": "pass"}]}
+  ],
+  "yaml_outputs": [
+    {
+      "path": "entries/l3/community/performance-patterns.yaml",
+      "required_values": [
+        {"pointer": "/summary", "equals": "面向 C/C++、perf 与 CUDA 的性能分析工作流技能，不代表目标硬件效果已经验证。"}
+      ]
+    }
+  ]
+}

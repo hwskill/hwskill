@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "recommendation-contribution",
+  "workflow": "recommendation",
+  "tuning": "optimized",
+  "prompt": "我推荐 local/gitcode-pr-review-fetch：它能保留 PR 的 base/head SHA、完整差异和未解决评论。请按公开指引准备本地推荐变更，并把校验 JSON 写到 results/recommendation-validation.json；不要提交或推送。",
+  "public_inputs": [
+    "CONTRIBUTING.md",
+    "docs/guides/agent-contribution.md",
+    "templates/recommendations/recommendation.yaml",
+    "schemas/recommendation.schema.json",
+    "site/.generated/directory/catalog.json"
+  ],
+  "allowed_changes": ["recommendations/gitcode-pr-evidence.yaml", "results/recommendation-validation.json"],
+  "required_paths": [
+    {"path": "recommendations/gitcode-pr-evidence.yaml", "kind": "file"},
+    {"path": "results/recommendation-validation.json", "kind": "file"}
+  ],
+  "schema_checks": [{"path": "results/recommendation-validation.json", "schema": "tests/agent-experience/tasks/validation-output.schema.json"}],
+  "directory_checks": [],
+  "repository_validation": true,
+  "host_expectation": {"host": "codex", "model": "gpt-5.6-luna", "reasoning_effort": "medium"},
+  "source_revision_checks": [],
+  "json_outputs": [
+    {"path": "results/recommendation-validation.json", "required_values": [{"pointer": "/result", "equals": "pass"}]}
+  ],
+  "yaml_outputs": [
+    {
+      "path": "recommendations/gitcode-pr-evidence.yaml",
+      "required_values": [
+        {"pointer": "/id", "equals": "gitcode-pr-evidence"},
+        {"pointer": "/skills/0/id", "equals": "local/gitcode-pr-review-fetch"},
+        {"pointer": "/status", "equals": "ready"}
+      ]
+    }
+  ]
+}

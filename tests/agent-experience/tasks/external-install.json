@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "external-install",
+  "workflow": "external_install",
+  "tuning": "optimized",
+  "prompt": "请按公开安装材料把 superpowers/systematic-debugging 安装到当前临时 Codex 项目；只使用声明的 Git revision，调用验证器并把报告写入 results/external-install.json。",
+  "public_inputs": [
+    "site/.generated/directory/catalog.json",
+    "site/.generated/directory/skills/superpowers/systematic-debugging/install.json",
+    "site/.generated/directory/skills/superpowers/systematic-debugging/install.md",
+    "scripts/verification/run_install_check.py",
+    "schemas/verification.schema.json"
+  ],
+  "allowed_changes": [".evaluation-sources/superpowers/**", ".codex/skills/superpowers/systematic-debugging/**", "results/external-install.json"],
+  "required_paths": [
+    {"path": ".evaluation-sources/superpowers/skills/systematic-debugging", "kind": "directory"},
+    {"path": ".codex/skills/superpowers/systematic-debugging/SKILL.md", "kind": "file"},
+    {"path": "results/external-install.json", "kind": "file"}
+  ],
+  "schema_checks": [{"path": "results/external-install.json", "schema": "schemas/verification.schema.json"}],
+  "directory_checks": [{"actual": ".codex/skills/superpowers/systematic-debugging", "expected": ".evaluation-sources/superpowers/skills/systematic-debugging"}],
+  "repository_validation": false,
+  "host_expectation": {"host": "codex", "model": "gpt-5.6-luna", "reasoning_effort": "medium"},
+  "source_revision_checks": [
+    {
+      "checkout": ".evaluation-sources/superpowers/skills/systematic-debugging",
+      "install": "site/.generated/directory/skills/superpowers/systematic-debugging/install.json",
+      "report": "results/external-install.json"
+    }
+  ],
+  "json_outputs": [
+    {
+      "path": "results/external-install.json",
+      "required_values": [
+        {"pointer": "/skill_id", "equals": "superpowers/systematic-debugging"},
+        {"pointer": "/source_identity/kind", "equals": "external"},
+        {"pointer": "/host", "equals": "codex"},
+        {"pointer": "/stages/installation/result", "equals": "pass"}
+      ]
+    }
+  ],
+  "yaml_outputs": []
+}

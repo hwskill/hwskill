@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "skill-contribution",
+  "workflow": "skill_contribution",
+  "tuning": "optimized",
+  "prompt": "请根据公开贡献指引，把 skills-src/l1/local/chinese-thinking 作为 hosted 技能准备成可审阅的目录条目，并将校验器 JSON 输出保存到 results/contribution-validation.json；不要提交或推送。",
+  "public_inputs": [
+    "CONTRIBUTING.md",
+    "docs/guides/agent-contribution.md",
+    "templates/entries/hosted.yaml",
+    "schemas/entry.schema.json",
+    "skills-src/l1/local/chinese-thinking/SKILL.md"
+  ],
+  "allowed_changes": ["entries/l1/local/chinese-thinking.yaml", "results/contribution-validation.json"],
+  "required_paths": [
+    {"path": "entries/l1/local/chinese-thinking.yaml", "kind": "file"},
+    {"path": "results/contribution-validation.json", "kind": "file"}
+  ],
+  "schema_checks": [{"path": "results/contribution-validation.json", "schema": "tests/agent-experience/tasks/validation-output.schema.json"}],
+  "directory_checks": [],
+  "repository_validation": true,
+  "host_expectation": {"host": "codex", "model": "gpt-5.6-luna", "reasoning_effort": "medium"},
+  "source_revision_checks": [],
+  "json_outputs": [
+    {"path": "results/contribution-validation.json", "required_values": [{"pointer": "/result", "equals": "pass"}]}
+  ],
+  "yaml_outputs": [
+    {
+      "path": "entries/l1/local/chinese-thinking.yaml",
+      "required_values": [
+        {"pointer": "/id", "equals": "local/chinese-thinking"},
+        {"pointer": "/source/kind", "equals": "hosted"},
+        {"pointer": "/source/path", "equals": "skills-src/l1/local/chinese-thinking"}
+      ]
+    }
+  ]
+}

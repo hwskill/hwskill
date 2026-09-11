@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/tests/agent-experience/validation-output.schema.json",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "result", "issues"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "result": {"enum": ["pass", "fail", "environment_error"]},
+    "issues": {"type": "array"}
+  }
+}
