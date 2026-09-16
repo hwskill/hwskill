@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).parents[2]
@@ -14,6 +15,30 @@ SITE = ROOT / "site"
 
 
 class StaticSiteContractTests(unittest.TestCase):
+    def test_ci_lockfile_downloads_packages_from_the_public_npm_registry(self) -> None:
+        lockfile = json.loads((SITE / "package-lock.json").read_text(encoding="utf-8"))
+        hosts = {
+            urlsplit(package["resolved"]).hostname
+            for package in lockfile["packages"].values()
+            if package.get("resolved", "").startswith("https://")
+        }
+        self.assertEqual(hosts, {"registry.npmjs.org"})
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required to load the Astro configuration")
+    def test_organization_site_build_uses_the_root_url(self) -> None:
+        env = dict(os.environ)
+        env.pop("SITE_BASE", None)
+        completed = subprocess.run(
+            ["node", "--input-type=module", "-e", 'import config from "./astro.config.mjs"; console.log(JSON.stringify({site: config.site, base: config.base}));'],
+            cwd=SITE,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), {"site": "https://hwskill.github.io", "base": "/"})
+
     @unittest.skipUnless(shutil.which("node") and shutil.which("npm"), "Node.js and npm are required for the development-server integration check")
     def test_dev_startup_makes_the_complete_search_index_public(self) -> None:
         """A fresh dev server must serve every Pagefind asset, not only its entry module."""

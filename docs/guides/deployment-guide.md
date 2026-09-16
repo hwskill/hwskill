@@ -4,6 +4,8 @@
 
 本仓只生成静态站和文件系统发布材料，没有执行任何远端部署，也不包含云账号、域名、TLS、CDN 或发布凭据。生产托管方案必须另行评审。
 
+GitHub Pages 首次上线采用双仓：`hwskill/hwskill` 保存源码，`hwskill/hwskill.github.io` 保存手动发布工作流。站点仓从已合入主仓 `main` 的完整 commit SHA 重新构建，发布完整 `site/dist/` 到 `https://hwskill.github.io/`；主仓 CI 只验证，不部署。首次上线仍需维护者分别授权推送、在站点仓选择 GitHub Actions 作为 Pages 来源并完成线上验收。该静态站发布不启用下述文件系统 release/feed 服务。
+
 运行时要求以锁文件为准：Python 3.10 以上；站点 `package.json` 要求 Node `>=22.19.0 <23`。离线验收使用已有 `site/node_modules`；若依赖未预置，应将该步骤记录为 `blocked`，不能跳过后写成通过。
 
 ## 构建
@@ -26,6 +28,8 @@ SITE_BASE=/skills/ npm --prefix site run index
 ```
 
 同一 release 的 HTML、`data/*.json`、schemas 和 Pagefind 索引必须作为一个不可分割版本发布。不要在上传期间让 head 指向半成品目录。
+
+GitHub Pages 根站点构建保持默认 `SITE_BASE=/`。生产构建的 Astro `site` 是 `https://hwskill.github.io`；发布包包含 `index.html`、`skills/`、`data/`、`schemas/` 和 `pagefind/`。部署记录必须保存源码 SHA；回滚时重新构建并发布曾合入主仓 `main` 的历史 SHA，而不是手工改写线上文件。
 
 ## 本地发布前演练
 
