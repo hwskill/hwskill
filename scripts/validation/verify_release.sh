@@ -198,7 +198,8 @@ scale_case() {
     "$python_command" -m hwskill.directory validate --repo-root . --json &&
     "$python_command" -m hwskill.directory build --repo-root . --out "$run_root/scale-$size-directory" --json &&
     npm --prefix site run build &&
-    npm --prefix site run index
+    npm exec --prefix site -- pagefind --site site/dist &&
+    node site/scripts/check-build.mjs
 }
 
 if [ "$scale" = true ]; then

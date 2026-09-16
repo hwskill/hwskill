@@ -18,8 +18,8 @@ scripts/validation/verify_release.sh \
 
 2026-09-16 实际执行结果：
 
-- `/tmp/hwskill-release-verification-20260916-v3.jsonl`，SHA-256 `0ed957b3e4361e4851c74e91d61c00f3d3da17e1047813520f7c1d3f0302a645`。Python 275 项、目录 validate/build、publishing recovery 和 sharing prepare/ack 通过；站点 build/index/本地 HTTP 因缺受支持的 Linux Node `>=22.19.0 <23` 而为 `blocked`，总结果 `blocked`。
-- `/tmp/hwskill-scale-verification-20260916.jsonl`，SHA-256 `5842ed5866598b4301e6cdbdac9a8cbaa85f75fa6f970e68aaa01c309ef60306`。1,000/10,000 两步均在生成数据前因同一 Node 前提被阻断，未产生可报告的规模数据。
+- `/tmp/hwskill-release-verification-20260916-v4.jsonl`，SHA-256 `13bc55c23640a7854cee718e7701b90d75fdcbfec0dc303beb143541e07ea1fe`。在官方 SHASUMS256 校验的 Node.js v22.19.0 Linux 临时运行时下，隔离 source snapshot、测试输入、Python 测试（275 项被发现，其中 5 项递归验收测试按设计 skip）、目录 validate/build、Astro build、Pagefind 33 查询、本地 HTTP、publishing recovery 和 sharing prepare/ack 全部 `pass`。
+- `/tmp/hwskill-scale-verification-20260916-v3.jsonl`，SHA-256 `b671cf52309bc7f810de90958d933f405987ce55a510f9be943b7594d197f10a`。1,000 条目阶段耗时 16 秒，静态产物 26,868 KiB，Pagefind 索引 4,720 KiB；10,000 条目阶段耗时 301 秒，产物 261,356 KiB，索引 41,568 KiB。两步均为 `pass`。
 
 ## REQ-01 至 REQ-10
 
@@ -47,7 +47,7 @@ scripts/validation/verify_release.sh \
   --scale
 ```
 
-该模式只在 `mktemp` 副本中生成 1,000 和 10,000 个 external 构造条目，执行 directory validate/build、Astro build 和 Pagefind index，并记录本机耗时、静态产物大小与索引大小。本次已执行但因 Node 前提阻断，因此不填写产物数值，也不写 `pass`。
+该模式只在 `mktemp` 副本中生成 1,000 和 10,000 个 external 构造条目，执行 directory validate/build、Astro build 和 Pagefind index，并记录本机耗时、静态产物大小与索引大小。规模 fixture 不复用原始 6 个技能的语义查询集；那组 33 条查询只在正常目录验收中执行。上述数据只代表本机当次工具链，不外推生产容量。
 
 ## 未验证与交付门槛
 
@@ -56,4 +56,4 @@ scripts/validation/verify_release.sh \
 - bot、Webhook、群卡、签名和群消息发送：本期不实现，`not_run`。
 - 生产规模、跨区延迟、可用性与容量：没有本机探针之外的证据，不作承诺。
 
-Task 11 应在最终提交后重新生成 JSONL 报告，引用独立代码审阅结果和最终工作树状态。当前结论是“本地功能证据部分通过，环境与外部设施项 blocked/not_run”，不是上线通过。
+Task 11 本地全分支审阅发现并修正了规模 fixture 误用原始语义查询集的问题。原定独立 reviewer 因现有代理达到用量上限未能启动，不记为独立复审通过；需在后续 PR 评审补齐。当前结论是“本地适用检查通过，外部设施项 blocked/not_run”，不是上线通过。

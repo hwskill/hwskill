@@ -156,6 +156,9 @@ class VerifyReleaseScriptTests(unittest.TestCase):
         self.assertTrue({"scale-1000", "scale-10000"}.issubset(steps))
         metrics = {record["size"] for record in records if record.get("kind") == "scale"}
         self.assertEqual(metrics, {1000, 10000})
+        invocations = self.log.read_text(encoding="utf-8")
+        self.assertIn("exec --prefix site -- pagefind --site site/dist", invocations)
+        self.assertEqual(invocations.count("--prefix site run index"), 1)
 
     def test_refuses_to_overwrite_an_existing_report(self) -> None:
         report = self.root / "report.jsonl"
