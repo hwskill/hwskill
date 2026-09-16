@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .catalog import BuildInputError, build_repository
 from .entries import validate_repository
+from .migration import MigrationSafetyError, migration_preview
 
 
 def _report_data(report):
@@ -22,6 +23,10 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--json", action="store_true")
         if name == "build":
             command.add_argument("--out", required=True)
+    migration = commands.add_parser("migration-preview")
+    migration.add_argument("--repo-root", required=True)
+    migration.add_argument("--out", required=True)
+    migration.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.repo_root)
     if not root.is_dir():
@@ -29,6 +34,18 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"schema_version": 1, "result": "environment_error", "issues": []}, ensure_ascii=False))
         return 3
     try:
+        if args.command == "migration-preview":
+            try:
+                preview = migration_preview(root, Path(args.out))
+            except MigrationSafetyError as exc:
+                if args.json:
+                    print(json.dumps({"schema_version": 1, "result": "error", "message": str(exc)}, ensure_ascii=False, sort_keys=True))
+                else:
+                    print(str(exc))
+                return 1
+            data = {"result": "ok", **preview.to_dict()}
+            print(json.dumps(data, ensure_ascii=False, sort_keys=True) if args.json else str(preview.out_dir))
+            return 0
         report = validate_repository(root)
         if args.command == "validate":
             print(json.dumps(_report_data(report), ensure_ascii=False, sort_keys=True) if args.json else report.result)

@@ -1,20 +1,23 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_backend"
+backend-path = ["."]
 
 [project]
 name = "hwskill"
 version = "0.1.0"
-description = "Git-backed virtual catalog for Agent Skills"
+description = "Validated skill directory, publishing, verification, and update-sharing tools"
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6,<7",
   "jsonschema>=4.23,<5",
-  "mcp>=1,<2",
 ]
 
 [project.scripts]
-hwskill = "hwskill.cli:main"
+hwskill-directory = "hwskill.directory.cli:main"
+hwskill-publish = "hwskill.publishing.cli:main"
+hwskill-sharing = "hwskill.sharing.cli:main"
+hwskill-verify = "hwskill.verification.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

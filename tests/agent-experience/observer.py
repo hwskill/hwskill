@@ -50,7 +50,8 @@ _PUBLIC_PATHS = (
     "entries",
     "recommendations",
     "curation",
-    "skills-src",
+    "skills-src/l2/local/gitcode-discussion-fetch",
+    "skills-src/l2/local/gitcode-pr-review-fetch",
     "site/.generated/directory",
     "scripts/directory",
     "scripts/verification",
@@ -58,6 +59,20 @@ _PUBLIC_PATHS = (
     "src/hwskill/directory",
     "src/hwskill/verification",
 )
+_EVALUATION_FIXTURES = {
+    "skills-src/l1/local/chinese-thinking":
+        "tests/agent-experience/fixtures/skills-src/l1/local/chinese-thinking",
+}
+
+
+def _evaluation_fixture_source(value: str) -> str | None:
+    for exposed, fixture in _EVALUATION_FIXTURES.items():
+        if value == exposed:
+            return fixture
+        prefix = exposed + "/"
+        if value.startswith(prefix):
+            return fixture + value[len(exposed):]
+    return None
 
 
 class ObservationError(RuntimeError):
@@ -233,7 +248,11 @@ def _check(name: str, category: str, function) -> dict[str, Any]:
 def _public_inputs(task: Mapping[str, Any], workspace: Path) -> dict[str, Any]:
     checked: list[str] = []
     for value in task["public_inputs"]:
-        path = _path_under(workspace, value, field="public input", must_exist=True)
+        source_value = value
+        fixture_source = _evaluation_fixture_source(value)
+        if fixture_source is not None and not os.path.lexists(workspace / value):
+            source_value = fixture_source
+        path = _path_under(workspace, source_value, field="public input", must_exist=True)
         mode = path.lstat().st_mode
         if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
             raise ObservationError(f"public input is not a regular file or directory: {value}")
@@ -784,6 +803,10 @@ def _prepare_task(repo_root: Path, task_path: Path, destination: Path) -> dict[s
             source = _path_under(repo_root, relative, field="public evaluation input", must_exist=True)
             _copy_public_path(source, destination / Path(*PurePosixPath(relative).parts))
             copied.append(relative)
+        for exposed, fixture in _EVALUATION_FIXTURES.items():
+            source = _path_under(repo_root, fixture, field="evaluation fixture", must_exist=True)
+            _copy_public_path(source, destination / Path(*PurePosixPath(exposed).parts))
+            copied.append(exposed)
         package = {
             "schema_version": 1,
             "id": task["id"],

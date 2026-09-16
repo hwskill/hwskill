@@ -1,7 +1,0 @@
-schema_version: 1
-id: codex-demo
-description: Codex 虚拟 Catalog 端到端验证
-skills:
-  - superpowers/systematic-debugging
-  - superpowers/test-driven-development
-  - local/gitcode-pr-review-fetch

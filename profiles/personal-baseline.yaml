@@ -1,7 +1,0 @@
-schema_version: 1
-id: personal-baseline
-description: 当前个人基础技能
-skills:
-  - local/chinese-thinking
-  - local/gitcode-discussion-fetch
-  - local/gitcode-pr-review-fetch

@@ -198,7 +198,7 @@ class VerificationReportTests(unittest.TestCase):
 
     def test_git_archive_extraction_is_python310_compatible_and_rejects_unsafe_members(self) -> None:
         """Using 3.12-only filter= or accepting tar links/path traversal breaks the verifier boundary."""
-        from scripts.verification.run_install_check import _safe_extract_git_archive
+        from hwskill.verification.cli import _safe_extract_git_archive
 
         def archive(member: tarfile.TarInfo, payload: bytes = b"") -> bytes:
             buffer = io.BytesIO()
@@ -225,7 +225,7 @@ class VerificationReportTests(unittest.TestCase):
 
     def test_external_snapshot_archives_the_captured_commit_not_mutable_head(self) -> None:
         """A concurrent HEAD move must not make report revision and archived bytes describe different commits."""
-        from scripts.verification import run_install_check
+        from hwskill.verification import cli as run_install_check
 
         with TemporaryDirectory() as directory:
             root = Path(directory)
