@@ -1,6 +1,6 @@
 # 技能共享平台实施状态
 
-更新时间：2026-09-11
+更新时间：2026-09-16
 
 ## 恢复入口
 
@@ -24,8 +24,8 @@
 | 6 feed 读取筛选 | 已完成 | 83 项 sharing 全套、57 项核心与 14 项对抗复现通过；双来源、撤回/不可用控制变化及最终独立复审 clean |
 | 7 SQLite 交接 | 已完成 | 46 项交接测试、103 项 sharing 全套与竞态/损坏探针通过；原子 JSON、精确 ack、uncertain 结果及最终独立复审 clean |
 | 8 Luna 体验验收 | 已完成（环境阻塞） | 17 项观察器测试与独立复审 clean；隔离 runner 生成 5/5 `not_run`，缺可用 Luna 凭据/受信宿主，未伪称通过 |
-| 9 迁移清理 | 未开始 | 所有替代闭环通过后执行 |
-| 10 文档与验收 | 未开始 | 随阶段持续更新，最后汇总 |
+| 9 迁移清理 | 已完成 | commit `91b3ec0`；只读 preview、固定 detached 旧版、新四入口、干净 wheel/sdist 和 21 项迁移清理测试通过 |
+| 10 文档与验收 | 已完成（本地边界） | 中文指南与可审计脚本已完成；隔离验收中 Python 275 项、目录、发布恢复、prepare/ack 通过；Linux Node 22.19 缺失使站点与规模步骤明确 blocked |
 | 11 最终审阅 | 未开始 | 全分支完成后执行 |
 
 ## 已知边界与决定
@@ -35,6 +35,7 @@
 - 蓝区 Git/CI、静态托管域名/base path、不可变发布存储、高区持久卷和可用 Luna 测试凭据尚未知；先以文件系统发布适配器、fixture、本地 HTTP 和隔离目录完成独立模块。
 - 本期不实现 bot 发送器、SDK/HTTP transport、平台签名、群卡、群回执或 bot mock。
 - 远端 push、PR、合入、正式部署和发群均未授权。
+- 2026-09-16 隔离验收报告为 `/tmp/hwskill-release-verification-20260916-v3.jsonl`（SHA-256 `0ed957b3e4361e4851c74e91d61c00f3d3da17e1047813520f7c1d3f0302a645`）和 `/tmp/hwskill-scale-verification-20260916.jsonl`（SHA-256 `5842ed5866598b4301e6cdbdac9a8cbaa85f75fa6f970e68aaa01c309ef60306`）。这些是本主机临时证据，Task 11 需在最终提交后重新生成。
 
 ## Ruling 记录
 
