@@ -23,9 +23,10 @@ const pagefindBase = import.meta.env.BASE_URL;
     </label>
   </div>
   <p id="search-status" class="search-status" role="status">输入用途，或直接使用筛选浏览。</p>
-  <div id="search-results" class="search-results"></div>
 </section>
+<div id="search-results" class="card-grid search-results" hidden></div>
 <script>
+  import { highlightSegments } from "../lib/highlight.mjs";
   const panel = document.querySelector<HTMLElement>(".search-panel");
   const input = document.querySelector<HTMLInputElement>("#skill-search");
   const layer = document.querySelector<HTMLSelectElement>("#layer-filter");
@@ -37,6 +38,32 @@ const pagefindBase = import.meta.env.BASE_URL;
   const synonyms = JSON.parse(panel?.dataset.synonyms ?? "{}") as Record<string, string[]>;
   const MIN_RELATIVE_SCORE = 0.85;
   let latestRequest = 0;
+
+  function highlightCard(card: HTMLElement, terms: string[]): number {
+    let matches = 0;
+    for (const selector of ["h3", "p", ".chip-list"]) {
+      const region = card.querySelector(selector);
+      if (!region) continue;
+      const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+      for (const node of nodes) {
+        const segments = highlightSegments(node.textContent ?? "", terms);
+        if (!segments.some((segment) => segment.match)) continue;
+        const fragment = document.createDocumentFragment();
+        for (const segment of segments) {
+          if (segment.match) {
+            const mark = document.createElement("mark");
+            mark.textContent = segment.text;
+            fragment.append(mark);
+            matches++;
+          } else fragment.append(document.createTextNode(segment.text));
+        }
+        node.replaceWith(fragment);
+      }
+    }
+    return matches;
+  }
 
   function queryVariants(value: string): string[] {
     const normalized = value.trim().toLowerCase();
@@ -53,12 +80,14 @@ const pagefindBase = import.meta.env.BASE_URL;
     const filters = Object.fromEntries(Object.entries({ layer: layer.value, source: source.value, agent: agent.value, verification: verification.value }).filter(([, value]) => value));
     if (queries.length === 0 && Object.keys(filters).length === 0) {
       results.replaceChildren();
+      results.hidden = true;
       status.textContent = "输入用途，或直接使用筛选浏览。";
       document.querySelector<HTMLElement>("#all-skills")?.removeAttribute("hidden");
       return;
     }
     try {
-      const pagefindUrl = `${panel?.dataset.pagefindBase ?? "/"}pagefind/pagefind.js`;
+      const pagefindPath = `${panel?.dataset.pagefindBase ?? "/"}pagefind/pagefind.js`;
+      const pagefindUrl = new URL(pagefindPath, window.location.origin).href;
       const pagefind = await import(/* @vite-ignore */ pagefindUrl);
       await pagefind.options({ ranking: { termSimilarity: 0 } });
       const responses = queries.length ? [await pagefind.search(queries[0], { filters })] : [await pagefind.search(null, { filters })];
@@ -73,21 +102,27 @@ const pagefindBase = import.meta.env.BASE_URL;
       const rankedResults = queries.length ? ranked.filter((result) => result.score >= topScore * MIN_RELATIVE_SCORE).slice(0, 5) : ranked;
       const records = await Promise.all(rankedResults.map((result) => result.data()));
       if (requestId !== latestRequest) return;
-      results.replaceChildren(...records.map((record) => {
-        const article = document.createElement("article");
-        article.className = "search-hit";
-        const link = document.createElement("a");
-        link.href = record.url;
-        link.textContent = record.meta.title ?? record.url;
-        const excerpt = document.createElement("p");
-        excerpt.innerHTML = record.excerpt;
-        article.append(link, excerpt);
-        return article;
-      }));
+      const terms = [input.value, ...queries].flatMap((query) => query.trim().split(/\s+/)).filter(Boolean);
+      const cards = records.flatMap((record) => {
+        const id = record.meta["skill-id"];
+        const original = [...document.querySelectorAll<HTMLElement>("#all-skills [data-skill-id]")]
+          .find((card) => card.dataset.skillId === id);
+        if (!original) return [];
+        const card = original.cloneNode(true) as HTMLElement;
+        if (terms.length && highlightCard(card, terms) === 0) {
+          const summary = card.querySelector<HTMLElement>("p");
+          if (summary) summary.innerHTML = record.excerpt;
+        }
+        return [card];
+      });
+      results.replaceChildren(...cards);
+      results.hidden = cards.length === 0;
       document.querySelector<HTMLElement>("#all-skills")?.setAttribute("hidden", "");
-      status.textContent = records.length ? `找到 ${records.length} 项` : "没有匹配项。可换一个用途词或清除筛选。";
+      status.textContent = cards.length ? `找到 ${cards.length} 项` : "没有匹配项。可换一个用途词或清除筛选。";
     } catch {
       if (requestId !== latestRequest) return;
+      results.replaceChildren();
+      results.hidden = true;
       status.textContent = "搜索索引暂不可用；下面仍可浏览完整目录。";
       document.querySelector<HTMLElement>("#all-skills")?.removeAttribute("hidden");
     }

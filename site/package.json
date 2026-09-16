@@ -12,6 +12,7 @@
     "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
     "postbuild": "node scripts/check-build.mjs --pre-index",
     "index": "pagefind --site dist && node scripts/check-build.mjs && node scripts/evaluate-search.mjs",
+    "predev": "npm run build && pagefind --site dist && node scripts/prepare-dev-search.mjs",
     "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev"
   },
   "dependencies": {

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import unittest
 
 
@@ -11,6 +14,34 @@ SITE = ROOT / "site"
 
 
 class StaticSiteContractTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node") and shutil.which("npm"), "Node.js and npm are required for the development-server integration check")
+    def test_dev_startup_makes_the_complete_search_index_public(self) -> None:
+        """A fresh dev server must serve every Pagefind asset, not only its entry module."""
+        completed = subprocess.run(
+            ["npm", "--prefix", str(SITE), "run", "predev"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        built = SITE / "dist/pagefind"
+        public = SITE / "public/pagefind"
+        built_files = {path.relative_to(built) for path in built.rglob("*") if path.is_file()}
+        self.assertIn(Path("pagefind.js"), built_files)
+        self.assertGreater(len(built_files), 1)
+        self.assertEqual(
+            {path.relative_to(public) for path in public.rglob("*") if path.is_file()},
+            built_files,
+        )
+        for relative in built_files:
+            self.assertEqual((public / relative).read_bytes(), (built / relative).read_bytes())
+        page = (SITE / "dist/skills/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="search-results" class="card-grid', page)
+        for item in json.loads((SITE / ".generated/directory/catalog.json").read_text(encoding="utf-8"))["entries"]:
+            self.assertIn(f'data-skill-id="{item["entry"]["id"]}"', page)
+
     def test_site_declares_locked_supported_toolchain(self) -> None:
         package = json.loads((SITE / "package.json").read_text(encoding="utf-8"))
         self.assertRegex(package["engines"]["node"], r"22\.19\.0")
@@ -72,6 +103,12 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(search, r"let\s+latestRequest\s*=\s*0")
         self.assertRegex(search, r"const\s+requestId\s*=\s*\+\+latestRequest")
         self.assertGreaterEqual(search.count("requestId !== latestRequest"), 2)
+
+    def test_pagefind_dynamic_import_uses_an_absolute_url_in_dev(self) -> None:
+        """Vite adds ?import to relative dynamic imports from public/, causing a 500."""
+        search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
+        self.assertRegex(search, r"new URL\(pagefindPath, window\.location\.origin\)\.href")
+        self.assertRegex(search, r"import\(/\* @vite-ignore \*/ pagefindUrl\)")
 
     def test_verification_stages_have_explicit_lifecycle_order(self) -> None:
         matrix = (SITE / "src/components/VerificationMatrix.astro").read_text(encoding="utf-8")

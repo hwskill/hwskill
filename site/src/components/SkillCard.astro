@@ -9,7 +9,7 @@ const { entry } = item;
 const repository = sourceRepository(entry.source.identity);
 const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.source_identity.resolved_revision ? "外部固定来源" : "外部来源（版本未固定）";
 ---
-<article class="skill-card" data-skill-card data-layer={entry.layer} data-source={entry.source.kind} data-agents={entry.compatibility.agents.join(" ")}>
+<article class="skill-card" data-skill-card data-skill-id={entry.id} data-layer={entry.layer} data-source={entry.source.kind} data-agents={entry.compatibility.agents.join(" ")}>
   <div class="card-topline">
     <span class={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</span>
     <span class="status-dot" aria-hidden="true"></span>
