@@ -34,11 +34,12 @@ jobs:
           npm ci --prefix site
       - name: Prepare generated directory data
         run: npm --prefix site run prebuild
-      - name: Validate directory and tests
-        run: |
-          PYTHONPATH=src:. python -m unittest discover -s tests -t . -p 'test_*.py'
-          node site/tests/highlight.test.mjs
-          PYTHONPATH=src python -m hwskill.directory validate --repo-root . --json
+      - name: Run Python tests
+        run: PYTHONPATH=src:. python -m unittest discover -s tests -t . -p 'test_*.py'
+      - name: Run search highlight tests
+        run: node site/tests/highlight.test.mjs
+      - name: Validate directory
+        run: PYTHONPATH=src python -m hwskill.directory validate --repo-root . --json
       - name: Build and evaluate static site
         run: |
           npm --prefix site run build
