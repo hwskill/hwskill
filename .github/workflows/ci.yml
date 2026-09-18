@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install dependencies
         run: |
-          python -m pip install .
+          python -m pip install 'setuptools>=68' wheel .
           npm ci --prefix site
       - name: Prepare generated directory data
         run: npm --prefix site run prebuild
