@@ -55,3 +55,21 @@ jobs:
         run: |
           npm --prefix site run build
           npm --prefix site run index
+
+  dispatch_pages:
+    name: Dispatch Pages release
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out validated source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Dispatch current source commit
+        env:
+          PAGES_DISPATCH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: python scripts/ci/dispatch_pages.py "$SOURCE_SHA"

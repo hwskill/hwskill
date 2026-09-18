@@ -2,9 +2,11 @@
 
 ## 前提与边界
 
-本仓只生成静态站和文件系统发布材料，没有执行任何远端部署，也不包含云账号、域名、TLS、CDN 或发布凭据。生产托管方案必须另行评审。
+本仓生成静态站和文件系统发布材料。GitHub Pages 发布由独立站点仓的 Actions 执行；本仓不持有 Pages 写权限。下述文件系统 release/feed 服务不在 GitHub Pages 上运行。
 
-GitHub Pages 首次上线采用双仓：`hwskill/hwskill` 保存源码，`hwskill/hwskill.github.io` 保存手动发布工作流。站点仓从已合入主仓 `main` 的完整 commit SHA 重新构建，发布完整 `site/dist/` 到 `https://hwskill.github.io/`；主仓 CI 只验证，不部署。首次上线仍需维护者分别授权推送、在站点仓选择 GitHub Actions 作为 Pages 来源并完成线上验收。该静态站发布不启用下述文件系统 release/feed 服务。
+GitHub Pages 采用双仓：`hwskill/hwskill` 保存源码，`hwskill/hwskill.github.io` 保存发布工作流。主仓 `main` 的 push CI 验证成功后，`dispatch_pages` 任务确认该 SHA 仍是远端 `main` 最新提交，再派发站点仓 `deploy.yml` 的 `automatic` 模式。站点仓在构建前及部署前再次检查最新 SHA，从该提交重新构建完整 `site/dist/` 并发布到 `https://hwskill.github.io/`。PR、手动运行主仓 CI、失败验证和已过期提交不会触发自动部署。
+
+主仓 Actions Secret `PAGES_DISPATCH_TOKEN` 是仅授权站点仓 `Actions: Read and write` 的细粒度令牌，只用于跨仓派发；不应写入源码、日志或站点仓。令牌缺失或 API 拒绝时派发任务失败，维护者应检查该任务并在令牌到期前轮换。站点仓仍提供默认 `manual` 模式：输入曾合入主仓 `main` 的完整历史 SHA，可重新构建并回滚。自动模式则只接受当前最新 SHA。回滚后如需恢复最新版，再手动选择最新 SHA 或推送新的主仓提交。
 
 运行时要求以锁文件为准：Python 3.10 以上；站点 `package.json` 要求 Node `>=22.19.0 <23`。离线验收使用已有 `site/node_modules`；若依赖未预置，应将该步骤记录为 `blocked`，不能跳过后写成通过。
 
