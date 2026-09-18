@@ -35,7 +35,18 @@ jobs:
       - name: Prepare generated directory data
         run: npm --prefix site run prebuild
       - name: Run Python tests
-        run: PYTHONPATH=src:. python -m unittest discover -s tests -t . -p 'test_*.py'
+        run: |
+          if PYTHONPATH=src:. python -m unittest discover -s tests -t . -p 'test_*.py' > "$RUNNER_TEMP/hwskill-python-tests.log" 2>&1; then
+            cat "$RUNNER_TEMP/hwskill-python-tests.log"
+          else
+            tail -n 80 "$RUNNER_TEMP/hwskill-python-tests.log"
+            summary="$(tail -n 80 "$RUNNER_TEMP/hwskill-python-tests.log")"
+            summary="${summary//'%'/'%25'}"
+            summary="${summary//$'\r'/'%0D'}"
+            summary="${summary//$'\n'/'%0A'}"
+            echo "::error title=Python test failure::$summary"
+            exit 1
+          fi
       - name: Run search highlight tests
         run: node site/tests/highlight.test.mjs
       - name: Validate directory
