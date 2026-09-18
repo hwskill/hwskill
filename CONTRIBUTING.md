@@ -1,5 +1,7 @@
 # 贡献技能目录
 
+目标仓库：https://github.com/hwskill/hwskill 。在此仓库准备分支或 Fork，并向其默认分支提交 Pull Request。
+
 目录输入是 `entries/`、`recommendations/` 与 hosted 的 `skills-src/`。先从 `templates/` 复制模板，按 `schemas/` 填写；JSON Schema 是唯一结构规范。
 
 外部技能只能提交来源定位、不可变 ref、兼容性声明和限制，禁止复制其正文。不要把安装或行为验证未运行的条目写成通过。

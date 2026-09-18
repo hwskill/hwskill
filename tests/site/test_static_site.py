@@ -15,6 +15,14 @@ SITE = ROOT / "site"
 
 
 class StaticSiteContractTests(unittest.TestCase):
+    def test_copied_agent_prompts_use_complete_site_urls(self) -> None:
+        install = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
+        contribute = (SITE / "src/pages/contribute/index.astro").read_text(encoding="utf-8")
+        self.assertIn("new URL(sitePath(", install)
+        self.assertIn("Astro.site", install)
+        self.assertIn("new URL(sitePath(", contribute)
+        self.assertIn("Astro.site", contribute)
+
     def test_ci_lockfile_downloads_packages_from_the_public_npm_registry(self) -> None:
         lockfile = json.loads((SITE / "package-lock.json").read_text(encoding="utf-8"))
         hosts = {

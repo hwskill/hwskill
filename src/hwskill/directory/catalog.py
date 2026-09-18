@@ -14,6 +14,8 @@ from .hosted_content import copy_hosted_content, hosted_directory
 from .models import DirectoryIssue
 from .yaml_io import load_yaml
 
+PUBLIC_SOURCE_REPOSITORY = "https://github.com/hwskill/hwskill"
+
 
 @dataclass(frozen=True)
 class BuildResult:
@@ -74,12 +76,31 @@ def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
         url = locator.get("repository", locator.get("url"))
         source_lines = [str(url), f"路径：{locator.get('path', '不适用')}", f"请求版本：{locator.get('requested_ref', locator.get('version_note', 'unknown'))}", "解析提交：未解析（验证阶段记录实际 commit）"]
     else:
-        source_lines = [source["path"]]
+        revision = identity.get("resolved_revision")
+        source_lines = [
+            f"仓库：{PUBLIC_SOURCE_REPOSITORY}",
+            f"仓库内路径：{source['path']}",
+            f"固定提交：{revision or '未取得'}",
+        ]
+        if revision:
+            source_lines.append(f"完整技能目录：{PUBLIC_SOURCE_REPOSITORY}/tree/{revision}/{source['path']}")
     lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", f"默认范围：{install['default_scope']}", "", "## 来源", "", *source_lines, "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
     if install["method"] == "unknown":
         lines.extend(["未提供可执行安装命令；请按来源人工确认安装方式。", ""])
     elif install.get("instructions_url"):
         lines.extend([f"上游指引：{install['instructions_url']}", ""])
+    elif source["kind"] == "hosted" and install["method"] == "directory":
+        if identity.get("resolved_revision"):
+            lines.extend([
+                "## 项目级安装",
+                "",
+                "从上述仓库检出固定提交，复制整个技能目录（包括 SKILL.md 和配套文件）到当前 Agent 的项目级技能目录。",
+                "不要覆盖已有同名技能；先确认目标路径及该 Agent 的项目级技能目录约定。",
+                "安装后检查 SKILL.md 与配套文件齐全，并确认 Agent 能识别该技能；报告实际目标路径和提交。",
+                "",
+            ])
+        else:
+            lines.extend(["尚未取得固定提交，不能据此进行可复现安装。", ""])
     return "\n".join(lines)
 
 

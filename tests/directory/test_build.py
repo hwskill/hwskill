@@ -11,6 +11,21 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class DirectoryBuildTests(unittest.TestCase):
+    def test_hosted_install_guide_identifies_an_immutable_complete_source(self) -> None:
+        from hwskill.directory.catalog import _install_markdown
+
+        entry = {
+            "id": "local/hosted",
+            "name": "Hosted skill",
+            "source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"},
+            "install": {"method": "directory", "default_scope": "project"},
+        }
+        guide = _install_markdown(entry, {"resolved_revision": "a" * 40})
+        self.assertIn("https://github.com/hwskill/hwskill/tree/" + "a" * 40 + "/skills-src/l1/local/hosted", guide)
+        self.assertIn("复制整个技能目录", guide)
+        self.assertIn("SKILL.md", guide)
+        self.assertIn("不要覆盖", guide)
+
     def make_repository(self) -> Path:
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
