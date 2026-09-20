@@ -1,0 +1,53 @@
+schema_version: 1
+id: superpowers/finishing-a-development-branch
+name: Finishing A Development Branch
+summary: 在实现和测试完成后选择合并、创建 PR、保留或清理开发分支。
+layer: l2
+purposes:
+- 分支收尾
+- 集成决策
+- 工作区清理
+examples:
+- prompt: 实现已完成，请按 finishing-a-development-branch 收尾。
+  expected_outcome: 核对测试与分支状态，给出并执行经授权的集成选项。
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://github.com/obra/superpowers.git
+    path: skills/finishing-a-development-branch
+    requested_ref: 5bf4e78011075bcfc0dc295f0724994cd123ee71
+install:
+  method: upstream
+  default_scope: project
+  instructions_url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/README.md
+  included_skills:
+  - verification-before-completion
+compatibility:
+  agents:
+  - codex
+  - claude-code
+  - cursor
+  - gemini-cli
+  - opencode
+  systems:
+  - linux
+  - macos
+  - windows
+  requirements:
+  - 项目需使用 Git
+license:
+  status: known
+  identifier: MIT
+  url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/LICENSE
+owner: Jesse Vincent
+keywords:
+- finishing-a-development-branch
+- 分支收尾
+- 集成决策
+- 工作区清理
+limitations:
+- 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
+- 技能触发和工具可用性取决于目标 Agent 宿主。
+lifecycle: active

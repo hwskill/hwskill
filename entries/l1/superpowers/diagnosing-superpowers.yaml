@@ -1,0 +1,51 @@
+schema_version: 1
+id: superpowers/diagnosing-superpowers
+name: Diagnosing Superpowers
+summary: 分析 Superpowers 会话中的重复工作、技能未触发或执行失控，并整理可复现证据。
+layer: l1
+purposes:
+- 会话诊断
+- 流程复盘
+- 问题报告
+examples:
+- prompt: 分析这次 Superpowers 会话为何重复执行任务。
+  expected_outcome: 检查会话记录和技能触发链，形成有证据的诊断报告。
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://github.com/obra/superpowers.git
+    path: skills/diagnosing-superpowers
+    requested_ref: 5bf4e78011075bcfc0dc295f0724994cd123ee71
+install:
+  method: upstream
+  default_scope: project
+  instructions_url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/README.md
+compatibility:
+  agents:
+  - codex
+  - claude-code
+  - cursor
+  - gemini-cli
+  - opencode
+  systems:
+  - linux
+  - macos
+  - windows
+  requirements:
+  - 需要可读取的会话记录
+license:
+  status: known
+  identifier: MIT
+  url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/LICENSE
+owner: Jesse Vincent
+keywords:
+- diagnosing-superpowers
+- 会话诊断
+- 流程复盘
+- 问题报告
+limitations:
+- 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
+- 技能触发和工具可用性取决于目标 Agent 宿主。
+lifecycle: active

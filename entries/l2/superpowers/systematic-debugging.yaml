@@ -1,0 +1,54 @@
+schema_version: 1
+id: superpowers/systematic-debugging
+name: Systematic Debugging
+summary: 以复现、根因调查、假设验证和回归测试组成系统化调试闭环。
+layer: l2
+purposes:
+- 系统化调试
+- 根因分析
+- 故障复现
+examples:
+- prompt: 这个测试间歇失败，请先系统化定位根因。
+  expected_outcome: 建立稳定复现和证据链，验证根因后再实施最小修复。
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://github.com/obra/superpowers.git
+    path: skills/systematic-debugging
+    requested_ref: 5bf4e78011075bcfc0dc295f0724994cd123ee71
+install:
+  method: upstream
+  default_scope: project
+  instructions_url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/README.md
+  included_skills:
+  - test-driven-development
+  - verification-before-completion
+compatibility:
+  agents:
+  - codex
+  - claude-code
+  - cursor
+  - gemini-cli
+  - opencode
+  systems:
+  - linux
+  - macos
+  - windows
+  requirements:
+  - 项目需提供调试或测试反馈回路
+license:
+  status: known
+  identifier: MIT
+  url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/LICENSE
+owner: Jesse Vincent
+keywords:
+- systematic-debugging
+- 系统化调试
+- 根因分析
+- 故障复现
+limitations:
+- 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
+- 技能触发和工具可用性取决于目标 Agent 宿主。
+lifecycle: active
