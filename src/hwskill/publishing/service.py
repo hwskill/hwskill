@@ -103,7 +103,8 @@ def _validate_install(install: Mapping[str, Any], item: Mapping[str, Any], path:
         raise ReleaseIntegrityError(f"install machine JSON is not bound to its catalog entry: {path}")
     if not isinstance(install.get("source"), Mapping) or not isinstance(install.get("install"), Mapping):
         raise ReleaseIntegrityError(f"install machine JSON has invalid source/install objects: {path}")
-    if set(install["install"]) != {"method", "default_scope", "instructions_url"}:
+    install_fields = set(install["install"])
+    if not {"method", "default_scope", "instructions_url"} <= install_fields or install_fields - {"method", "default_scope", "instructions_url", "included_skills"}:
         raise ReleaseIntegrityError(f"install machine JSON has unknown install fields: {path}")
     _require_public_url(install["install"].get("instructions_url"), f"install instructions URL in {path}", optional=True)
     entry = item["entry"]

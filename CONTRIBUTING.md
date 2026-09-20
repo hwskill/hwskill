@@ -4,7 +4,7 @@
 
 目录输入是 `entries/`、`recommendations/` 与 hosted 的 `skills-src/`。先从 `templates/` 复制模板，按 `schemas/` 填写；JSON Schema 是唯一结构规范。
 
-外部技能只能提交来源定位、不可变 ref、兼容性声明和限制，禁止复制其正文。不要把安装或行为验证未运行的条目写成通过。
+外部技能只能提交来源定位、不可变 ref、兼容性声明和限制，禁止复制其正文。入口技能依赖其他技能时，通过 `install.included_skills` 保留完整安装集合。不要把安装或行为验证未运行的条目写成通过。
 
 ```bash
 PYTHONPATH=src python -m hwskill.directory validate --repo-root . --json

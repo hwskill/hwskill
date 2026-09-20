@@ -1,0 +1,36 @@
+schema_version: 1
+id: mattpocock/grill-me
+name: Grill Me
+summary: 通过分轮追问梳理计划、决策或想法，直到关键分支得到明确回答。
+layer: l1
+purposes: [方案压力测试, 需求澄清, 决策树访谈]
+examples:
+  - prompt: 用 grill-me 追问这个产品想法，找出尚未明确的决策。
+    expected_outcome: 按依赖关系分轮提出问题和建议答案，并在共同理解得到确认后停止。
+source:
+  kind: external
+  publicity: public
+  locator:
+    type: git
+    repository: https://github.com/mattpocock/skills.git
+    path: skills/productivity/grill-me
+    requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+install:
+  method: upstream
+  default_scope: project
+  instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/docs/productivity/grill-me.md
+  included_skills: [grill-me, grilling]
+compatibility:
+  agents: [codex, claude-code]
+  systems: [linux, macos, windows]
+  requirements: [需同时安装上游 grilling 技能, Agent 需支持显式调用技能]
+license:
+  status: known
+  identifier: MIT
+  url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
+owner: Matt Pocock
+keywords: [grill-me, grilling, 访谈, 需求澄清, 方案评审, 决策树]
+limitations:
+  - 来源于外部仓库，正文未复制；来源于 2026-09-20 核对，安装和行为未运行。
+  - grill-me 本身只调用 grilling；仅安装 grill-me 时无法完成预期流程。
+  - 该技能由用户显式调用，访谈可能产生较多问题；开始实施前仍需用户确认已形成共同理解。

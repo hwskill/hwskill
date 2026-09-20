@@ -11,6 +11,77 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class DirectoryBuildTests(unittest.TestCase):
+    def test_build_preserves_included_skill_dependencies_in_public_install_material(self) -> None:
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        external = root / "entries/l2/upstream/external.yaml"
+        text = external.read_text(encoding="utf-8").replace(
+            "  default_scope: project\n",
+            "  default_scope: project\n  included_skills: [external, dependency]\n",
+        )
+        external.write_text(text, encoding="utf-8")
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            catalog = json.loads((output / "catalog.json").read_text(encoding="utf-8"))
+            item = next(item for item in catalog["entries"] if item["entry"]["id"] == "upstream/external")
+            install = json.loads((output / "skills/upstream/external/install.json").read_text(encoding="utf-8"))
+            guide = (output / "skills/upstream/external/install.md").read_text(encoding="utf-8")
+            self.assertEqual(item["entry"]["install"]["included_skills"], ["external", "dependency"])
+            self.assertEqual(install["install"]["included_skills"], ["external", "dependency"])
+            self.assertIn("同时安装：external、dependency", guide)
+
+    def test_incomplete_hosted_identity_does_not_offer_install_steps(self) -> None:
+        from hwskill.directory.catalog import _install_markdown
+
+        entry = {
+            "id": "local/hosted",
+            "name": "Hosted skill",
+            "source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"},
+            "install": {"method": "directory", "default_scope": "project"},
+        }
+        guide = _install_markdown(entry, {"resolved_revision": "a" * 40, "content_digest": None})
+        self.assertIn("安装前需自行核对", guide)
+        self.assertIn("可自行从来源取得技能", guide)
+        self.assertNotIn("复制整个技能目录", guide)
+
+    def test_unresolved_sources_only_offer_guidance_even_with_an_install_method(self) -> None:
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            items = {
+                item["entry"]["id"]: item
+                for item in json.loads((output / "catalog.json").read_text(encoding="utf-8"))["entries"]
+            }
+            self.assertEqual(items["local/hosted"]["install_capability"], "guidance_only")
+            self.assertEqual(items["upstream/external"]["install_capability"], "guidance_only")
+            external_guide = (output / "skills/upstream/external/install.md").read_text(encoding="utf-8")
+            self.assertIn("安装前需自行核对", external_guide)
+            self.assertIn("可自行从来源取得技能", external_guide)
+            self.assertIn("v1.2.3", external_guide)
+
+    def test_fixed_hosted_directory_remains_installable(self) -> None:
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        import subprocess
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=test", "-c", "user.email=test@example.test", "commit", "-qm", "fixture"], check=True)
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            items = {
+                item["entry"]["id"]: item
+                for item in json.loads((output / "catalog.json").read_text(encoding="utf-8"))["entries"]
+            }
+            self.assertEqual(items["local/hosted"]["install_capability"], "installable")
+            self.assertEqual(items["upstream/external"]["install_capability"], "guidance_only")
+
     def test_hosted_install_guide_identifies_an_immutable_complete_source(self) -> None:
         from hwskill.directory.catalog import _install_markdown
 
@@ -20,7 +91,7 @@ class DirectoryBuildTests(unittest.TestCase):
             "source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"},
             "install": {"method": "directory", "default_scope": "project"},
         }
-        guide = _install_markdown(entry, {"resolved_revision": "a" * 40})
+        guide = _install_markdown(entry, {"resolved_revision": "a" * 40, "content_digest": "sha256:" + "b" * 64})
         self.assertIn("https://github.com/hwskill/hwskill/tree/" + "a" * 40 + "/skills-src/l1/local/hosted", guide)
         self.assertIn("复制整个技能目录", guide)
         self.assertIn("SKILL.md", guide)

@@ -58,7 +58,12 @@ def _normalized(entry: dict[str, Any], identity: dict[str, Any]) -> dict[str, An
         "schema_version": 1, "id": entry["id"], "name": entry["name"], "summary": entry["summary"],
         "layer": entry["layer"], "purposes": entry["purposes"], "examples": entry["examples"],
         "source": source,
-        "install": {"method": entry["install"]["method"], "default_scope": entry["install"]["default_scope"], "instructions_url": entry["install"].get("instructions_url")},
+        "install": {
+            "method": entry["install"]["method"],
+            "default_scope": entry["install"]["default_scope"],
+            "instructions_url": entry["install"].get("instructions_url"),
+            **({"included_skills": entry["install"]["included_skills"]} if "included_skills" in entry["install"] else {}),
+        },
         "compatibility": entry["compatibility"], "license": entry["license"],
         "lifecycle": entry.get("lifecycle", "active"), "lifecycle_reason": entry.get("lifecycle_reason"), "replacement_id": entry.get("replacement_id"),
     }
@@ -66,6 +71,21 @@ def _normalized(entry: dict[str, Any], identity: dict[str, Any]) -> dict[str, An
         if field in entry:
             normalized[field] = entry[field]
     return normalized
+
+
+def _install_capability(entry: dict[str, Any], identity: dict[str, Any]) -> str:
+    if entry.get("lifecycle") == "withdrawn":
+        return "disabled"
+    install = entry["install"]
+    if install["method"] == "unknown" or not identity.get("resolved_revision"):
+        return "guidance_only"
+    if entry["source"]["kind"] == "hosted":
+        return "installable" if install["method"] == "directory" and identity.get("content_digest") else "guidance_only"
+    if not identity.get("content_digest"):
+        return "guidance_only"
+    if install["method"] == "upstream" and not install.get("instructions_url"):
+        return "guidance_only"
+    return "installable"
 
 
 def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
@@ -84,13 +104,15 @@ def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
         ]
         if revision:
             source_lines.append(f"完整技能目录：{PUBLIC_SOURCE_REPOSITORY}/tree/{revision}/{source['path']}")
-    lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", f"默认范围：{install['default_scope']}", "", "## 来源", "", *source_lines, "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
+    capability = _install_capability(entry, identity)
+    capability_label = {"installable": "可按固定来源安装", "guidance_only": "安装前需自行核对来源与方法", "disabled": "已停用新安装"}[capability]
+    lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", f"默认范围：{install['default_scope']}", f"安装能力：{capability_label}", "", "## 来源", "", *source_lines, "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
     if install["method"] == "unknown":
         lines.extend(["未提供可执行安装命令；请按来源人工确认安装方式。", ""])
     elif install.get("instructions_url"):
         lines.extend([f"上游指引：{install['instructions_url']}", ""])
     elif source["kind"] == "hosted" and install["method"] == "directory":
-        if identity.get("resolved_revision"):
+        if capability == "installable":
             lines.extend([
                 "## 项目级安装",
                 "",
@@ -100,7 +122,17 @@ def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
                 "",
             ])
         else:
-            lines.extend(["尚未取得固定提交，不能据此进行可复现安装。", ""])
+            lines.extend(["尚未取得完整的固定来源材料，不能据此进行可复现安装。", ""])
+    if install.get("included_skills"):
+        lines.extend([f"同时安装：{'、'.join(install['included_skills'])}", ""])
+    if capability == "guidance_only":
+        lines.extend([
+            "## 自行安装",
+            "",
+            "可自行从来源取得技能，核对请求版本、完整文件及适用的项目级安装方法后安装；不要覆盖同名技能。",
+            "本目录未验证安装或行为，也未提供可复现的自动安装材料；无法确认来源或方法时请先停止并说明原因。",
+            "",
+        ])
     return "\n".join(lines)
 
 
@@ -114,7 +146,13 @@ def _install_data(entry: dict[str, Any], entry_digest: str, identity: dict[str, 
             public_source = {"kind": "external", "url": locator["url"], "requested_ref": locator.get("version_note"), "resolved_revision": None}
     else:
         public_source = {"kind": "hosted", "path": source["path"], "resolved_revision": identity["resolved_revision"]}
-    return {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source": public_source, "install": {"method": entry["install"]["method"], "default_scope": entry["install"]["default_scope"], "instructions_url": entry["install"].get("instructions_url")}, "verification_summary": summary}
+    public_install = {
+        "method": entry["install"]["method"],
+        "default_scope": entry["install"]["default_scope"],
+        "instructions_url": entry["install"].get("instructions_url"),
+        **({"included_skills": entry["install"]["included_skills"]} if "included_skills" in entry["install"] else {}),
+    }
+    return {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source": public_source, "install": public_install, "verification_summary": summary}
 
 
 def _assert_safe_output(root: Path, out_dir: Path) -> Path:
@@ -162,7 +200,7 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             normalized = _normalized(entry, identity)
             entry_digest = sha256_bytes(canonical_json(normalized))
             summary = _summary()
-            capability = "disabled" if normalized["lifecycle"] == "withdrawn" else "guidance_only" if entry["install"]["method"] == "unknown" else "installable"
+            capability = _install_capability(entry, identity)
             entries.append({"entry": normalized, "entry_digest": entry_digest, "source_identity": identity, "lifecycle": normalized["lifecycle"], "install_capability": capability, "verification_summary": summary})
             skill_dir = staging / "skills" / entry["id"]
             install_data = _install_data(entry, entry_digest, identity, summary)

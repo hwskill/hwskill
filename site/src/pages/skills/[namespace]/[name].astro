@@ -18,8 +18,8 @@ const { entry } = item;
 const related = recommendations.filter((recommendation) => recommendation.skills.some((skill) => skill.id === entry.id));
 const repository = sourceRepository(entry.source.identity);
 const verification = verificationLabel(item);
-const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.source_identity.resolved_revision ? "外部固定来源" : "外部来源（版本未固定）";
-const resolvedVersion = item.source_identity.resolved_revision ?? (entry.source.kind === "hosted" ? "随本目录版本" : "外部版本未固定");
+const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.source_identity.resolved_revision ? "外部固定来源" : item.source_identity.requested_ref ? "外部来源（版本待核验）" : "外部来源（版本未指定）";
+const resolvedVersion = item.source_identity.resolved_revision ?? (entry.source.kind === "hosted" ? "随本目录版本" : item.source_identity.requested_ref ? `指定版本待核验：${item.source_identity.requested_ref}` : "未指定版本");
 const lifecycleLabel = entry.lifecycle === "active" ? "正常收录" : entry.lifecycle === "deprecated" ? "已弃用" : "已撤回";
 const searchTerms = (curation.topics ?? [])
   .filter((topic) => topicEntries(topic.slug).some((candidate) => candidate.entry.id === entry.id))
@@ -50,7 +50,7 @@ const searchTerms = (curation.topics ?? [])
         <h2>使用前核对</h2>
         <dl>
           <div><dt>来源</dt><dd>{entry.source.kind === "hosted" ? "本目录" : "外部来源"}</dd></div>
-          <div><dt>固定版本</dt><dd class="mono">{resolvedVersion}</dd></div>
+          <div><dt>来源版本</dt><dd class="mono">{resolvedVersion}</dd></div>
           <div><dt>默认范围</dt><dd>{entry.install.default_scope}</dd></div>
           <div><dt>许可证</dt><dd>{entry.license.status === "known" ? entry.license.identifier : "未独立确认"}</dd></div>
         </dl>

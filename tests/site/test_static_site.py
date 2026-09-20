@@ -15,6 +15,18 @@ SITE = ROOT / "site"
 
 
 class StaticSiteContractTests(unittest.TestCase):
+    def test_unverified_source_prompt_allows_informed_manual_installation(self) -> None:
+        prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
+        self.assertIn("可继续安装", prompt)
+        self.assertNotIn("请不要猜测命令或直接安装", prompt)
+
+    def test_external_source_page_distinguishes_requested_from_resolved_version(self) -> None:
+        detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
+        card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
+        self.assertIn("source_identity.requested_ref", detail)
+        self.assertIn("指定版本待核验", detail)
+        self.assertIn("版本待核验", card)
+
     def test_copied_agent_prompts_use_complete_site_urls(self) -> None:
         install = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
         contribute = (SITE / "src/pages/contribute/index.astro").read_text(encoding="utf-8")
@@ -185,7 +197,7 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(data, r"Object\.entries\(curation\.synonyms")
         self.assertRegex(data, r"group\.some\([^\n]+aliases\.has")
         self.assertRegex(detail, r"entry\.source\.kind\s*===\s*[\"']hosted[\"'][^\n]+随本目录版本")
-        self.assertIn("外部版本未固定", detail)
+        self.assertIn("版本待核验", detail)
         self.assertIn("外部来源", card)
 
     def test_query_evaluation_covers_at_least_thirty_cases(self) -> None:

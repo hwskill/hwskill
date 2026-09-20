@@ -185,6 +185,13 @@
                                 "null"
                             ],
                             "format": "uri"
+                        },
+                        "included_skills": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1
+                            }
                         }
                     }
                 },

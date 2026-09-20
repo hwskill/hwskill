@@ -12,7 +12,7 @@ export type CatalogItem = {
     purposes: string[];
     examples: Array<{ prompt: string; expected_outcome: string }>;
     source: { kind: "hosted" | "external"; identity: string };
-    install: { method: "directory" | "upstream" | "unknown"; default_scope: "project"; instructions_url?: string | null };
+    install: { method: "directory" | "upstream" | "unknown"; default_scope: "project"; instructions_url?: string | null; included_skills?: string[] };
     compatibility: { agents: string[]; systems: string[]; requirements: string[] };
     license: { status: "known" | "unknown"; identifier?: string; url?: string };
     lifecycle: "active" | "deprecated" | "withdrawn";
@@ -23,7 +23,7 @@ export type CatalogItem = {
     limitations?: string[];
   };
   entry_digest: string;
-  source_identity: { kind: string; identity: string; resolved_revision?: string | null; content_digest?: string | null };
+  source_identity: { kind: string; identity: string; requested_ref?: string | null; resolved_revision?: string | null; content_digest?: string | null };
   lifecycle: string;
   install_capability: string;
   verification_summary: Record<string, { result: StageResult; report_id?: string | null; executed_at?: string | null }>;
