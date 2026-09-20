@@ -49,6 +49,18 @@ These actions require organization ownership, billing authority, secrets, or pol
 
 Agent work that can be prepared before PV1-PV5: complete the repository skeleton, write tests, define permissions, prepare App setup instructions, create sample payloads, and estimate maximum run cost. The Agent cannot create organization resources, accept billing, obtain secret values, approve protected environments, or decide whether a semantic behavior result is acceptable. Never paste the DeepSeek API key into an issue, PR, plan, chat, shell history, or committed file.
 
+### Readiness Status
+
+Maintainer confirmation on 2026-09-20 establishes the following without recording any secret value:
+
+- `skill-validation` exists.
+- Environment variables `VALIDATION_MODEL`, `DEEPSEEK_BASE_URL`, and `HWSKILL_VALIDATOR_APP_ID` exist.
+- Environment secrets `HWSKILL_VALIDATOR_APP_PRIVATE_KEY` and `DEEPSEEK_API_KEY` exist.
+- PV3 is complete.
+- The credential and model-configuration portion of PV5 is complete. Task 4 still implements and tests the USD 0.08 per-skill enforcement.
+- PV2 remains open until the App installation scope and effective permissions pass the smoke test in Task 5.
+- PV4 remains open until the GitHub plan and the corresponding reviewer or restricted-dispatch policy are verified in Task 6.
+
 ## Human Setup Runbook
 
 ### GitHub App
