@@ -1,8 +1,12 @@
+---
 schema_version: 1
 id: missing
 skills:
-  - id: local/absent
+- id: local/absent
 title: Missing skill
-body: This should not publish.
+summary: This should not publish.
 author: directory-team
 status: ready
+---
+
+This should not publish.

@@ -7,31 +7,48 @@
   "public_inputs": [
     "CONTRIBUTING.md",
     "docs/guides/agent-contribution.md",
-    "templates/recommendations/recommendation.yaml",
-    "schemas/recommendation.schema.json",
+    "templates/recommendations/recommendation.md",
+    "schemas/recommendation-source.schema.json",
     "site/.generated/directory/catalog.json"
   ],
-  "allowed_changes": ["recommendations/gitcode-pr-evidence.yaml", "results/recommendation-validation.json"],
-  "required_paths": [
-    {"path": "recommendations/gitcode-pr-evidence.yaml", "kind": "file"},
-    {"path": "results/recommendation-validation.json", "kind": "file"}
+  "allowed_changes": [
+    "recommendations/gitcode-pr-evidence.md",
+    "results/recommendation-validation.json"
   ],
-  "schema_checks": [{"path": "results/recommendation-validation.json", "schema": "tests/agent-experience/tasks/validation-output.schema.json"}],
+  "required_paths": [
+    {
+      "path": "recommendations/gitcode-pr-evidence.md",
+      "kind": "file"
+    },
+    {
+      "path": "results/recommendation-validation.json",
+      "kind": "file"
+    }
+  ],
+  "schema_checks": [
+    {
+      "path": "results/recommendation-validation.json",
+      "schema": "tests/agent-experience/tasks/validation-output.schema.json"
+    }
+  ],
   "directory_checks": [],
   "repository_validation": true,
-  "host_expectation": {"host": "codex", "model": "gpt-5.6-luna", "reasoning_effort": "medium"},
+  "host_expectation": {
+    "host": "codex",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium"
+  },
   "source_revision_checks": [],
   "json_outputs": [
-    {"path": "results/recommendation-validation.json", "required_values": [{"pointer": "/result", "equals": "pass"}]}
-  ],
-  "yaml_outputs": [
     {
-      "path": "recommendations/gitcode-pr-evidence.yaml",
+      "path": "results/recommendation-validation.json",
       "required_values": [
-        {"pointer": "/id", "equals": "gitcode-pr-evidence"},
-        {"pointer": "/skills/0/id", "equals": "local/gitcode-pr-review-fetch"},
-        {"pointer": "/status", "equals": "ready"}
+        {
+          "pointer": "/result",
+          "equals": "pass"
+        }
       ]
     }
-  ]
+  ],
+  "yaml_outputs": []
 }

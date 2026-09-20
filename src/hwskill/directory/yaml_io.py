@@ -40,8 +40,13 @@ _StrictSafeLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_time
 
 def load_yaml(path: Path) -> dict[str, Any]:
     """Read one JSON-shaped YAML document without aliases that alter mappings."""
+    return load_yaml_text(path.read_text(encoding="utf-8"))
+
+
+def load_yaml_text(text: str) -> dict[str, Any]:
+    """Parse one JSON-shaped YAML document without weakening path-based loading."""
     try:
-        value = yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictSafeLoader)
+        value = yaml.load(text, Loader=_StrictSafeLoader)
     except YamlContractError:
         raise
     except yaml.YAMLError as exc:

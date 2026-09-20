@@ -21,9 +21,9 @@ class StaticSiteContractTests(unittest.TestCase):
             self.assertIn(prompt_id, contribute)
         for resource in (
             "schemas/entry.schema.json",
-            "schemas/recommendation.schema.json",
+            "schemas/recommendation-source.schema.json",
             "templates/entries/external.yaml",
-            "templates/recommendations/recommendation.yaml",
+            "templates/recommendations/recommendation.md",
             "data/catalog.json",
         ):
             self.assertIn(resource, contribute)
@@ -136,7 +136,7 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertIn("recommendations.json", sources)
         contribution = contribution_page.read_text(encoding="utf-8")
         self.assertIn("templates/entries/external.yaml", contribution)
-        self.assertIn("templates/recommendations/recommendation.yaml", contribution)
+        self.assertIn("templates/recommendations/recommendation.md", contribution)
 
     def test_internal_links_and_pagefind_follow_configured_base(self) -> None:
         config = (SITE / "astro.config.mjs").read_text(encoding="utf-8")
@@ -256,8 +256,9 @@ class StaticSiteContractTests(unittest.TestCase):
             "data/catalog.json",
             "schemas/entry.schema.json",
             "schemas/recommendation.schema.json",
+            "schemas/recommendation-source.schema.json",
             "templates/entries/external.yaml",
-            "templates/recommendations/recommendation.yaml",
+            "templates/recommendations/recommendation.md",
             "contribute/agent.md",
         ):
             self.assertIn(resource, checker)

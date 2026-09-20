@@ -12,6 +12,7 @@ from .digest import canonical_json, sha256_bytes
 from .entries import _source_identity, validate_repository
 from .hosted_content import copy_hosted_content, hosted_directory
 from .models import DirectoryIssue
+from .recommendations import load_recommendation
 from .yaml_io import load_yaml
 
 PUBLIC_SOURCE_REPOSITORY = "https://github.com/hwskill/hwskill"
@@ -215,8 +216,8 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
                 copy_hosted_content(hosted_directory(root, entry["source"]["path"]), skill_dir / "content")
         entries.sort(key=lambda item: item["entry"]["id"])
         recommendations = []
-        for path in sorted((root / "recommendations").rglob("*.yaml")):
-            recommendation = load_yaml(path)
+        for path in sorted((root / "recommendations").rglob("*.md")):
+            recommendation = load_recommendation(path)
             if recommendation["id"] in report.publishable_recommendation_ids:
                 recommendations.append(recommendation)
         recommendations.sort(key=lambda item: item["id"])

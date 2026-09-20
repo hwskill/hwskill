@@ -1,8 +1,12 @@
+---
 schema_version: 1
 id: duplicate
 skills:
-  - id: local/old
+- id: local/old
 title: Second duplicate
-body: Another unpublished note.
+summary: Another unpublished note.
 author: directory-team
 status: draft
+---
+
+Another unpublished note.

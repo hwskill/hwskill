@@ -1,0 +1,12 @@
+---
+schema_version: 1
+id: draft
+skills:
+- id: local/candidate
+title: Draft recommendation
+summary: This is intentionally unpublished.
+author: directory-team
+status: draft
+---
+
+This is intentionally unpublished.

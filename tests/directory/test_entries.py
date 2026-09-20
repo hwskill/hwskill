@@ -121,11 +121,13 @@ class DirectoryValidationTests(unittest.TestCase):
                 elif field == "license":
                     entry = entry.replace("  identifier: MIT\n", "  url: https://user:secret@example.com/license\n")
                 else:
-                    recommendation_path = root / "recommendations/review-tools.yaml"
+                    recommendation_path = root / "recommendations/review-tools.md"
+                    recommendation_text = recommendation_path.read_text(encoding="utf-8")
                     recommendation_path.write_text(
-                        recommendation_path.read_text(encoding="utf-8")
-                        + "evidence:\n  - url: https://user:secret@example.com/evidence\n"
-                        + "    observed_at: 2026-09-11T00:00:00Z\n",
+                        recommendation_text.replace(
+                            "status: ready\n---",
+                            "evidence:\n- url: https://user:secret@example.com/evidence\n  observed_at: 2026-09-11T00:00:00Z\nstatus: ready\n---",
+                        ),
                         encoding="utf-8",
                     )
                 entry_path.write_text(entry, encoding="utf-8")
@@ -313,6 +315,82 @@ class DirectoryValidationTests(unittest.TestCase):
         for relative, skill_path in expected.items():
             document = load_yaml(next(entries.rglob(relative)))
             self.assertEqual(document["source"]["locator"]["path"], skill_path)
+
+
+    def test_markdown_recommendation_is_normalized_and_path_checked(self) -> None:
+        from hwskill.directory.recommendations import load_recommendation
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "guide.md"
+            path.write_bytes(
+                b"---\r\nschema_version: 1\r\nid: guide\r\nskills:\r\n  - id: local/hosted\r\n"
+                b"title: Guide\r\nsummary: Short guide.\r\nauthor: test\r\nstatus: ready\r\n---\r\n\r\n# Body\r\n"
+            )
+            document = load_recommendation(path)
+            self.assertEqual(document["body_format"], "markdown")
+            self.assertEqual(document["body"], "# Body\n")
+
+
+    def test_markdown_recommendation_rejects_malformed_boundaries_and_empty_body(self) -> None:
+        from hwskill.directory.recommendations import RecommendationContractError, load_recommendation
+        from hwskill.directory.yaml_io import YamlContractError
+
+        cases = {
+            "missing.md": ("id: missing\n", RecommendationContractError, "recommendation-frontmatter-missing"),
+            "unclosed.md": ("---\nid: unclosed\n", RecommendationContractError, "recommendation-frontmatter-unclosed"),
+            "empty.md": ("---\nid: empty\n---\n  \n", RecommendationContractError, "recommendation-body-empty"),
+            "duplicate.md": ("---\nid: one\nid: two\n---\nBody\n", YamlContractError, "duplicate YAML key"),
+        }
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, (content, error_type, expected) in cases.items():
+                path = root / name
+                path.write_text(content, encoding="utf-8")
+                with self.subTest(name=name), self.assertRaises(error_type) as raised:
+                    load_recommendation(path)
+                if isinstance(raised.exception, RecommendationContractError):
+                    self.assertEqual(raised.exception.code, expected)
+                else:
+                    self.assertIn(expected, str(raised.exception))
+
+    def test_markdown_recommendation_source_schema_and_path_are_enforced(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            shutil.copytree(FIXTURES / "valid", root)
+            shutil.rmtree(root / "recommendations")
+            recommendations = root / "recommendations"
+            recommendations.mkdir()
+            (recommendations / "wrong-name.md").write_text(
+                "---\nschema_version: 1\nid: guide\nskills:\n  - id: local/hosted\n"
+                "title: Guide\nsummary: Short guide.\nauthor: test\nstatus: ready\n---\n\nBody.\n",
+                encoding="utf-8",
+            )
+            report = validate_repository(root)
+            self.assertTrue(any(issue.code == "recommendation-path-mismatch" for issue in report.issues), report.issues)
+
+            (recommendations / "wrong-name.md").write_text(
+                "---\nschema_version: 1\nid: wrong-name\nskills:\n  - id: local/hosted\n"
+                "title: Guide\nsummary: Short guide.\nbody: forbidden\nauthor: test\nstatus: ready\n---\n\nBody.\n",
+                encoding="utf-8",
+            )
+            report = validate_repository(root)
+            self.assertTrue(any(issue.code == "schema-additionalProperties" for issue in report.issues), report.issues)
+
+    def test_normalized_schema_accepts_legacy_plain_text_recommendation(self) -> None:
+        from hwskill.directory.schema import validator_for
+
+        legacy = {
+            "schema_version": 1,
+            "id": "legacy",
+            "skills": [{"id": "local/hosted"}],
+            "title": "Legacy",
+            "body": "Plain text.",
+            "author": "test",
+            "status": "ready",
+        }
+        self.assertEqual(list(validator_for("recommendation").iter_errors(legacy)), [])
 
 
 if __name__ == "__main__":

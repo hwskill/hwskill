@@ -23,7 +23,7 @@ class DirectoryBuildTests(unittest.TestCase):
             for relative in (
                 "entries/external.yaml",
                 "entries/hosted.yaml",
-                "recommendations/recommendation.yaml",
+                "recommendations/recommendation.md",
             ):
                 self.assertEqual(
                     (output / "templates" / relative).read_bytes(),
@@ -122,8 +122,8 @@ class DirectoryBuildTests(unittest.TestCase):
         root = Path(temporary.name) / "repository"
         shutil.copytree(FIXTURES / "valid", root)
         (root / "skills-src/l1/local/hosted/reference.md").write_text("hosted reference\n", encoding="utf-8")
-        (root / "recommendations/draft.yaml").write_text(
-            "schema_version: 1\nid: draft\nskills:\n  - id: local/hosted\ntitle: Draft\nbody: Never publish this.\nauthor: test\nstatus: draft\n",
+        (root / "recommendations/draft.md").write_text(
+            "---\nschema_version: 1\nid: draft\nskills:\n  - id: local/hosted\ntitle: Draft\nsummary: Never publish this.\nauthor: test\nstatus: draft\n---\n\nNever publish this.\n",
             encoding="utf-8",
         )
         (root / "curation").mkdir(exist_ok=True)
@@ -179,6 +179,10 @@ class DirectoryBuildTests(unittest.TestCase):
             guide.write_text("changed guide\n", encoding="utf-8")
             guide_changed = build_repository(root, third)
             self.assertNotEqual(hosted_changed.input_digest, guide_changed.input_digest)
+            recommendation = root / "recommendations/review-tools.md"
+            recommendation.write_text(recommendation.read_text(encoding="utf-8") + "\nChanged body.\n", encoding="utf-8")
+            recommendation_changed = build_repository(root, third)
+            self.assertNotEqual(guide_changed.input_digest, recommendation_changed.input_digest)
 
     def test_install_material_matches_catalog_and_does_not_invent_unknown_command(self) -> None:
         """A wrong install method or a leaked draft changes the public contract."""
@@ -212,10 +216,10 @@ class DirectoryBuildTests(unittest.TestCase):
         from hwskill.directory.catalog import build_repository
 
         root = self.make_repository()
-        (root / "recommendations/withdrawn.yaml").write_text(
-            "schema_version: 1\nid: retired-guide\nskills:\n  - id: local/hosted\n"
-            "title: Retired guide\nbody: Historical recommendation.\nauthor: test\n"
-            "status: withdrawn\nwithdrawal_reason: Superseded.\n",
+        (root / "recommendations/retired-guide.md").write_text(
+            "---\nschema_version: 1\nid: retired-guide\nskills:\n  - id: local/hosted\n"
+            "title: Retired guide\nsummary: Historical recommendation.\nauthor: test\n"
+            "status: withdrawn\nwithdrawal_reason: Superseded.\n---\n\nHistorical recommendation.\n",
             encoding="utf-8",
         )
         with TemporaryDirectory() as directory:

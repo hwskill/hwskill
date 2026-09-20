@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from .models import DirectoryIssue, ValidationReport
+from .recommendations import RecommendationContractError, load_recommendation
 from .schema import validator_for
 from .yaml_io import YamlContractError, load_yaml
 
@@ -204,9 +205,9 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     """Validate YAML source metadata without fetching or reading external bodies."""
     root = repo_root.resolve()
     entry_paths = sorted((root / "entries").rglob("*.yaml")) if (root / "entries").is_dir() else []
-    recommendation_paths = sorted((root / "recommendations").rglob("*.yaml")) if (root / "recommendations").is_dir() else []
+    recommendation_paths = sorted((root / "recommendations").rglob("*.md")) if (root / "recommendations").is_dir() else []
     template_entry_paths = sorted((root / "templates" / "entries").rglob("*.yaml")) if (root / "templates" / "entries").is_dir() else []
-    template_recommendation_paths = sorted((root / "templates" / "recommendations").rglob("*.yaml")) if (root / "templates" / "recommendations").is_dir() else []
+    template_recommendation_paths = sorted((root / "templates" / "recommendations").rglob("*.md")) if (root / "templates" / "recommendations").is_dir() else []
     curation_paths = sorted((root / "curation").glob("*.yaml")) if (root / "curation").is_dir() else []
     all_paths = [*entry_paths, *recommendation_paths, *template_entry_paths, *template_recommendation_paths, *curation_paths]
     issues: list[DirectoryIssue] = []
@@ -214,10 +215,7 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     recommendations: list[tuple[Path, dict[str, Any]]] = []
     curation_sections: set[str] = set()
 
-    for path, schema_name, destination in (
-        *((path, "entry", entries) for path in entry_paths),
-        *((path, "recommendation", recommendations) for path in recommendation_paths),
-    ):
+    for path in entry_paths:
         try:
             document = load_yaml(path)
         except (OSError, YamlContractError) as exc:
@@ -225,20 +223,34 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
             issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML with unique keys."))
             continue
-        schema_errors = sorted(_schema_errors(validator_for(schema_name).iter_errors(document)), key=lambda error: list(error.absolute_path))
+        schema_errors = sorted(_schema_errors(validator_for("entry").iter_errors(document)), key=lambda error: list(error.absolute_path))
         for error in schema_errors:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the field to match its JSON Schema contract."))
         if not schema_errors:
-            destination.append((path, document))
-            if schema_name == "entry":
-                _validate_entry_public_security(path, root, document, issues)
-            else:
-                _validate_recommendation_public_security(path, root, document, issues)
+            entries.append((path, document))
+            _validate_entry_public_security(path, root, document, issues)
 
-    for path, schema_name in (
-        *((path, "entry") for path in template_entry_paths),
-        *((path, "recommendation") for path in template_recommendation_paths),
-    ):
+    for path in recommendation_paths:
+        try:
+            document = load_recommendation(path)
+        except RecommendationContractError as exc:
+            issues.append(_issue(path, root, exc.field, exc.code, str(exc), "Use a complete Markdown file with YAML Frontmatter."))
+            continue
+        except (OSError, YamlContractError) as exc:
+            text = str(exc)
+            code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
+            issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML Frontmatter with unique keys."))
+            continue
+        source_document = {key: value for key, value in document.items() if key not in {"body", "body_format"}}
+        source_errors = sorted(_schema_errors(validator_for("recommendation-source").iter_errors(source_document)), key=lambda error: list(error.absolute_path))
+        output_errors = sorted(_schema_errors(validator_for("recommendation").iter_errors(document)), key=lambda error: list(error.absolute_path))
+        for error in [*source_errors, *output_errors]:
+            issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the field to match its JSON Schema contract."))
+        if not source_errors and not output_errors:
+            recommendations.append((path, document))
+            _validate_recommendation_public_security(path, root, document, issues)
+
+    for path in template_entry_paths:
         try:
             document = load_yaml(path)
         except (OSError, YamlContractError) as exc:
@@ -246,14 +258,29 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
             issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML with unique keys."))
             continue
-        schema_errors = sorted(_schema_errors(validator_for(schema_name).iter_errors(document)), key=lambda error: list(error.absolute_path))
+        schema_errors = sorted(_schema_errors(validator_for("entry").iter_errors(document)), key=lambda error: list(error.absolute_path))
         for error in schema_errors:
             issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the template to match its JSON Schema contract."))
         if not schema_errors:
-            if schema_name == "entry":
-                _validate_entry_public_security(path, root, document, issues)
-            else:
-                _validate_recommendation_public_security(path, root, document, issues)
+            _validate_entry_public_security(path, root, document, issues)
+
+    for path in template_recommendation_paths:
+        try:
+            document = load_recommendation(path)
+        except RecommendationContractError as exc:
+            issues.append(_issue(path, root, exc.field, exc.code, str(exc), "Use a complete Markdown template with YAML Frontmatter."))
+            continue
+        except (OSError, YamlContractError) as exc:
+            text = str(exc)
+            code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
+            issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML Frontmatter with unique keys."))
+            continue
+        source_document = {key: value for key, value in document.items() if key not in {"body", "body_format"}}
+        schema_errors = sorted(_schema_errors(validator_for("recommendation-source").iter_errors(source_document)), key=lambda error: list(error.absolute_path))
+        for error in schema_errors:
+            issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the template to match its source Schema contract."))
+        if not schema_errors:
+            _validate_recommendation_public_security(path, root, document, issues)
 
     for path in curation_paths:
         try:
@@ -307,6 +334,9 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     recommendation_paths_by_id: dict[str, list[Path]] = {}
     for path, recommendation in recommendations:
         recommendation_paths_by_id.setdefault(recommendation["id"], []).append(path)
+        expected = root / "recommendations" / f"{recommendation['id']}.md"
+        if path != expected:
+            issues.append(_issue(path, root, "id", "recommendation-path-mismatch", "Recommendation ID must match recommendations/<id>.md.", "Rename the file or correct its Frontmatter id."))
     for recommendation_id, paths in recommendation_paths_by_id.items():
         if len(paths) > 1:
             for path in paths:
