@@ -1,6 +1,6 @@
 # 技能共享平台实施状态
 
-更新时间：2026-09-16
+更新时间：2026-09-20
 
 ## 恢复入口
 
@@ -17,8 +17,8 @@
 | --- | --- | --- |
 | 0 基线与计划 | 已完成 | commit `90d34a0`；三份规格 SHA-256 与原目录一致 |
 | 1 目录契约 | 已完成 | commits `b3e93b4`、`31383e8`、`a133f8b`；22 项目录与 wheel 测试通过，任务复审 clean |
-| 2 贡献与目录构建 | 已完成 | commits `f4b462c`、`0d603d6`、`580cf97`、`aa49e60`、`3d2505e`；38 项测试与最终复审 clean；6 个公开技能、2 篇 ready 推荐 |
-| 3 静态站 | 已完成 | Astro 7.0.0 构建 16 个静态路由；Pagefind 1.5.2 Extended 仅索引 6 个技能详情与 4 类筛选；33 项真实查询通过，最终复审 clean |
+| 2 贡献与目录构建 | 已完成 | commits `f4b462c`、`0d603d6`、`580cf97`、`aa49e60`、`3d2505e`；目录契约与构建测试持续通过；44 个公开技能、4 篇 ready 推荐 |
+| 3 静态站 | 已完成 | Astro 7.0.0 构建 61 个静态路由；Pagefind 1.5.2 Extended 索引 44 个技能详情与 4 类筛选；36 项查询通过 |
 | 4 安装验证 | 已完成 | 27 项验证测试与 39 项目录测试通过；dirfd 原子发布、Git object 快照、失败分阶段报告及最终独立复审 clean |
 | 5 发布恢复 | 已完成 | 52 项发布/恢复测试通过；不可变快照、原子 no-clobber、历史验真、显式 tombstone 与最终独立复审 clean |
 | 6 feed 读取筛选 | 已完成 | 83 项 sharing 全套、57 项核心与 14 项对抗复现通过；双来源、撤回/不可用控制变化及最终独立复审 clean |
@@ -27,6 +27,7 @@
 | 9 迁移清理 | 已完成 | commit `91b3ec0`；只读 preview、固定 detached 旧版、新四入口、干净 wheel/sdist 和 21 项迁移清理测试通过 |
 | 10 文档与验收 | 已完成（本地边界） | commit `d57054d`；中文指南与可审计脚本已完成；隔离验收发现 275 项测试（其中 5 项递归验收测试按设计 skip），目录、站点、发布恢复、prepare/ack 全部通过；1,000/10,000 规模探针通过 |
 | 11 最终审阅 | 已完成（本地审阅） | 全分支本地审阅发现并修正规模 fixture 误用语义查询集；直接全测 275/275、锁文件 `npm ci`、Astro/Pagefind 与隔离验收通过；独立 reviewer 因代理用量上限未能启动，需在后续 PR 审阅补齐 |
+| 12 稳定系列与推荐中心 | 实施完成，待最终复审 | 固定提交收录 Superpowers 15 项和 Matt Pocock 25 项；推荐改用 Markdown Frontmatter；新增 `/recommendations/`、共享贡献提示词、安全渲染和精确关联技能检查 |
 
 ## 已知边界与决定
 
@@ -36,6 +37,8 @@
 - 本期不实现 bot 发送器、SDK/HTTP transport、平台签名、群卡、群回执或 bot mock。
 - 远端 push、PR、合入、正式部署和发群均未授权。
 - 2026-09-16 使用 Node.js v22.19.0 官方 Linux 包（官方 SHASUMS256 与本地摘要均为 `c0649af18e6a24f6fe5535a3e86b341dd49a8e71117c8b68bde973ef834f16f2`）完成隔离验收。报告为 `/tmp/hwskill-release-verification-20260916-v4.jsonl`（SHA-256 `13bc55c23640a7854cee718e7701b90d75fdcbfec0dc303beb143541e07ea1fe`）和 `/tmp/hwskill-scale-verification-20260916-v3.jsonl`（SHA-256 `b671cf52309bc7f810de90958d933f405987ce55a510f9be943b7594d197f10a`）。这些是本主机临时证据，不是远端部署证据。
+
+- Superpowers 与 Matt Pocock 共 40 个系列条目只完成来源、目录、许可证和元数据核验；逐项 installation/behavior 均未运行。Matt Pocock 的 `in-progress`、`misc`、`deprecated` 目录明确排除。未验证状态在网站显示警告，但不封锁用户复制安装提示词。
 
 ## Ruling 记录
 
