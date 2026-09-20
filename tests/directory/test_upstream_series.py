@@ -95,5 +95,26 @@ class UpstreamSeriesTests(unittest.TestCase):
                 self.assertTrue(any("安装和行为未运行" in item for item in entry["limitations"]))
 
 
+    def test_series_recommendations_cover_exact_inventory(self) -> None:
+        from hwskill.directory.recommendations import load_recommendation
+
+        superpowers = load_recommendation(ROOT / "recommendations/superpowers-engineering-workflow.md")
+        matt = load_recommendation(ROOT / "recommendations/matt-pocock-composable-engineering.md")
+        self.assertEqual({item["id"] for item in superpowers["skills"]}, {f"superpowers/{name}" for name in SUPERPOWERS})
+        self.assertEqual({item["id"] for item in matt["skills"]}, {f"mattpocock/{name}" for name in MATT_ENGINEERING | MATT_PRODUCTIVITY})
+        self.assertEqual(superpowers["status"], "ready")
+        self.assertEqual(matt["status"], "ready")
+        self.assertEqual(superpowers["body_format"], "markdown")
+        self.assertEqual(matt["body_format"], "markdown")
+        self.assertTrue(superpowers["summary"] and matt["summary"])
+        self.assertEqual(superpowers["evidence"][0]["url"], "https://github.com/obra/superpowers")
+        self.assertEqual(matt["evidence"][0]["url"], "https://github.com/mattpocock/skills")
+        self.assertTrue(superpowers["evidence"][0]["observed_at"].startswith("2026-09-20"))
+        self.assertTrue(matt["evidence"][0]["observed_at"].startswith("2026-09-20"))
+        for document in (superpowers, matt):
+            for heading in ("## 定位", "## 工作流", "## 适用场景", "## 成本与限制", "## 与另一个系列的比较", "## 组合边界", "## 验证状态"):
+                self.assertIn(heading, document["body"])
+
+
 if __name__ == "__main__":
     unittest.main()

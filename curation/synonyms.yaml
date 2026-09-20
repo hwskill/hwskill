@@ -3,3 +3,8 @@ synonyms:
   performance: [perf, 性能分析, c++]
   review: [pr, 代码检视, gitcode]
   slides: [ppt, pptx, 演示文稿]
+  planning: [计划, 规划, 实施方案, spec]
+  testing: [test, tdd, 测试驱动开发]
+  requirements: [需求, 需求访谈, questionnaire, grilling]
+  domain-modeling: [领域建模, 领域语言, domain]
+  agent-workflow: [agent 流程, 智能体工作流, skills]

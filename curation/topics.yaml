@@ -9,3 +9,11 @@ topics:
     title: 数据工程
   - slug: presentations
     title: 演示文稿
+  - slug: agent-workflow
+    title: Agent 工作流
+  - slug: software-engineering
+    title: 软件工程
+  - slug: domain-modeling
+    title: 领域建模
+  - slug: testing
+    title: 测试
