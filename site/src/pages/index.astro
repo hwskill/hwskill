@@ -1,10 +1,11 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import SkillCard from "../components/SkillCard.astro";
-import { curation, entries, recommendations } from "../lib/data";
+import { curation, entries, recommendationSummary, recommendations } from "../lib/data";
 import { sitePath } from "../lib/urls";
 
 const featured = entries.filter((item) => item.entry.lifecycle === "active").slice(0, 4);
+const featuredRecommendations = recommendations.slice(0, 2);
 ---
 <BaseLayout title="跨项目技能目录">
   <section class="hero">
@@ -31,9 +32,8 @@ const featured = entries.filter((item) => item.entry.lifecycle === "active").sli
       <div class="topic-links">{curation.topics?.map((topic) => <a href={sitePath(`/topics/${topic.slug}/`)}>{topic.title}<span>↗</span></a>)}</div>
     </div>
     <div>
-      <p class="eyebrow">推荐</p>
-      <h2>为什么值得尝试</h2>
-      <div class="recommendation-list">{recommendations.map((item) => <article><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a><p>{item.body}</p><span>由 {item.author} 推荐</span></article>)}</div>
+      <div class="section-heading"><div><p class="eyebrow">推荐</p><h2>为什么值得尝试</h2></div><a href={sitePath("/recommendations/")}>查看全部推荐</a></div>
+      <div class="recommendation-list">{featuredRecommendations.map((item) => <article><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a><p>{recommendationSummary(item)}</p><span>由 {item.author} 推荐</span></article>)}</div>
     </div>
   </section>
 </BaseLayout>

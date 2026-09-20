@@ -135,3 +135,25 @@ select { background: var(--panel); color: var(--ink); border: 1px solid var(--li
   .prose { padding: 1.1rem; margin-inline: -.4rem; }
   .skill-link-groups { grid-template-columns: 1fr; }
 }
+
+.recommendation-heading h1 { max-width: 15ch; }
+.recommendation-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); background: var(--line); }
+.recommendation-cards article { min-width: 0; padding: 1.5rem; background: var(--panel); display: flex; flex-direction: column; }
+.recommendation-cards h2 { font-size: 1.45rem; margin: 1.5rem 0 .8rem; }
+.recommendation-cards h2 a { text-decoration: none; }
+.recommendation-cards h2 a:hover, .text-action:hover { color: var(--accent); }
+.recommendation-cards article > p { color: var(--muted); flex: 1; }
+.recommendation-meta { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: .78rem; }
+.text-action { color: var(--accent-2); font-weight: 700; margin-top: 1rem; }
+.recommendation-contribution { margin-top: 4.5rem; padding: 2rem; border: 1px solid var(--accent); display: grid; grid-template-columns: .8fr 1.2fr; gap: 2rem; }
+.recommendation-contribution h2 { max-width: 16ch; }
+.prompt-box { min-width: 0; }
+.prompt-box textarea { width: 100%; resize: vertical; background: #090c0a; color: var(--ink); border: 1px solid var(--line); padding: 1rem; }
+.resource-links { display: flex; flex-wrap: wrap; gap: .65rem 1rem; }
+.resource-links a { color: var(--accent-2); }
+
+@media (max-width: 760px) {
+  .recommendation-cards, .recommendation-contribution { grid-template-columns: 1fr; }
+  .recommendation-contribution { padding: 1.2rem; }
+  .recommendation-meta { align-items: flex-start; flex-direction: column; gap: .2rem; }
+}

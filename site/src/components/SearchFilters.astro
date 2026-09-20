@@ -36,7 +36,7 @@ const pagefindBase = import.meta.env.BASE_URL;
   const status = document.querySelector<HTMLElement>("#search-status");
   const results = document.querySelector<HTMLElement>("#search-results");
   const synonyms = JSON.parse(panel?.dataset.synonyms ?? "{}") as Record<string, string[]>;
-  const MIN_RELATIVE_SCORE = 0.85;
+  const MIN_RELATIVE_SCORE = 0.8;
   let latestRequest = 0;
 
   function highlightCard(card: HTMLElement, terms: string[]): number {
@@ -68,8 +68,14 @@ const pagefindBase = import.meta.env.BASE_URL;
   function queryVariants(value: string): string[] {
     const normalized = value.trim().toLowerCase();
     if (!normalized) return [];
-    const canonical = Object.entries(synonyms).find(([, values]) => values.some((item) => item.toLowerCase() === normalized))?.[0];
+    const synonymEntries = Object.entries(synonyms);
+    const canonical = synonymEntries.find(([, values]) => values.some((item) => item.toLowerCase() === normalized))?.[0];
     if (canonical && normalized.length <= 3) return [canonical];
+    const shortToken = normalized.split(/\s+/u).find((token) => token.length <= 3);
+    const tokenCanonical = shortToken
+      ? synonymEntries.find(([, values]) => values.some((item) => item.toLowerCase() === shortToken))?.[0]
+      : undefined;
+    if (tokenCanonical) return [tokenCanonical];
     return canonical ? [value, canonical] : [value];
   }
 

@@ -93,8 +93,10 @@ export function topicAliases(slug: string): Set<string> {
 export function topicEntries(slug: string): CatalogItem[] {
   const aliases = topicAliases(slug);
   return entries.filter(({ entry }) => {
-    const terms = [...entry.purposes, ...(entry.keywords ?? [])].join(" ").toLowerCase();
-    return [...aliases].some((alias) => terms.includes(alias));
+    const fields = [...entry.purposes, ...(entry.keywords ?? [])].map((value) => value.toLowerCase());
+    return [...aliases].some((alias) => /[\u3400-\u9fff]/u.test(alias)
+      ? fields.some((field) => field === alias)
+      : fields.some((field) => field.includes(alias)));
   });
 }
 

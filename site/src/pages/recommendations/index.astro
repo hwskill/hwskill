@@ -1,0 +1,44 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import CopyPrompt from "../../components/CopyPrompt.astro";
+import { recommendationSummary, recommendations } from "../../lib/data";
+import { buildContributionUrls, buildRecommendationPrompt } from "../../lib/contribution-prompts";
+import { sitePath } from "../../lib/urls";
+
+const urls = buildContributionUrls(Astro.site!);
+const prompt = buildRecommendationPrompt(urls);
+---
+<BaseLayout title="技能推荐" description="从完整工作流和具体场景理解技能组合，并用 Agent 提示词贡献新的 Markdown 推荐文章。">
+  <header class="page-heading recommendation-heading">
+    <p class="eyebrow">技能推荐</p>
+    <h1>从场景理解技能，再选择组合</h1>
+    <p>当前收录 {recommendations.length} 篇可发布推荐。文章由 Markdown 维护，明确适用场景、成本、组合边界和验证状态。</p>
+  </header>
+  <section class="section-block">
+    <div class="recommendation-cards">
+      {recommendations.map((item) => <article>
+        <div class="recommendation-meta"><span>{item.skills.length} 个关联技能</span><span>由 {item.author} 推荐</span></div>
+        <h2><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a></h2>
+        <p>{recommendationSummary(item)}</p>
+        {item.topics?.length && <ul class="chip-list">{item.topics.map((topic) => <li>{topic}</li>)}</ul>}
+        <a class="text-action" href={sitePath(`/recommendations/${item.id}/`)}>阅读全文 →</a>
+      </article>)}
+    </div>
+  </section>
+  <section class="recommendation-contribution">
+    <div>
+      <p class="eyebrow">贡献推荐</p>
+      <h2>复制提示词，让 Agent 创建可审阅的 PR</h2>
+      <p>补充主题、技能与公开依据后交给 Agent。推荐正文使用 Markdown；来源事实、验证状态和作者判断需要清楚区分。未验证技能仍可提供安装提示词，但必须显示验证边界。</p>
+      <p><strong>未收录技能必须在同一个 Pull Request 中补齐</strong>，推荐与关联条目会一起校验。</p>
+      <div class="resource-links">
+        <a href={urls.agentGuide}>完整 Agent 指引</a>
+        <a href={urls.recommendationSchema}>Recommendation Source Schema</a>
+        <a href={urls.recommendationTemplate}>Markdown 推荐模板</a>
+        <a href={urls.contributionRules}>贡献规范</a>
+        <a href={urls.repository}>GitHub 仓库</a>
+      </div>
+    </div>
+    <div class="prompt-box"><CopyPrompt id="recommendation-hub-prompt" label="复制推荐贡献提示词" value={prompt} rows={20} /></div>
+  </section>
+</BaseLayout>

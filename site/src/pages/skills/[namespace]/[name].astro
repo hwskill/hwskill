@@ -2,7 +2,7 @@
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import InstallPrompt from "../../../components/InstallPrompt.astro";
 import VerificationMatrix from "../../../components/VerificationMatrix.astro";
-import { curation, entries, recommendations, sourceRepository, topicAliases, topicEntries, verificationLabel, verificationState, type CatalogItem } from "../../../lib/data";
+import { curation, entries, recommendationSummary, recommendations, sourceRepository, topicAliases, topicEntries, verificationLabel, verificationState, type CatalogItem } from "../../../lib/data";
 import { sitePath } from "../../../lib/urls";
 
 export function getStaticPaths() {
@@ -42,7 +42,7 @@ const searchTerms = (curation.topics ?? [])
     </header>
     <section class="detail-grid">
       <div>
-        <section><p class="eyebrow">适合这些任务</p><ul class="purpose-list">{entry.purposes.map((purpose) => <li>{purpose}</li>)}</ul></section>
+        <section><p class="eyebrow">适合这些任务</p><ul class="purpose-list" data-pagefind-weight="2">{entry.purposes.map((purpose) => <li>{purpose}</li>)}</ul></section>
         <section><p class="eyebrow">可以这样开始</p>{entry.examples.map((example) => <div class="example"><p>{example.prompt}</p><span>预期：{example.expected_outcome}</span></div>)}</section>
         {entry.limitations?.length && <section><p class="eyebrow">已知限制</p><ul>{entry.limitations.map((item) => <li>{item}</li>)}</ul></section>}
       </div>
@@ -60,6 +60,6 @@ const searchTerms = (curation.topics ?? [])
     </section>
     <section class="section-block"><div class="section-heading"><div><p class="eyebrow">验证矩阵</p><h2>{verification}</h2></div></div><VerificationMatrix summary={item.verification_summary} /></section>
     <InstallPrompt id={entry.id} installCapability={item.install_capability} lifecycleReason={entry.lifecycle_reason} />
-    {related.length > 0 && <section class="section-block"><p class="eyebrow">关联推荐</p><div class="recommendation-list">{related.map((rec) => <article><a href={sitePath(`/recommendations/${rec.id}/`)}>{rec.title}</a><p>{rec.body}</p></article>)}</div></section>}
+    {related.length > 0 && <section class="section-block"><p class="eyebrow">关联推荐</p><div class="recommendation-list">{related.map((rec) => <article><a href={sitePath(`/recommendations/${rec.id}/`)}>{rec.title}</a><p>{recommendationSummary(rec)}</p></article>)}</div></section>}
   </article>
 </BaseLayout>

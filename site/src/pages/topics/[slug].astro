@@ -1,7 +1,7 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import SkillCard from "../../components/SkillCard.astro";
-import { curation, recommendations, topicEntries } from "../../lib/data";
+import { curation, recommendationSummary, recommendations, topicEntries } from "../../lib/data";
 import { sitePath } from "../../lib/urls";
 
 export function getStaticPaths() {
@@ -15,5 +15,5 @@ const relatedRecommendations = recommendations.filter((item) => item.topics?.inc
 <BaseLayout title={`${topic.title}技能`}>
   <header class="page-heading"><p class="eyebrow">用途主题</p><h1>{topic.title}</h1><p>从已校验目录字段与维护同义词确定性聚合。</p></header>
   <section class="section-block"><div class="section-heading"><h2>相关技能</h2><span>{matched.length} 项</span></div>{matched.length ? <div class="card-grid">{matched.map((item) => <SkillCard item={item} />)}</div> : <p class="empty-state">当前没有匹配的公开技能。</p>}</section>
-  {relatedRecommendations.length > 0 && <section class="section-block"><h2>相关推荐</h2><div class="recommendation-list">{relatedRecommendations.map((item) => <article><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a><p>{item.body}</p></article>)}</div></section>}
+  {relatedRecommendations.length > 0 && <section class="section-block"><h2>相关推荐</h2><div class="recommendation-list">{relatedRecommendations.map((item) => <article><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a><p>{recommendationSummary(item)}</p></article>)}</div></section>}
 </BaseLayout>

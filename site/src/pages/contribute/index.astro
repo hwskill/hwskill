@@ -1,36 +1,11 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import { sitePath } from "../../lib/urls";
+import CopyPrompt from "../../components/CopyPrompt.astro";
+import { buildContributionUrls, buildRecommendationPrompt, buildSkillPrompt } from "../../lib/contribution-prompts";
 
-const repository = "https://github.com/hwskill/hwskill";
-const absolute = (path: string) => new URL(sitePath(path), Astro.site).href;
-const agentGuide = absolute("/contribute/agent.md");
-const contributionRules = absolute("/contribute/CONTRIBUTING.md");
-const catalog = absolute("/data/catalog.json");
-const entrySchema = absolute("/schemas/entry.schema.json");
-const recommendationSchema = absolute("/schemas/recommendation-source.schema.json");
-const externalTemplate = absolute("/templates/entries/external.yaml");
-const hostedTemplate = absolute("/templates/entries/hosted.yaml");
-const recommendationTemplate = absolute("/templates/recommendations/recommendation.md");
-
-const skillPrompt = `请为 HWSkill 贡献一个技能，最终创建 Pull Request 并返回 URL。
-
-技能来源：<粘贴仓库、网页或本地 hosted 目录>
-实际用途：<说明希望解决的任务>
-
-目标仓库：${repository}
-请先读取贡献指引 ${agentGuide}、贡献规范 ${contributionRules}、当前目录 ${catalog}、Entry Schema ${entrySchema}，并根据来源类型读取 external 模板 ${externalTemplate} 或 hosted 模板 ${hostedTemplate}。检查重复 ID，核对公开来源、不可变版本、许可证、兼容性、依赖和限制；不要执行上游脚本，不要伪造安装或行为验证。创建条目后运行目录 validate 和 build，审阅仅包含本次贡献的差异并准备 PR 说明。本提示词授权你为这次贡献创建分支、提交、推送并向目标仓库默认分支创建 Pull Request，但不授权合并；不要在准备好 PR 文案后停下。最终返回 PR URL 和验证结果。若缺少必要来源事实、GitHub 凭据或仓库权限，明确指出阻塞项，不要声称已经创建 PR。`;
-
-const recommendationPrompt = `请为 HWSkill 贡献一篇推荐文章，最终创建 Pull Request 并返回 URL。
-
-推荐主题：<填写主题>
-关联技能名称、ID 或来源：<填写一个或多个>
-推荐理由：<说明适用场景和价值>
-公开作者名称：<填写作者或团队>
-公开证据：<可选链接；没有证据时不要声称实测效果>
-
-目标仓库：${repository}
-请先读取贡献指引 ${agentGuide}、贡献规范 ${contributionRules}、当前目录 ${catalog}、Recommendation Schema ${recommendationSchema} 和推荐模板 ${recommendationTemplate}。逐个检查关联技能是否已收录；技能未收录时，同时读取 Entry Schema ${entrySchema} 及 external 模板 ${externalTemplate} 或 hosted 模板 ${hostedTemplate}，补齐技能条目，并与推荐文章放在同一个 Pull Request。只有全部关联技能都存在、有效且可发布时才把推荐设为 ready；否则保留 draft 并说明缺失信息。完成后运行目录 validate 和 build，审阅仅包含本次贡献的差异并准备 PR 说明。本提示词授权你为这次贡献创建分支、提交、推送并向目标仓库默认分支创建 Pull Request，但不授权合并；不要在准备好 PR 文案后停下。最终返回 PR URL 和验证结果。若缺少必要事实、GitHub 凭据或仓库权限，明确指出阻塞项，不要声称已经创建 PR。`;
+const urls = buildContributionUrls(Astro.site!);
+const skillPrompt = buildSkillPrompt(urls);
+const recommendationPrompt = buildRecommendationPrompt(urls);
 ---
 <BaseLayout title="贡献技能与推荐文章">
   <header class="page-heading">
@@ -45,26 +20,14 @@ const recommendationPrompt = `请为 HWSkill 贡献一篇推荐文章，最终�
   </section>
   <section class="install-panel">
     <div><p class="eyebrow">入口一</p><h2>贡献技能</h2><p>适合提交公开外部技能或本仓托管技能。</p></div>
-    <textarea id="skill-contribution-prompt" readonly rows="14">{skillPrompt}</textarea>
-    <div class="install-actions"><button type="button" data-copy-target="skill-contribution-prompt">复制技能贡献提示词</button></div>
+    <CopyPrompt id="skill-contribution-prompt" label="复制技能贡献提示词" value={skillPrompt} rows={14} />
   </section>
   <section class="install-panel">
     <div><p class="eyebrow">入口二</p><h2>贡献推荐文章</h2><p>可以引用多个技能；缺失技能会先作为同一贡献的一部分补齐。</p></div>
-    <textarea id="recommendation-contribution-prompt" readonly rows="17">{recommendationPrompt}</textarea>
-    <div class="install-actions"><button type="button" data-copy-target="recommendation-contribution-prompt">复制推荐文章提示词</button></div>
+    <CopyPrompt id="recommendation-contribution-prompt" label="复制推荐文章提示词" value={recommendationPrompt} rows={19} />
   </section>
   <section class="section-block">
     <h2>进一步核对</h2>
-    <div class="install-actions"><a href={agentGuide}>完整 Agent 指引</a><a href={contributionRules}>贡献规范</a><a href={catalog}>当前技能目录</a><a href={repository}>GitHub 仓库</a></div>
+    <div class="resource-links"><a href={urls.agentGuide}>完整 Agent 指引</a><a href={urls.contributionRules}>贡献规范</a><a href={urls.catalog}>当前技能目录</a><a href={urls.repository}>GitHub 仓库</a></div>
   </section>
-  <script>
-    document.querySelectorAll<HTMLButtonElement>("[data-copy-target]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const textarea = document.getElementById(button.dataset.copyTarget ?? "") as HTMLTextAreaElement | null;
-        if (!textarea) return;
-        try { await navigator.clipboard.writeText(textarea.value); button.textContent = "已复制"; }
-        catch { textarea.focus(); textarea.select(); textarea.setSelectionRange(0, textarea.value.length); button.textContent = "请手动复制所选文本"; }
-      });
-    });
-  </script>
 </BaseLayout>

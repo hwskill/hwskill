@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
 const cases = JSON.parse(readFileSync(resolve(root, "search-cases.json"), "utf8"));
 const curation = JSON.parse(readFileSync(resolve(root, ".generated/directory/curation.json"), "utf8"));
-const MIN_RELATIVE_SCORE = 0.85;
+const MIN_RELATIVE_SCORE = 0.8;
 const mime = { ".js": "text/javascript", ".json": "application/json", ".wasm": "application/wasm", ".css": "text/css", ".html": "text/html" };
 
 const server = createServer((request, response) => {
@@ -30,8 +30,14 @@ const origin = `http://127.0.0.1:${address.port}`;
 function queryVariants(value) {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return [];
-  const canonical = Object.entries(curation.synonyms ?? {}).find(([, values]) => values.some((item) => item.toLowerCase() === normalized))?.[0];
+  const synonymEntries = Object.entries(curation.synonyms ?? {});
+  const canonical = synonymEntries.find(([, values]) => values.some((item) => item.toLowerCase() === normalized))?.[0];
   if (canonical && normalized.length <= 3) return [canonical];
+  const shortToken = normalized.split(/\s+/u).find((token) => token.length <= 3);
+  const tokenCanonical = shortToken
+    ? synonymEntries.find(([, values]) => values.some((item) => item.toLowerCase() === shortToken))?.[0]
+    : undefined;
+  if (tokenCanonical) return [tokenCanonical];
   return canonical ? [value, canonical] : [value];
 }
 
