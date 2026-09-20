@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .models import DirectoryIssue, ValidationReport
 from .recommendations import RecommendationContractError, load_recommendation
 from .schema import validator_for
+from .translations import TranslationContractError, load_translation, translation_path
 from .yaml_io import YamlContractError, load_yaml
 
 
@@ -206,13 +207,15 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     root = repo_root.resolve()
     entry_paths = sorted((root / "entries").rglob("*.yaml")) if (root / "entries").is_dir() else []
     recommendation_paths = sorted((root / "recommendations").rglob("*.md")) if (root / "recommendations").is_dir() else []
+    translation_paths = sorted((root / "translations").rglob("*.md")) if (root / "translations").is_dir() else []
     template_entry_paths = sorted((root / "templates" / "entries").rglob("*.yaml")) if (root / "templates" / "entries").is_dir() else []
     template_recommendation_paths = sorted((root / "templates" / "recommendations").rglob("*.md")) if (root / "templates" / "recommendations").is_dir() else []
     curation_paths = sorted((root / "curation").glob("*.yaml")) if (root / "curation").is_dir() else []
-    all_paths = [*entry_paths, *recommendation_paths, *template_entry_paths, *template_recommendation_paths, *curation_paths]
+    all_paths = [*entry_paths, *recommendation_paths, *translation_paths, *template_entry_paths, *template_recommendation_paths, *curation_paths]
     issues: list[DirectoryIssue] = []
     entries: list[tuple[Path, dict[str, Any]]] = []
     recommendations: list[tuple[Path, dict[str, Any]]] = []
+    translations: list[tuple[Path, dict[str, Any]]] = []
     curation_sections: set[str] = set()
 
     for path in entry_paths:
@@ -249,6 +252,35 @@ def validate_repository(repo_root: Path) -> ValidationReport:
         if not source_errors and not output_errors:
             recommendations.append((path, document))
             _validate_recommendation_public_security(path, root, document, issues)
+
+    for path in translation_paths:
+        try:
+            document = load_translation(path)
+        except TranslationContractError as exc:
+            issues.append(_issue(path, root, exc.field, exc.code, str(exc), "Use a complete Markdown translation with YAML Frontmatter."))
+            continue
+        except (OSError, YamlContractError) as exc:
+            text = str(exc)
+            code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
+            issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML Frontmatter with unique keys."))
+            continue
+        skill_id = document.get("skill_id")
+        if isinstance(skill_id, str):
+            try:
+                expected = translation_path(root, skill_id)
+            except ValueError:
+                expected = None
+            if expected is not None and path != expected:
+                issues.append(_issue(path, root, "skill_id", "translation-path-mismatch", "Translation skill_id must match translations/<namespace>/<name>.md.", "Rename the file or correct its Frontmatter skill_id."))
+        source_document = {key: value for key, value in document.items() if key not in {"body", "body_format"}}
+        schema_errors = sorted(
+            _schema_errors(validator_for("translation-source").iter_errors(source_document)),
+            key=lambda error: list(error.absolute_path),
+        )
+        for error in schema_errors:
+            issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the translation Frontmatter to match its source Schema contract."))
+        if not schema_errors:
+            translations.append((path, document))
 
     for path in template_entry_paths:
         try:
@@ -326,6 +358,28 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             else:
                 identities[identity] = path
 
+    translations_by_id: dict[str, list[Path]] = {}
+    valid_translation_ids: set[str] = set()
+    for path, translation in translations:
+        skill_id = translation["skill_id"]
+        translations_by_id.setdefault(skill_id, []).append(path)
+        expected = translation_path(root, skill_id)
+        if path != expected:
+            continue
+        elif skill_id not in by_id:
+            issues.append(_issue(path, root, "skill_id", "translation-orphan", f"Translation references missing skill {skill_id!r}.", "Add the matching Entry or remove the orphan translation."))
+        else:
+            valid_translation_ids.add(skill_id)
+    for skill_id, paths in translations_by_id.items():
+        if len(paths) > 1:
+            valid_translation_ids.discard(skill_id)
+            for path in paths:
+                issues.append(_issue(path, root, "skill_id", "duplicate-translation-id", f"Duplicate translation skill_id {skill_id!r}.", "Use one translation file per skill."))
+
+    for entry_id, (path, _) in by_id.items():
+        if entry_id not in valid_translation_ids:
+            issues.append(_issue(path, root, "translation", "translation-missing", f"Publishable entry {entry_id!r} requires a valid Chinese translation.", f"Add {translation_path(root, entry_id).relative_to(root)}."))
+
     for path, entry in entries:
         replacement_id = entry.get("replacement_id")
         if replacement_id is not None and replacement_id not in by_id:
@@ -347,6 +401,7 @@ def validate_repository(repo_root: Path) -> ValidationReport:
         entry_id for entry_id, (path, entry) in by_id.items()
         if len(entry_paths_by_id[entry_id]) == 1
         and str(path.relative_to(root)) not in invalid_files
+        and entry_id in valid_translation_ids
         and entry.get("lifecycle", "active") == "active"
     }
     for path, recommendation in recommendations:
@@ -360,7 +415,10 @@ def validate_repository(repo_root: Path) -> ValidationReport:
                 issues.append(_issue(path, root, "skills", "recommendation-unpublishable-entry", f"Ready recommendation references invalid entry {skill['id']!r}.", "Fix the entry before publishing this recommendation."))
 
     invalid_files = {issue.file for issue in issues}
-    publishable_entries = tuple(sorted(entry_id for entry_id, (path, entry) in by_id.items() if str(path.relative_to(root)) not in invalid_files))
+    publishable_entries = tuple(sorted(
+        entry_id for entry_id, (path, entry) in by_id.items()
+        if str(path.relative_to(root)) not in invalid_files and entry_id in valid_translation_ids
+    ))
     publishable_recommendations = tuple(sorted(
         recommendation["id"] for path, recommendation in recommendations
         if recommendation["status"] in {"ready", "withdrawn"}

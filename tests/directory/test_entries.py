@@ -30,6 +30,102 @@ class DirectoryValidationTests(unittest.TestCase):
         self.assertEqual(report.publishable_entry_ids, ("local/hosted", "upstream/external"))
         self.assertEqual(report.publishable_recommendation_ids, ("review-tools",))
 
+    def test_translation_loader_normalizes_crlf_and_appends_one_newline(self) -> None:
+        from hwskill.directory.translations import load_translation, translation_path
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = translation_path(root, "local/hosted")
+            path.parent.mkdir(parents=True)
+            path.write_bytes(
+                b"---\r\nschema_version: 1\r\nskill_id: local/hosted\r\n"
+                b"translated_at: 2026-09-20\r\n---\r\n\r\n# Translation\r\n\r\n"
+            )
+
+            document = load_translation(path)
+
+        self.assertEqual(document["skill_id"], "local/hosted")
+        self.assertEqual(document["body_format"], "markdown")
+        self.assertEqual(document["body"], "# Translation\n")
+
+    def test_translation_loader_rejects_invalid_frontmatter_and_empty_body(self) -> None:
+        from hwskill.directory.translations import TranslationContractError, load_translation
+
+        cases = {
+            "missing-opening.md": ("schema_version: 1\n", "translation-frontmatter-missing"),
+            "missing-closing.md": ("---\nschema_version: 1\n", "translation-frontmatter-unclosed"),
+            "empty-body.md": (
+                "---\nschema_version: 1\nskill_id: local/hosted\ntranslated_at: 2026-09-20\n---\n   \n",
+                "translation-body-empty",
+            ),
+        }
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, (contents, expected_code) in cases.items():
+                with self.subTest(name=name):
+                    path = root / name
+                    path.write_text(contents, encoding="utf-8")
+                    with self.assertRaises(TranslationContractError) as raised:
+                        load_translation(path)
+                    self.assertEqual(raised.exception.code, expected_code)
+
+    def test_translation_loader_preserves_duplicate_key_error(self) -> None:
+        from hwskill.directory.translations import load_translation
+        from hwskill.directory.yaml_io import YamlContractError
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "duplicate.md"
+            path.write_text(
+                "---\nschema_version: 1\nskill_id: local/hosted\n"
+                "skill_id: local/other\ntranslated_at: 2026-09-20\n---\nBody\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(YamlContractError):
+                load_translation(path)
+
+    def test_translation_requires_matching_skill_id_and_valid_frontmatter(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        hosted = root / "translations/local/hosted.md"
+        hosted.parent.mkdir(parents=True, exist_ok=True)
+        hosted.write_text(
+            "---\nschema_version: 1\nskill_id: local/other\n"
+            "translated_at: yesterday\nunexpected: true\n---\n\n# Hosted\n",
+            encoding="utf-8",
+        )
+
+        report = validate_repository(root)
+        codes = {issue.code for issue in report.issues}
+        self.assertIn("translation-path-mismatch", codes)
+        self.assertIn("schema-format", codes)
+        self.assertIn("schema-additionalProperties", codes)
+
+    def test_publishable_entry_requires_translation_and_orphans_are_rejected(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        missing = root / "translations/local/hosted.md"
+        missing.unlink()
+        orphan = root / "translations/local/orphan.md"
+        orphan.write_text(
+            "---\nschema_version: 1\nskill_id: local/orphan\n"
+            "translated_at: 2026-09-20\n---\n\n# Orphan\n",
+            encoding="utf-8",
+        )
+
+        report = validate_repository(root)
+        codes = {issue.code for issue in report.issues}
+        self.assertIn("translation-missing", codes)
+        self.assertIn("translation-orphan", codes)
+        self.assertNotIn("local/hosted", report.publishable_entry_ids)
+
     def test_rejects_duplicate_yaml_key(self) -> None:
         report = self.validate("duplicate-key")
         self.assertTrue(any(issue.code == "yaml-duplicate-key" for issue in report.issues))

@@ -293,6 +293,13 @@ class DirectoryBuildTests(unittest.TestCase):
             "license:\n  status: unknown\n",
             encoding="utf-8",
         )
+        translation = root / "translations/local/web.md"
+        translation.parent.mkdir(parents=True, exist_ok=True)
+        translation.write_text(
+            "---\nschema_version: 1\nskill_id: local/web\n"
+            "translated_at: 2026-09-20\n---\n\n# Web source\n",
+            encoding="utf-8",
+        )
         with TemporaryDirectory() as directory:
             output = Path(directory) / "out"
             build_repository(root, output)

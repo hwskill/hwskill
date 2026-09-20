@@ -30,7 +30,7 @@ class DirectoryWheelTests(unittest.TestCase):
             )
             environment = {**os.environ, "PYTHONPATH": f"{target}:/usr/lib/python3/dist-packages"}
             completed = subprocess.run(
-                [sys.executable, "-c", "from hwskill.directory.schema import validator_for; validator_for('entry'); validator_for('recommendation-source'); print('ok')"],
+                [sys.executable, "-c", "from hwskill.directory.schema import validator_for; validator_for('entry'); validator_for('recommendation-source'); validator_for('translation-source'); print('ok')"],
                 check=True, capture_output=True, text=True, env=environment,
             )
             self.assertEqual(completed.stdout, "ok\n")
