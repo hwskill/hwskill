@@ -11,6 +11,40 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class DirectoryBuildTests(unittest.TestCase):
+    def test_catalog_v2_contains_translation_without_durable_verification_state(self) -> None:
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        external = root / "entries/l2/upstream/external.yaml"
+        external.write_text(
+            external.read_text(encoding="utf-8")
+            .replace("https://example.com/org/repository.git", "https://github.com/example/repository.git")
+            .replace("    file_url: https://example.com/source/SKILL.md\n", "")
+            .replace("ref: v1.2.3", "ref: main"),
+            encoding="utf-8",
+        )
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            catalog = json.loads((output / "catalog.json").read_text(encoding="utf-8"))
+            status = json.loads((output / "status.json").read_text(encoding="utf-8"))
+            item = next(value for value in catalog["entries"] if value["entry"]["id"] == "upstream/external")
+
+        self.assertEqual(catalog["schema_version"], 2)
+        from hwskill.directory.schema import validator_for
+        self.assertEqual(list(validator_for("catalog").iter_errors(catalog)), [])
+        self.assertEqual(set(item), {"entry", "entry_digest", "lifecycle", "translation"})
+        self.assertNotIn("source_identity", item)
+        self.assertNotIn("verification_summary", item)
+        self.assertNotIn("install_capability", item)
+        self.assertEqual(item["translation"]["body_format"], "markdown")
+        self.assertEqual(item["translation"]["translated_at"], "2026-09-20")
+        self.assertEqual(
+            item["translation"]["source_url"],
+            "https://github.com/example/repository/blob/main/skills/review/SKILL.md",
+        )
+        self.assertNotIn("verification_note", status)
     def test_build_publishes_current_contribution_templates_for_agent_prompts(self) -> None:
         from hwskill.directory.catalog import build_repository
 
@@ -49,9 +83,9 @@ class DirectoryBuildTests(unittest.TestCase):
             guide = (output / "skills/upstream/external/install.md").read_text(encoding="utf-8")
             self.assertEqual(item["entry"]["install"]["included_skills"], ["external", "dependency"])
             self.assertEqual(install["install"]["included_skills"], ["external", "dependency"])
-            self.assertIn("同时安装：external、dependency", guide)
+            self.assertIn("同时包含：external、dependency", guide)
 
-    def test_incomplete_hosted_identity_does_not_offer_install_steps(self) -> None:
+    def test_hosted_install_prompt_requires_agent_checks(self) -> None:
         from hwskill.directory.catalog import _install_markdown
 
         entry = {
@@ -60,30 +94,26 @@ class DirectoryBuildTests(unittest.TestCase):
             "source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"},
             "install": {"method": "directory", "default_scope": "project"},
         }
-        guide = _install_markdown(entry, {"resolved_revision": "a" * 40, "content_digest": None})
-        self.assertIn("安装前需自行核对", guide)
-        self.assertIn("可自行从来源取得技能", guide)
-        self.assertNotIn("复制整个技能目录", guide)
+        guide = _install_markdown(entry)
+        self.assertIn("完整技能目录及配套文件", guide)
+        self.assertIn("不要覆盖已有同名技能", guide)
+        self.assertIn("报告实际来源、目标路径和结果", guide)
+        self.assertNotIn("验证状态", guide)
 
-    def test_unresolved_sources_only_offer_guidance_even_with_an_install_method(self) -> None:
+    def test_optional_ref_is_described_without_a_verification_claim(self) -> None:
         from hwskill.directory.catalog import build_repository
 
         root = self.make_repository()
         with TemporaryDirectory() as directory:
             output = Path(directory) / "out"
             build_repository(root, output)
-            items = {
-                item["entry"]["id"]: item
-                for item in json.loads((output / "catalog.json").read_text(encoding="utf-8"))["entries"]
-            }
-            self.assertEqual(items["local/hosted"]["install_capability"], "guidance_only")
-            self.assertEqual(items["upstream/external"]["install_capability"], "guidance_only")
             external_guide = (output / "skills/upstream/external/install.md").read_text(encoding="utf-8")
-            self.assertIn("安装前需自行核对", external_guide)
-            self.assertIn("可自行从来源取得技能", external_guide)
+            self.assertIn("ref：v1.2.3", external_guide)
             self.assertIn("v1.2.3", external_guide)
+            self.assertNotIn("已验证", external_guide)
+            self.assertNotIn("解析提交", external_guide)
 
-    def test_fixed_hosted_directory_remains_installable(self) -> None:
+    def test_hosted_content_is_copied_without_derived_capability(self) -> None:
         from hwskill.directory.catalog import build_repository
 
         root = self.make_repository()
@@ -94,14 +124,11 @@ class DirectoryBuildTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             output = Path(directory) / "out"
             build_repository(root, output)
-            items = {
-                item["entry"]["id"]: item
-                for item in json.loads((output / "catalog.json").read_text(encoding="utf-8"))["entries"]
-            }
-            self.assertEqual(items["local/hosted"]["install_capability"], "installable")
-            self.assertEqual(items["upstream/external"]["install_capability"], "guidance_only")
+            items = json.loads((output / "catalog.json").read_text(encoding="utf-8"))["entries"]
+            self.assertTrue((output / "skills/local/hosted/content/SKILL.md").is_file())
+            self.assertTrue(all("install_capability" not in item for item in items))
 
-    def test_hosted_install_guide_identifies_an_immutable_complete_source(self) -> None:
+    def test_hosted_install_guide_links_to_the_current_original_file(self) -> None:
         from hwskill.directory.catalog import _install_markdown
 
         entry = {
@@ -110,9 +137,8 @@ class DirectoryBuildTests(unittest.TestCase):
             "source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"},
             "install": {"method": "directory", "default_scope": "project"},
         }
-        guide = _install_markdown(entry, {"resolved_revision": "a" * 40, "content_digest": "sha256:" + "b" * 64})
-        self.assertIn("https://github.com/hwskill/hwskill/tree/" + "a" * 40 + "/skills-src/l1/local/hosted", guide)
-        self.assertIn("复制整个技能目录", guide)
+        guide = _install_markdown(entry)
+        self.assertIn("https://github.com/hwskill/hwskill/blob/HEAD/skills-src/l1/local/hosted/SKILL.md", guide)
         self.assertIn("SKILL.md", guide)
         self.assertIn("不要覆盖", guide)
 
@@ -206,10 +232,11 @@ class DirectoryBuildTests(unittest.TestCase):
             expected = dict(install)
             self.assertEqual(install["install_digest"], sha256_bytes(canonical_json({key: value for key, value in expected.items() if key != "install_digest"})))
             self.assertEqual(install["install"]["method"], "unknown")
-            self.assertEqual(install["verification_summary"]["installation"]["result"], "not_run")
+            self.assertEqual(install["schema_version"], 2)
+            self.assertNotIn("verification_summary", install)
             markdown = (out / "skills/upstream/external/install.md").read_text(encoding="utf-8")
             self.assertIn("安装方式：unknown", markdown)
-            self.assertIn("未提供可执行安装命令", markdown)
+            self.assertIn("不要猜测命令", markdown)
             self.assertNotIn("npx ", markdown)
 
     def test_build_keeps_withdrawn_recommendation_tombstones_but_excludes_drafts(self) -> None:
@@ -232,16 +259,11 @@ class DirectoryBuildTests(unittest.TestCase):
             [("retired-guide", "withdrawn"), ("review-tools", "ready")],
         )
 
-    def test_hosted_source_identity_uses_the_fixed_build_revision(self) -> None:
-        """A hosted report cannot bind a mutable working directory as its source revision."""
-        from hwskill.directory.catalog import _identity
+    def test_hosted_source_url_does_not_publish_a_resolved_revision(self) -> None:
+        from hwskill.directory.catalog import build_source_url
 
-        identity = _identity(
-            {"source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"}},
-            Path("/repository"),
-            "a" * 40,
-        )
-        self.assertEqual(identity["resolved_revision"], "a" * 40)
+        url = build_source_url({"source": {"kind": "hosted", "path": "skills-src/l1/local/hosted"}})
+        self.assertEqual(url, "https://github.com/hwskill/hwskill/blob/HEAD/skills-src/l1/local/hosted/SKILL.md")
 
     def test_catalog_keeps_display_metadata_and_external_install_is_human_readable(self) -> None:
         """Dropping display fields or exposing the internal NUL identity breaks consumers."""
@@ -252,7 +274,7 @@ class DirectoryBuildTests(unittest.TestCase):
         hosted.write_text(hosted.read_text(encoding="utf-8") + "owner: directory-team\nkeywords: [review, evidence]\nlimitations: [requires local checkout]\n", encoding="utf-8")
         external = root / "entries/l2/upstream/external.yaml"
         revision = "a" * 40
-        external.write_text(external.read_text(encoding="utf-8").replace("requested_ref: v1.2.3", f"requested_ref: {revision}"), encoding="utf-8")
+        external.write_text(external.read_text(encoding="utf-8").replace("ref: v1.2.3", f"ref: {revision}"), encoding="utf-8")
         with TemporaryDirectory() as directory:
             out = Path(directory) / "out"
             build_repository(root, out)
@@ -262,15 +284,14 @@ class DirectoryBuildTests(unittest.TestCase):
             self.assertEqual(hosted_catalog["owner"], "directory-team")
             self.assertEqual(hosted_catalog["keywords"], ["review", "evidence"])
             self.assertEqual(hosted_catalog["limitations"], ["requires local checkout"])
-            self.assertEqual(external_catalog["source_identity"]["requested_ref"], revision)
-            self.assertIsNone(external_catalog["source_identity"]["resolved_revision"])
+            self.assertEqual(external_catalog["entry"]["source"]["locator"]["ref"], revision)
+            self.assertNotIn("source_identity", external_catalog)
             install = json.loads((out / "skills/upstream/external/install.json").read_text(encoding="utf-8"))
             markdown = (out / "skills/upstream/external/install.md").read_text(encoding="utf-8")
             self.assertEqual(install["skill_id"], "upstream/external")
-            self.assertEqual(install["source"]["repository"], "https://example.com/org/repository.git")
-            self.assertEqual(install["source"]["path"], "skills/review")
-            self.assertEqual(install["source"]["requested_ref"], revision)
-            self.assertIsNone(install["source"]["resolved_revision"])
+            self.assertEqual(install["source"]["locator"]["repository"], "https://example.com/org/repository.git")
+            self.assertEqual(install["source"]["locator"]["path"], "skills/review")
+            self.assertEqual(install["source"]["locator"]["ref"], revision)
             self.assertEqual(install["install"]["default_scope"], "project")
             self.assertNotIn("\0", markdown)
             self.assertIn("https://example.com/org/repository.git", markdown)
@@ -283,7 +304,7 @@ class DirectoryBuildTests(unittest.TestCase):
 
         root = self.make_repository()
         (root / "entries/l1/local/web.yaml").write_text(
-            "schema_version: 1\nid: local/web\nname: Web source\n"
+            "schema_version: 2\nid: local/web\nname: Web source\n"
             "summary: An externally hosted web skill.\nlayer: l1\npurposes: [testing]\n"
             "examples:\n  - prompt: Test it.\n    expected_outcome: Evidence.\n"
             "source:\n  kind: external\n  publicity: public\n  locator:\n"
@@ -307,14 +328,11 @@ class DirectoryBuildTests(unittest.TestCase):
             item = next(item for item in catalog["entries"] if item["entry"]["id"] == "local/web")
             install = json.loads((output / "skills/local/web/install.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(
-            set(install["source"]),
-            {"kind", "url", "requested_ref", "resolved_revision"},
-        )
-        self.assertEqual(install["source"]["url"], "HTTPS://SOURCE.example/skill/")
-        self.assertEqual(install["source"]["requested_ref"], "stable")
-        self.assertEqual(item["source_identity"]["identity"], "web:https://source.example/skill")
-        self.assertEqual(item["source_identity"]["requested_ref"], "stable")
+        self.assertEqual(install["source"]["kind"], "external")
+        self.assertEqual(install["source"]["locator"]["url"], "HTTPS://SOURCE.example/skill/")
+        self.assertEqual(install["source"]["locator"]["version_note"], "stable")
+        self.assertEqual(item["translation"]["source_url"], "HTTPS://SOURCE.example/skill/")
+        self.assertNotIn("source_identity", item)
 
     def test_build_rejects_output_that_can_replace_human_sources(self) -> None:
         """Allowing these destinations can erase the repository before publication."""

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hwskill.dev/schemas/entry.schema.json",
-  "title": "SkillEntry v1",
+  "title": "SkillEntry v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "id", "name", "summary", "layer", "purposes", "examples", "source", "install", "compatibility", "license"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"},
     "name": {"type": "string", "minLength": 1},
     "summary": {"type": "string", "minLength": 1},
@@ -16,7 +16,7 @@
     "source": {"oneOf": [
       {"type": "object", "additionalProperties": false, "required": ["kind", "path"], "properties": {"kind": {"const": "hosted"}, "path": {"type": "string", "minLength": 1}}},
       {"type": "object", "additionalProperties": false, "required": ["kind", "locator"], "properties": {"kind": {"const": "external"}, "publicity": {"enum": ["public", "private", "unknown"]}, "locator": {"oneOf": [
-        {"type": "object", "additionalProperties": false, "required": ["type", "repository", "path", "requested_ref"], "properties": {"type": {"const": "git"}, "repository": {"type": "string", "format": "uri"}, "path": {"type": "string", "minLength": 1}, "requested_ref": {"type": "string", "minLength": 1}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "repository", "path"], "properties": {"type": {"const": "git"}, "repository": {"type": "string", "format": "uri"}, "path": {"type": "string", "minLength": 1}, "ref": {"type": "string", "minLength": 1}, "file_url": {"type": "string", "format": "uri"}}},
         {"type": "object", "additionalProperties": false, "required": ["type", "url"], "properties": {"type": {"const": "web"}, "url": {"type": "string", "format": "uri"}, "version_note": {"type": "string", "minLength": 1}}}
       ]}}}
     ]},

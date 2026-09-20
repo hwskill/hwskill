@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/two
 name: Two
 summary: Second reference to the same source.
@@ -14,7 +14,8 @@ source:
     type: git
     repository: https://example.com/org/repository.git
     path: skills/shared
-    requested_ref: v2
+    file_url: https://example.com/source/SKILL.md
+    ref: v2
 install:
   method: upstream
   default_scope: project

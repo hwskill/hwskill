@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/unknown
 name: Unknown field
 summary: This has a typo.

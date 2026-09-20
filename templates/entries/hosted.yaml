@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: namespace/skill-name
 name: 技能名称
 summary: 一句话说明技能解决的问题。

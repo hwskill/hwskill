@@ -115,13 +115,17 @@ def _is_safe_external_path(value: object) -> bool:
     return all(part not in {"", ".", ".."} for part in value.split("/"))
 
 
-def _is_safe_requested_ref(value: object) -> bool:
+def _is_safe_ref(value: object) -> bool:
     return (
         isinstance(value, str)
         and bool(value)
         and not value.startswith("-")
         and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
     )
+
+
+# Kept while the legacy migration preview is converted to Entry v2.
+_is_safe_requested_ref = _is_safe_ref
 
 
 def _validate_entry_public_security(
@@ -139,8 +143,18 @@ def _validate_entry_public_security(
         if locator["type"] == "git":
             if not _is_safe_external_path(locator.get("path")):
                 issues.append(_issue(path, root, "source.locator.path", "external-path-unsafe", "External Git path must be a strict POSIX relative path.", "Use a non-empty relative path without traversal, empty segments, or backslashes."))
-            if not _is_safe_requested_ref(locator.get("requested_ref")):
-                issues.append(_issue(path, root, "source.locator.requested_ref", "external-ref-unsafe", "External Git requested_ref must not be blank, option-like, whitespace-bearing, or contain controls.", "Use an explicit safe revision without a leading dash."))
+            ref = locator.get("ref")
+            if ref is not None and not _is_safe_ref(ref):
+                issues.append(_issue(path, root, "source.locator.ref", "external-ref-unsafe", "External Git ref must not be blank, option-like, whitespace-bearing, or contain controls.", "Use a safe branch, tag, or commit without a leading dash."))
+            file_url = locator.get("file_url")
+            if file_url is not None and not _url_is_http(file_url):
+                issues.append(_issue(path, root, "source.locator.file_url", "public-url-unsafe", "External skill file URL must be a credential-free http(s) URL.", "Use an explicit public skill file URL without userinfo credentials."))
+            try:
+                repository_host = urlsplit(locator["repository"]).hostname
+            except ValueError:
+                repository_host = None
+            if repository_host and repository_host.lower() != "github.com" and file_url is None:
+                issues.append(_issue(path, root, "source.locator.file_url", "source-file-url-required", "Non-GitHub Git sources require an explicit skill file URL.", "Add file_url pointing to the upstream SKILL.md."))
     for field, value in (
         ("install.instructions_url", entry["install"].get("instructions_url")),
         ("license.url", entry["license"].get("url")),

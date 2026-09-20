@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/port
 name: Invalid port
 summary: A malformed authority must be a format error.
@@ -14,7 +14,8 @@ source:
     type: git
     repository: https://example.test:not-a-port/skill.git
     path: skills/review
-    requested_ref: v1
+    file_url: https://example.com/source/SKILL.md
+    ref: v1
 install:
   method: upstream
   default_scope: project

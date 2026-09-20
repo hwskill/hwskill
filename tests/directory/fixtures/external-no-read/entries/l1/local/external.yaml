@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/external
 name: External only
 summary: This must not read a local source body.

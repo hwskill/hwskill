@@ -234,12 +234,12 @@ class DirectoryValidationTests(unittest.TestCase):
                     report.issues,
                 )
 
-    def test_rejects_git_path_and_requested_ref_option_injection_shapes(self) -> None:
+    def test_rejects_git_path_and_ref_option_injection_shapes(self) -> None:
         from hwskill.directory.entries import validate_repository
 
         cases = {
             "path": ["/absolute", ".", "skills/../evil", "skills//evil", "skills\\evil"],
-            "requested_ref": ["", " v1", "v1 ", "--upload-pack=evil", "v1\tother"],
+            "ref": ["", " v1", "v1 ", "--upload-pack=evil", "v1\tother"],
         }
         for field, values in cases.items():
             for index, value in enumerate(values):
@@ -261,6 +261,77 @@ class DirectoryValidationTests(unittest.TestCase):
                         or (value == "" and any(issue.code.startswith("schema-") for issue in report.issues)),
                         report.issues,
                     )
+
+    def test_entry_v2_accepts_omitted_branch_tag_and_commit_refs(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        for ref in (None, "main", "v2.0.0", "a" * 40):
+            with self.subTest(ref=ref):
+                temporary = TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                root = Path(temporary.name) / "repository"
+                shutil.copytree(FIXTURES / "valid", root)
+                for path in (root / "entries").rglob("*.yaml"):
+                    text = path.read_text(encoding="utf-8")
+                    if "ref: v1.2.3" in text:
+                        replacement = "" if ref is None else f"    ref: {ref}\n"
+                        text = text.replace("    ref: v1.2.3\n", replacement)
+                    path.write_text(text, encoding="utf-8")
+
+                report = validate_repository(root)
+
+                self.assertEqual(report.result, "pass", report.issues)
+
+    def test_entry_v2_rejects_unsafe_optional_refs(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        for ref in ("--upload-pack=evil", " branch", "branch ", "branch\tother"):
+            with self.subTest(ref=ref):
+                temporary = TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                root = Path(temporary.name) / "repository"
+                shutil.copytree(FIXTURES / "valid", root)
+                for path in (root / "entries").rglob("*.yaml"):
+                    text = path.read_text(encoding="utf-8")
+                    text = text.replace("ref: v1.2.3", f"ref: {json.dumps(ref)}")
+                    path.write_text(text, encoding="utf-8")
+
+                report = validate_repository(root)
+
+                self.assertTrue(any(issue.code == "external-ref-unsafe" for issue in report.issues), report.issues)
+
+    def test_build_source_url_uses_ref_head_and_explicit_file_url(self) -> None:
+        from hwskill.directory.catalog import build_source_url
+
+        base = {
+            "source": {
+                "kind": "external",
+                "locator": {
+                    "type": "git",
+                    "repository": "https://github.com/example/tools.git",
+                    "path": "skills/review helper",
+                },
+            }
+        }
+        self.assertEqual(
+            build_source_url(base),
+            "https://github.com/example/tools/blob/HEAD/skills/review%20helper/SKILL.md",
+        )
+        base["source"]["locator"]["ref"] = "release/v2"
+        self.assertEqual(
+            build_source_url(base),
+            "https://github.com/example/tools/blob/release%2Fv2/skills/review%20helper/SKILL.md",
+        )
+        base["source"]["locator"] = {
+            "type": "git",
+            "repository": "https://git.example.test/team/tools.git",
+            "path": "skills/review",
+            "file_url": "https://git.example.test/team/tools/files/skills/review/SKILL.md",
+        }
+        self.assertEqual(
+            build_source_url(base),
+            "https://git.example.test/team/tools/files/skills/review/SKILL.md",
+        )
 
     def test_draft_recommendation_is_valid_but_not_publishable(self) -> None:
         report = self.validate("draft")
@@ -320,9 +391,9 @@ class DirectoryValidationTests(unittest.TestCase):
         from hwskill.directory.schema import validator_for
 
         cases = {
-            "catalog": {"schema_version": 1, "source_commit": None, "entries": [{}]},
+            "catalog": {"schema_version": 2, "source_commit": None, "entries": [{}]},
             "verification": {"schema_version": 1, "report_id": "r", "skill_id": "local/test", "source_identity": {}, "entry_digest": "a", "install_digest": "b", "host": "codex", "runner_identity": "runner", "executed_at": "2026-01-01T00:00:00Z", "stages": {}, "evidence_refs": []},
-            "release": {"schema_version": 1, "release_id": "r", "sequence": 1, "source_commit": "abc", "publication_time": "2026-01-01T00:00:00Z", "committed_at": "2026-01-01T00:00:00Z", "events": [{}]},
+            "release": {"schema_version": 2, "release_id": "r", "sequence": 1, "source_commit": "abc", "publication_time": "2026-01-01T00:00:00Z", "committed_at": "2026-01-01T00:00:00Z", "events": [{}]},
         }
         for name, document in cases.items():
             with self.subTest(schema=name):
