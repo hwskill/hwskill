@@ -107,3 +107,31 @@ select { background: var(--panel); color: var(--ink); border: 1px solid var(--li
 @media (prefers-reduced-motion: no-preference) {
   .skill-card, a, button { transition: color .16s ease, background-color .16s ease, border-color .16s ease; }
 }
+
+.recommendation-byline { color: var(--muted); font-size: .9rem; }
+.prose { font-size: 1.06rem; border-left: 3px solid var(--accent); padding: 1.5rem 2rem; background: var(--panel); margin: 2rem 0 4rem; overflow-wrap: anywhere; }
+.prose h2 { margin-top: 2.5rem; }
+.prose h3 { margin-top: 2rem; }
+.prose p, .prose ul, .prose ol, .prose blockquote, .prose table, .prose pre { margin-bottom: 1.2rem; }
+.prose li + li { margin-top: .35rem; }
+.prose a { color: var(--accent-2); }
+.prose table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; }
+.prose th, .prose td { min-width: 9rem; border: 1px solid var(--line); padding: .65rem .8rem; text-align: left; }
+.prose th { color: var(--accent); background: #0e1411; }
+.prose pre { overflow-x: auto; padding: 1rem; background: #090c0a; border: 1px solid var(--line); }
+.prose code { font: .9em ui-monospace, monospace; color: #d8f5ca; }
+.prose :not(pre) > code { padding: .12rem .3rem; background: #232e28; }
+.prose blockquote { margin-left: 0; padding-left: 1rem; border-left: 2px solid var(--accent-2); color: var(--muted); }
+.skill-link-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.skill-link-groups section { border: 1px solid var(--line); background: var(--panel); padding: 1rem; min-width: 0; }
+.skill-link-groups h3 { color: var(--accent-2); font: 700 .82rem ui-monospace, monospace; margin: 0 0 .7rem; }
+.skill-link-groups ul { list-style: none; padding: 0; margin: 0; }
+.skill-link-groups li + li { border-top: 1px solid var(--line); }
+.skill-link-groups a { display: grid; gap: .1rem; padding: .65rem 0; text-decoration: none; }
+.skill-link-groups a:hover span { color: var(--accent); }
+.skill-link-groups code { color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .prose { padding: 1.1rem; margin-inline: -.4rem; }
+  .skill-link-groups { grid-template-columns: 1fr; }
+}

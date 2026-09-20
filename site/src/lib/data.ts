@@ -31,9 +31,11 @@ export type CatalogItem = {
 
 export type Recommendation = {
   id: string;
-  skills: Array<{ id: string; experienced_version?: string }>;
+  skills: Array<{ id: string; experience_version?: string }>;
   title: string;
+  summary?: string;
   body: string;
+  body_format?: "markdown";
   author: string;
   topics?: string[];
   evidence?: Array<{ url: string; description?: string }>;
@@ -94,4 +96,8 @@ export function topicEntries(slug: string): CatalogItem[] {
     const terms = [...entry.purposes, ...(entry.keywords ?? [])].join(" ").toLowerCase();
     return [...aliases].some((alias) => terms.includes(alias));
   });
+}
+
+export function recommendationSummary(recommendation: Recommendation): string {
+  return recommendation.summary ?? recommendation.body;
 }
