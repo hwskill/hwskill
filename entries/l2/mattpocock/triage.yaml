@@ -1,29 +1,31 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
-layer: l1
+id: mattpocock/triage
+name: Triage
+summary: 通过角色状态机分类、验证和澄清 issue 与外部 PR。
+layer: l2
 purposes:
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- 问题分诊
+- PR 分诊
+- 状态机
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 分诊当前待处理 issue。
+  expected_outcome: 按配置标签推进状态，必要时验证或访谈后写出 Agent 可执行简报。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/engineering/triage
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
   included_skills:
+  - setup-matt-pocock-skills
   - grilling
+  - domain-modeling
 compatibility:
   agents:
   - codex
@@ -32,17 +34,18 @@ compatibility:
   - linux
   - macos
   - windows
-  requirements: []
+  requirements:
+  - 需先配置项目工单系统和 triage 标签
 license:
   status: known
   identifier: MIT
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- triage
+- 问题分诊
+- PR 分诊
+- 状态机
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。

@@ -1,29 +1,27 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
+id: mattpocock/teach
+name: Teach
+summary: 在当前工作区中跨多次会话教授一项技能或概念。
 layer: l1
 purposes:
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- 教学
+- 学习计划
+- 跨会话进度
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 分阶段教我理解事件溯源。
+  expected_outcome: 建立学习状态，按掌握情况安排讲解、练习和复习。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/productivity/teach
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
-  included_skills:
-  - grilling
 compatibility:
   agents:
   - codex
@@ -32,17 +30,18 @@ compatibility:
   - linux
   - macos
   - windows
-  requirements: []
+  requirements:
+  - 需要可保存学习状态的工作区
 license:
   status: known
   identifier: MIT
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- teach
+- 教学
+- 学习计划
+- 跨会话进度
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。

@@ -1,29 +1,27 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
+id: mattpocock/grilling
+name: Grilling
+summary: 作为可复用访谈原语，持续追问计划、决策或想法中的未决分支。
 layer: l1
 purposes:
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- 深度访谈
+- 决策树
+- 共同理解
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 继续追问这个决策中尚未回答的分支。
+  expected_outcome: 维护问题树、建议答案和共同理解，避免过早进入执行。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/productivity/grilling
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
-  included_skills:
-  - grilling
 compatibility:
   agents:
   - codex
@@ -39,10 +37,10 @@ license:
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- grilling
+- 深度访谈
+- 决策树
+- 共同理解
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。

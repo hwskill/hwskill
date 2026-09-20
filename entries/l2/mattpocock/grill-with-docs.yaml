@@ -1,22 +1,22 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
-layer: l1
+id: mattpocock/grill-with-docs
+name: Grill With Docs
+summary: 通过强追问澄清工程方案，同时维护领域术语和架构决策记录。
+layer: l2
 purposes:
-- 方案压力测试
+- 工程访谈
 - 需求澄清
-- 决策访谈
+- 领域文档
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 追问这个重构方案，并同步更新领域文档。
+  expected_outcome: 解决设计分支并把共同语言和决策写入项目文档。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/engineering/grill-with-docs
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
@@ -24,6 +24,7 @@ install:
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
   included_skills:
   - grilling
+  - domain-modeling
 compatibility:
   agents:
   - codex
@@ -32,17 +33,18 @@ compatibility:
   - linux
   - macos
   - windows
-  requirements: []
+  requirements:
+  - 项目需允许更新 CONTEXT.md 或 ADR
 license:
   status: known
   identifier: MIT
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
+- grill-with-docs
+- 工程访谈
 - 需求澄清
-- 决策访谈
+- 领域文档
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。

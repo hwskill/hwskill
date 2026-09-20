@@ -1,29 +1,27 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
-layer: l1
+id: mattpocock/research
+name: Research
+summary: 基于高可信一手来源调查问题，并把带引用结论保存为 Markdown。
+layer: l2
 purposes:
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- 技术调研
+- 一手资料
+- 引用报告
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 调查这个 API 的当前限制并记录来源。
+  expected_outcome: 产出可复核的 Markdown 研究记录和直接来源链接。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/engineering/research
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
-  included_skills:
-  - grilling
 compatibility:
   agents:
   - codex
@@ -32,17 +30,18 @@ compatibility:
   - linux
   - macos
   - windows
-  requirements: []
+  requirements:
+  - 需要访问权威资料
 license:
   status: known
   identifier: MIT
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- research
+- 技术调研
+- 一手资料
+- 引用报告
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。

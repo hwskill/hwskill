@@ -1,29 +1,27 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
-layer: l1
+id: mattpocock/resolving-merge-conflicts
+name: Resolving Merge Conflicts
+summary: 按双方原始意图逐块解决进行中的 merge 或 rebase 冲突并完成操作。
+layer: l2
 purposes:
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- 冲突解决
+- Git merge
+- Git rebase
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 解决当前 rebase 的冲突并完成操作。
+  expected_outcome: 逐块追踪两侧意图，验证结果后继续而非放弃操作。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/engineering/resolving-merge-conflicts
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
-  included_skills:
-  - grilling
 compatibility:
   agents:
   - codex
@@ -32,17 +30,18 @@ compatibility:
   - linux
   - macos
   - windows
-  requirements: []
+  requirements:
+  - 项目需处于 Git merge 或 rebase 冲突状态
 license:
   status: known
   identifier: MIT
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- resolving-merge-conflicts
+- 冲突解决
+- Git merge
+- Git rebase
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。

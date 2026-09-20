@@ -27,6 +27,20 @@ SUPERPOWERS = {
 }
 
 
+MATT_REF = "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
+MATT_ENGINEERING = {
+    "ask-matt", "code-review", "codebase-design", "diagnosing-bugs",
+    "domain-modeling", "grill-with-docs", "implement",
+    "improve-codebase-architecture", "prototype", "research",
+    "resolving-merge-conflicts", "setup-matt-pocock-skills", "tdd",
+    "to-spec", "to-tickets", "triage", "wayfinder", "wizard",
+}
+MATT_PRODUCTIVITY = {
+    "grill-me", "grilling", "handoff", "teach", "to-questionnaire",
+    "wait-what", "writing-for-agents",
+}
+
+
 class UpstreamSeriesTests(unittest.TestCase):
     def test_superpowers_inventory(self) -> None:
         paths = sorted((ROOT / "entries").glob("l*/superpowers/*.yaml"))
@@ -51,6 +65,33 @@ class UpstreamSeriesTests(unittest.TestCase):
                 self.assertTrue(entry["purposes"])
                 self.assertTrue(entry["examples"])
                 self.assertTrue(entry["limitations"])
+                self.assertTrue(any("安装和行为未运行" in item for item in entry["limitations"]))
+
+
+    def test_mattpocock_inventory(self) -> None:
+        paths = sorted((ROOT / "entries").glob("l*/mattpocock/*.yaml"))
+        entries = {path.stem: (path, load_yaml(path)) for path in paths}
+        self.assertEqual(set(entries), MATT_ENGINEERING | MATT_PRODUCTIVITY)
+
+        for name in sorted(entries):
+            with self.subTest(name=name):
+                category = "engineering" if name in MATT_ENGINEERING else "productivity"
+                layer = "l2" if category == "engineering" else "l1"
+                path, entry = entries[name]
+                self.assertEqual(path, ROOT / "entries" / layer / "mattpocock" / f"{name}.yaml")
+                self.assertEqual(entry["id"], f"mattpocock/{name}")
+                locator = entry["source"]["locator"]
+                self.assertEqual(locator["repository"], "https://github.com/mattpocock/skills.git")
+                self.assertEqual(locator["path"], f"skills/{category}/{name}")
+                self.assertEqual(locator["requested_ref"], MATT_REF)
+                self.assertFalse(locator["path"].startswith(("skills/in-progress/", "skills/misc/", "skills/deprecated/")))
+                self.assertEqual(entry["install"]["method"], "upstream")
+                self.assertEqual(entry["install"]["instructions_url"], f"https://github.com/mattpocock/skills/blob/{MATT_REF}/README.md")
+                self.assertEqual(entry["license"]["identifier"], "MIT")
+                self.assertEqual(entry["license"]["url"], f"https://github.com/mattpocock/skills/blob/{MATT_REF}/LICENSE")
+                self.assertEqual(entry["owner"], "Matt Pocock")
+                self.assertEqual(entry["lifecycle"], "active")
+                self.assertTrue(entry["purposes"] and entry["examples"] and entry["limitations"])
                 self.assertTrue(any("安装和行为未运行" in item for item in entry["limitations"]))
 
 

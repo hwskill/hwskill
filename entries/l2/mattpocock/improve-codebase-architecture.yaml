@@ -1,28 +1,30 @@
 schema_version: 1
-id: mattpocock/grill-me
-name: Grill Me
-summary: 通过分轮强追问梳理计划、决策或想法，直到关键分支明确。
-layer: l1
+id: mattpocock/improve-codebase-architecture
+name: Improve Codebase Architecture
+summary: 扫描代码库中的模块深化机会，生成可视报告并访谈选中的改进项。
+layer: l2
 purposes:
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- 架构扫描
+- 模块深化
+- 可视报告
 examples:
-- prompt: 用 grill-me 追问这个产品想法。
-  expected_outcome: 按依赖分轮提问并在共同理解确认后停止。
+- prompt: 找出这个代码库最值得深化的模块。
+  expected_outcome: 生成候选报告，并围绕选中候选澄清设计与验证方式。
 source:
   kind: external
   publicity: public
   locator:
     type: git
     repository: https://github.com/mattpocock/skills.git
-    path: skills/productivity/grill-me
+    path: skills/engineering/improve-codebase-architecture
     requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
   instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
   included_skills:
+  - codebase-design
+  - domain-modeling
   - grilling
 compatibility:
   agents:
@@ -32,17 +34,18 @@ compatibility:
   - linux
   - macos
   - windows
-  requirements: []
+  requirements:
+  - 需要浏览器查看 HTML 报告
 license:
   status: known
   identifier: MIT
   url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
 owner: Matt Pocock
 keywords:
-- grill-me
-- 方案压力测试
-- 需求澄清
-- 决策访谈
+- improve-codebase-architecture
+- 架构扫描
+- 模块深化
+- 可视报告
 limitations:
 - 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。
