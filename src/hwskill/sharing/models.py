@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Any, Mapping
+
+
+class SnapshotVersion(IntEnum):
+    V1 = 1
+    V2 = 2
 
 
 @dataclass(frozen=True)
@@ -82,16 +88,16 @@ class UpdateItem:
     summary: str
     skill_refs: tuple[str, ...]
     recommendation_refs: tuple[str, ...]
-    source_versions: tuple[SourceVersion, ...]
     detail_url: str
     install_urls: tuple[str, ...]
     lifecycle: str
-    install_capability: str
+    source_versions: tuple[SourceVersion, ...] | None = None
+    install_capability: str | None = None
     purposes: tuple[str, ...] = ()
     topics: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "schema_version": self.schema_version,
             "item_id": self.item_id,
             "sequence": self.sequence,
@@ -101,14 +107,16 @@ class UpdateItem:
             "summary": self.summary,
             "skill_refs": list(self.skill_refs),
             "recommendation_refs": list(self.recommendation_refs),
-            "source_versions": [version.to_dict() for version in self.source_versions],
             "detail_url": self.detail_url,
             "install_urls": list(self.install_urls),
             "lifecycle": self.lifecycle,
-            "install_capability": self.install_capability,
             "purposes": list(self.purposes),
             "topics": list(self.topics),
         }
+        if self.schema_version == 1:
+            value["source_versions"] = [version.to_dict() for version in self.source_versions or ()]
+            value["install_capability"] = self.install_capability
+        return value
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ from typing import Any
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "valid-snapshot.json"
+V2_FIXTURE = Path(__file__).parent / "fixtures" / "valid-v2-snapshot.json"
 
 
 def stable_digest(value: object) -> str:
@@ -64,6 +65,17 @@ def valid_snapshot(base_url: str = "https://directory.test"):
     from hwskill.sharing.models import FeedSnapshot
 
     return FeedSnapshot.from_dict(fixture_payload(base_url))
+
+
+def valid_v2_snapshot(base_url: str = "https://directory.test"):
+    from hwskill.sharing.models import FeedSnapshot
+
+    text = V2_FIXTURE.read_text(encoding="utf-8").replace(
+        "https://directory.test", base_url.rstrip("/")
+    )
+    payload = json.loads(text)
+    refresh_snapshot_identity(payload, refresh_ids=True)
+    return FeedSnapshot.from_dict(payload)
 
 
 def server_documents(base_url: str) -> dict[str, bytes]:

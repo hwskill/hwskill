@@ -43,70 +43,56 @@ def make_site(
 ) -> Path:
     site = root / f"site-{marker}"
     if source_kind == "hosted":
-        identity_value = "hosted:skills-src/l2/local/example"
-        identity_requested_ref = None
-        install_source = {
-            "kind": "hosted",
-            "path": "skills-src/l2/local/example",
-            "resolved_revision": source_revision,
-        }
+        source = {"kind": "hosted", "path": "skills-src/l2/local/example"}
+        source_url = "https://github.com/hwskill/hwskill/blob/HEAD/skills-src/l2/local/example/SKILL.md"
     elif source_locator == "git":
-        identity_requested_ref = source_requested_ref or "v1.0.0"
-        identity_value = "git:https://source.example/example.git\0skills/example"
-        install_source = {
-            "kind": "external",
-            "repository": "https://SOURCE.example/example.git/",
+        locator = {
+            "type": "git",
+            "repository": "https://source.example/example.git",
             "path": "skills/example",
-            "requested_ref": identity_requested_ref,
-            "resolved_revision": source_revision,
+            "file_url": "https://source.example/example/SKILL.md",
         }
+        if source_requested_ref is not None:
+            locator["ref"] = source_requested_ref
+        source = {"kind": "external", "publicity": "public", "locator": locator}
+        source_url = locator["file_url"]
     else:
-        identity_requested_ref = source_requested_ref or "version-1"
-        identity_value = "web:https://source.example/skill"
-        install_source = {
-            "kind": "external",
-            "url": "https://SOURCE.example/skill/",
-            "requested_ref": identity_requested_ref,
-            "resolved_revision": source_revision,
-        }
+        locator = {"type": "web", "url": "https://source.example/skill"}
+        if source_requested_ref is not None:
+            locator["version_note"] = source_requested_ref
+        source = {"kind": "external", "publicity": "public", "locator": locator}
+        source_url = locator["url"]
     normalized_entry = {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": "local/example",
         "name": "Example",
         "summary": "Example skill",
         "layer": "l2",
         "purposes": ["debugging"],
         "examples": [{"prompt": "Debug it", "expected_outcome": "Evidence"}],
-        "source": {"kind": source_kind, "identity": identity_value},
+        "source": source,
         "install": {
             "method": "upstream" if source_kind == "external" else "directory",
             "default_scope": "project",
-            "instructions_url": "https://source.example/install" if source_kind == "external" else None,
+            "instructions_url": "https://source.example/install",
         },
         "compatibility": {"agents": ["codex"], "systems": ["linux"], "requirements": []},
         "license": {"status": "unknown"},
         "lifecycle": lifecycle,
-        "lifecycle_reason": "retired" if lifecycle != "active" else None,
-        "replacement_id": None,
     }
+    if lifecycle != "active":
+        normalized_entry["lifecycle_reason"] = "retired"
     entry_digest = _content_digest(normalized_entry)
-    stage = {"result": "not_run", "report_id": None, "executed_at": None}
-    verification_summary = {
-        name: dict(stage) for name in ("metadata", "acquisition", "installation", "behavior")
-    }
     entry = {
         "entry": normalized_entry,
         "entry_digest": entry_digest,
-        "source_identity": {
-            "kind": source_kind,
-            "identity": identity_value,
-            "requested_ref": identity_requested_ref,
-            "resolved_revision": source_revision,
-            "content_digest": f"content-{marker}",
-        },
         "lifecycle": lifecycle,
-        "install_capability": "disabled" if lifecycle == "withdrawn" else "installable",
-        "verification_summary": verification_summary,
+        "translation": {
+            "body_format": "markdown",
+            "body": f"# Example\n\nTranslated body {marker}.",
+            "translated_at": "2026-09-20",
+            "source_url": source_url,
+        },
     }
     recommendation = {
         "schema_version": 1,
@@ -119,18 +105,17 @@ def make_site(
     }
     if recommendation_status == "withdrawn":
         recommendation["withdrawal_reason"] = "No longer recommended."
-    _write_json(site / "data/catalog.json", {"schema_version": 1, "source_commit": marker, "entries": [entry]})
+    _write_json(site / "data/catalog.json", {"schema_version": 2, "source_commit": marker, "entries": [entry]})
     _write_json(
         site / "data/recommendations.json",
         {"schema_version": 1, "recommendations": [recommendation] if include_recommendation else []},
     )
     install = {
-        "schema_version": 1,
+        "schema_version": 2,
         "skill_id": "local/example",
         "entry_digest": entry_digest,
-        "source": install_source,
+        "source": source,
         "install": normalized_entry["install"],
-        "verification_summary": verification_summary,
     }
     install["install_digest"] = _content_digest(install)
     _write_json(site / "data/skills/local/example/install.json", install)
@@ -177,18 +162,15 @@ def rewrite_external_material(
     install_path = site / "data/skills/local/example/install.json"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     install = json.loads(install_path.read_text(encoding="utf-8"))
-    source = install["source"]
+    source = install["source"]["locator"]
     if repository is not None:
         source["repository"] = repository
     if source_path is not None:
         source["path"] = source_path
     if requested_ref is not None:
-        source["requested_ref"] = requested_ref
-    identity_value = f"git:{source['repository'].lower().rstrip('/')}\0{source['path'].rstrip('/')}"
+        source["ref"] = requested_ref
     item = catalog["entries"][0]
-    item["entry"]["source"]["identity"] = identity_value
-    item["source_identity"]["identity"] = identity_value
-    item["source_identity"]["requested_ref"] = source["requested_ref"]
+    item["entry"]["source"] = install["source"]
     item["entry_digest"] = _content_digest(item["entry"])
     install["entry_digest"] = item["entry_digest"]
     install["install_digest"] = _content_digest(
@@ -241,6 +223,26 @@ class PublicationReleaseTests(unittest.TestCase):
             [event["event_id"] for event in first_store.read_feed()[0]["events"]],
             [event["event_id"] for event in second_store.read_feed()[0]["events"]],
         )
+
+    def test_new_release_emits_only_v2_catalog_install_record_and_events(self) -> None:
+        site = make_site(self.root, marker="v2-contract")
+        store, publisher = self.publisher("v2-contract-store")
+
+        result = publisher.publish(request_for(site, source_commit="8" * 40))
+
+        record = store.read_feed()[0]
+        self.assertEqual(record["schema_version"], 2)
+        self.assertTrue(all(event["schema_version"] == 2 for event in record["events"]))
+        catalog = json.loads((store.release_path(result.release_id) / "data/catalog.json").read_text())
+        install = json.loads(
+            (store.release_path(result.release_id) / "data/skills/local/example/install.json").read_text()
+        )
+        self.assertEqual(catalog["schema_version"], 2)
+        self.assertEqual(install["schema_version"], 2)
+        for removed in ("source_identity", "verification_summary", "install_capability"):
+            self.assertNotIn(removed, catalog["entries"][0])
+        for removed in ("resolved_revision", "verification_summary"):
+            self.assertNotIn(removed, json.dumps(install, sort_keys=True))
 
     def test_publication_time_is_frozen_when_prepared_candidate_retries(self) -> None:
         from hwskill.publishing.models import CandidateState
@@ -344,7 +346,7 @@ class PublicationReleaseTests(unittest.TestCase):
         record = next(item for item in store.read_feed() if item["release_id"] == result.release_id)
         self.assertEqual(record["events"], [])
 
-    def test_external_resolved_revision_change_emits_skill_updated(self) -> None:
+    def test_external_resolved_revision_is_not_persisted_or_evented(self) -> None:
         first_site = make_site(
             self.root,
             source_kind="external",
@@ -364,7 +366,7 @@ class PublicationReleaseTests(unittest.TestCase):
         record = next(item for item in store.read_feed() if item["release_id"] == result.release_id)
         self.assertEqual(
             [event["type"] for event in record["events"] if event["subject_id"] == "local/example"],
-            ["skill.updated"],
+            [],
         )
 
     def test_external_requested_ref_change_emits_skill_updated(self) -> None:
@@ -575,7 +577,7 @@ class PublicationReleaseTests(unittest.TestCase):
         mutations = {
             "source": lambda install: install["source"].update(identity="external:evil-source"),
             "install": lambda install: install["install"].update(instructions_url="https://evil.example/install"),
-            "verification": lambda install: install["verification_summary"]["behavior"].update(result="pass"),
+            "removed-state": lambda install: install.update(verification_summary={}),
         }
         for index, (name, mutate) in enumerate(mutations.items()):
             with self.subTest(name=name):
@@ -600,8 +602,7 @@ class PublicationReleaseTests(unittest.TestCase):
         site = make_site(self.root, source_kind="external", marker="install-mixed-source")
         install_path = site / "data/skills/local/example/install.json"
         install = json.loads(install_path.read_text(encoding="utf-8"))
-        catalog = json.loads((site / "data/catalog.json").read_text(encoding="utf-8"))
-        install["source"]["identity"] = catalog["entries"][0]["source_identity"]["identity"]
+        install["source"]["identity"] = "git:https://source.example/example.git"
         install["install_digest"] = _content_digest(
             {key: value for key, value in install.items() if key != "install_digest"}
         )
@@ -683,10 +684,8 @@ class PublicationReleaseTests(unittest.TestCase):
                 item = catalog["entries"][0]
                 if field == "web":
                     url = "https://user:secret@source.example/skill"
-                    install["source"]["url"] = url
-                    identity = "web:https://user:secret@source.example/skill"
-                    item["entry"]["source"]["identity"] = identity
-                    item["source_identity"]["identity"] = identity
+                    install["source"]["locator"]["url"] = url
+                    item["entry"]["source"]["locator"]["url"] = url
                 elif field == "instructions":
                     url = "https://user:secret@source.example/install"
                     item["entry"]["install"]["instructions_url"] = url

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
 import unittest
 
 from tests.sharing.support import mutable_snapshot, refresh_snapshot_identity, valid_snapshot
@@ -15,7 +17,7 @@ def _rebind_external_git(
 ) -> None:
     """Keep every producer digest/binding valid while changing one locator field."""
     from hwskill.directory.entries import _normalise_identity_path, _normalise_repository
-    from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+    from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
     from hwskill.publishing.models import stable_digest
     from hwskill.sharing.validation import content_digest
 
@@ -47,8 +49,28 @@ def _rebind_external_git(
 
 
 class FeedValidationTests(unittest.TestCase):
-    def test_skill_semantic_matches_the_task5_publisher_for_hosted_and_external_sources(self) -> None:
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+    def test_frozen_v1_document_dispatches_to_the_historical_reader(self) -> None:
+        from hwskill.sharing.models import SnapshotVersion
+        from hwskill.sharing.validation import validate_snapshot
+
+        fixture = Path(__file__).parent / "fixtures" / "valid-snapshot.json"
+        document = json.loads(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(validate_snapshot(document), SnapshotVersion.V1)
+
+    def test_v2_document_dispatches_without_removed_catalog_state(self) -> None:
+        from hwskill.sharing.models import SnapshotVersion
+        from hwskill.sharing.validation import validate_snapshot
+
+        fixture = Path(__file__).parent / "fixtures" / "valid-v2-snapshot.json"
+        document = json.loads(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(validate_snapshot(document), SnapshotVersion.V2)
+        item = next(iter(document["documents"].values()))["entries"][0]
+        self.assertFalse({"source_identity", "verification_summary", "install_capability"} & set(item))
+
+    def test_frozen_v1_skill_semantic_handles_hosted_and_external_sources(self) -> None:
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.sharing.validation import skill_semantic
 
         external = mutable_snapshot()["documents"][
@@ -68,10 +90,11 @@ class FeedValidationTests(unittest.TestCase):
         self.assertEqual(skill_semantic(hosted), publisher_skill_semantic(hosted))
 
     def test_valid_task5_snapshot_is_accepted(self) -> None:
+        from hwskill.sharing.models import SnapshotVersion
         from hwskill.sharing.validation import validate_snapshot
 
         snapshot = valid_snapshot()
-        self.assertIs(validate_snapshot(snapshot), snapshot)
+        self.assertEqual(validate_snapshot(snapshot), SnapshotVersion.V1)
 
     def test_unknown_major_schema_stops_validation(self) -> None:
         from hwskill.sharing.models import FeedSnapshot
@@ -335,7 +358,7 @@ class FeedValidationTests(unittest.TestCase):
                 validate_snapshot(FeedSnapshot.from_dict(payload))
 
     def test_catalog_lifecycle_wrapper_is_consistent_and_withdrawn_is_disabled(self) -> None:
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.publishing.models import stable_digest
         from hwskill.sharing.models import FeedSnapshot
         from hwskill.sharing.validation import FeedValidationError, content_digest, validate_snapshot
@@ -368,7 +391,7 @@ class FeedValidationTests(unittest.TestCase):
                 validate_snapshot(FeedSnapshot.from_dict(payload))
 
     def test_ready_recommendation_cannot_reference_a_withdrawn_skill(self) -> None:
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.publishing.models import stable_digest
         from hwskill.sharing.models import FeedSnapshot
         from hwskill.sharing.validation import FeedValidationError, content_digest, validate_snapshot
@@ -397,7 +420,7 @@ class FeedValidationTests(unittest.TestCase):
             validate_snapshot(FeedSnapshot.from_dict(payload))
 
     def test_external_web_install_rejects_git_locator_fields(self) -> None:
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.publishing.models import stable_digest
         from hwskill.sharing.models import FeedSnapshot
         from hwskill.sharing.validation import FeedValidationError, content_digest, validate_snapshot
@@ -472,7 +495,7 @@ class FeedValidationTests(unittest.TestCase):
 
     def test_external_web_security_is_rechecked_after_all_bindings_are_recomputed(self) -> None:
         from hwskill.directory.entries import _normalise_repository
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.publishing.models import stable_digest
         from hwskill.sharing.models import FeedSnapshot
         from hwskill.sharing.validation import FeedValidationError, content_digest, validate_snapshot
@@ -507,7 +530,7 @@ class FeedValidationTests(unittest.TestCase):
             validate_snapshot(FeedSnapshot.from_dict(payload))
 
     def test_hosted_source_path_revision_and_content_are_independently_verified(self) -> None:
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.publishing.models import stable_digest
         from hwskill.sharing.models import FeedSnapshot
         from hwskill.sharing.validation import FeedValidationError, content_digest, validate_snapshot
@@ -545,7 +568,7 @@ class FeedValidationTests(unittest.TestCase):
                 validate_snapshot(FeedSnapshot.from_dict(payload))
 
     def test_public_document_urls_reject_userinfo_after_digest_rebinding(self) -> None:
-        from hwskill.publishing.events import _skill_semantic as publisher_skill_semantic
+        from hwskill.sharing.v1 import skill_semantic as publisher_skill_semantic
         from hwskill.publishing.models import stable_digest
         from hwskill.sharing.models import FeedSnapshot
         from hwskill.sharing.validation import FeedValidationError, content_digest, validate_snapshot
@@ -694,7 +717,7 @@ class FeedValidationTests(unittest.TestCase):
         add_release(2, "release-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "recommendation.withdrawn", "withdrawn")
         refresh_snapshot_identity(payload, refresh_ids=True)
         self.assertEqual(
-            validate_snapshot(FeedSnapshot.from_dict(payload)).records[-1]["events"][0]["type"],
+            payload["records"][-1]["events"][0]["type"],
             "recommendation.withdrawn",
         )
 
@@ -704,10 +727,11 @@ class FeedValidationTests(unittest.TestCase):
             validate_snapshot(FeedSnapshot.from_dict(payload))
 
     def test_release_url_derivation_handles_data_in_the_deployment_prefix(self) -> None:
+        from hwskill.sharing.models import SnapshotVersion
         from hwskill.sharing.validation import validate_snapshot
 
         snapshot = valid_snapshot("https://directory.test/tenant/data/application")
-        self.assertIs(validate_snapshot(snapshot), snapshot)
+        self.assertEqual(validate_snapshot(snapshot), SnapshotVersion.V1)
 
 
 if __name__ == "__main__":

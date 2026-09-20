@@ -218,7 +218,8 @@ class FeedReader:
             if isinstance(event, Mapping) and isinstance(event.get("feed_id"), str)
         }
         feed_id = self.expected_feed_id or (next(iter(feed_ids)) if len(feed_ids) == 1 else "")
-        provisional = FeedSnapshot(1, feed_url.rstrip("/"), feed_id, head, records, {}, "")
+        snapshot_version = head.get("schema_version")
+        provisional = FeedSnapshot(snapshot_version, feed_url.rstrip("/"), feed_id, head, records, {}, "")
         validate_snapshot(provisional, validate_subjects=False)
 
         urls: set[str] = set()
@@ -231,5 +232,6 @@ class FeedReader:
                     urls.add(install_url(machine_url, skill_id))
         documents = {url: self._read_json(url) for url in sorted(urls)}
         identity = stable_digest({"head": head, "records": records, "documents": documents})
-        snapshot = FeedSnapshot(1, feed_url.rstrip("/"), feed_id, head, records, documents, identity)
-        return validate_snapshot(snapshot)
+        snapshot = FeedSnapshot(snapshot_version, feed_url.rstrip("/"), feed_id, head, records, documents, identity)
+        validate_snapshot(snapshot)
+        return snapshot

@@ -11,8 +11,6 @@ from hwskill.directory.digest import canonical_json, sha256_bytes
 from hwskill.directory.entries import (
     _is_safe_external_path,
     _is_safe_requested_ref,
-    _normalise_identity_path,
-    _normalise_repository,
     _url_is_http,
 )
 from hwskill.directory.schema import validator_for
@@ -87,6 +85,27 @@ def _require_public_url(value: object, label: str, *, optional: bool = False) ->
         raise ReleaseIntegrityError(f"{label} must be a credential-free public http(s) URL")
 
 
+def _validate_declared_source(source: Mapping[str, Any], path: str) -> None:
+    if source.get("kind") == "hosted":
+        if not _is_safe_external_path(source.get("path")):
+            raise ReleaseIntegrityError(f"hosted source path is unsafe: {path}")
+        return
+    locator = source.get("locator")
+    if source.get("kind") != "external" or not isinstance(locator, Mapping):
+        raise ReleaseIntegrityError(f"source declaration is invalid: {path}")
+    if locator.get("type") == "git":
+        _require_public_url(locator.get("repository"), f"external repository URL in {path}")
+        if not _is_safe_external_path(locator.get("path")):
+            raise ReleaseIntegrityError(f"external source path is unsafe: {path}")
+        if "ref" in locator and not _is_safe_requested_ref(locator.get("ref")):
+            raise ReleaseIntegrityError(f"external source ref is unsafe: {path}")
+        _require_public_url(locator.get("file_url"), f"external source file URL in {path}", optional=True)
+    elif locator.get("type") == "web":
+        _require_public_url(locator.get("url"), f"external source URL in {path}")
+    else:
+        raise ReleaseIntegrityError(f"source locator is invalid: {path}")
+
+
 def _validate_install(install: Mapping[str, Any], item: Mapping[str, Any], path: str) -> None:
     required = {
         "schema_version",
@@ -94,79 +113,24 @@ def _validate_install(install: Mapping[str, Any], item: Mapping[str, Any], path:
         "entry_digest",
         "source",
         "install",
-        "verification_summary",
         "install_digest",
     }
-    if set(install) != required or install.get("schema_version") != 1:
+    if set(install) != required or install.get("schema_version") != 2:
         raise ReleaseIntegrityError(f"install machine JSON has unknown or missing fields: {path}")
     if install.get("skill_id") != item["entry"]["id"] or install.get("entry_digest") != item["entry_digest"]:
         raise ReleaseIntegrityError(f"install machine JSON is not bound to its catalog entry: {path}")
     if not isinstance(install.get("source"), Mapping) or not isinstance(install.get("install"), Mapping):
         raise ReleaseIntegrityError(f"install machine JSON has invalid source/install objects: {path}")
     install_fields = set(install["install"])
-    if not {"method", "default_scope", "instructions_url"} <= install_fields or install_fields - {"method", "default_scope", "instructions_url", "included_skills"}:
+    if not {"method", "default_scope"} <= install_fields or install_fields - {"method", "default_scope", "instructions_url", "included_skills"}:
         raise ReleaseIntegrityError(f"install machine JSON has unknown install fields: {path}")
     _require_public_url(install["install"].get("instructions_url"), f"install instructions URL in {path}", optional=True)
     entry = item["entry"]
-    identity = item["source_identity"]
     source = install["source"]
-    if source.get("kind") != identity.get("kind") or entry["source"] != {
-        "kind": identity.get("kind"),
-        "identity": identity.get("identity"),
-    }:
-        raise ReleaseIntegrityError(f"install source kind or catalog identity differs: {path}")
-    source_fields = set(source)
-    hosted_fields = {"kind", "path", "resolved_revision"}
-    git_fields = {"kind", "repository", "path", "requested_ref", "resolved_revision"}
-    web_fields = {"kind", "url", "requested_ref", "resolved_revision"}
-    if source.get("kind") == "external" and source_fields == git_fields:
-        repository, source_path = source.get("repository"), source.get("path")
-        _require_public_url(repository, f"install external git source URL in {path}")
-        if not _is_safe_external_path(source_path):
-            raise ReleaseIntegrityError(f"install external git source path is unsafe: {path}")
-        if not _is_safe_requested_ref(source.get("requested_ref")):
-            raise ReleaseIntegrityError(f"install external git requested_ref is unsafe: {path}")
-        try:
-            locator_identity = (
-                f"git:{_normalise_repository(repository)}\0{_normalise_identity_path(source_path)}"
-            )
-        except ValueError as exc:
-            raise ReleaseIntegrityError(f"install external git source locator is invalid: {path}") from exc
-        if (
-            locator_identity != identity.get("identity")
-            or source.get("requested_ref") != identity.get("requested_ref")
-            or source.get("resolved_revision") != identity.get("resolved_revision")
-        ):
-            raise ReleaseIntegrityError(f"install external source differs from catalog identity: {path}")
-    elif source.get("kind") == "external" and source_fields == web_fields:
-        url = source.get("url")
-        _require_public_url(url, f"install external web source URL in {path}")
-        try:
-            locator_identity = f"web:{_normalise_repository(url)}"
-        except ValueError as exc:
-            raise ReleaseIntegrityError(f"install external web source locator is invalid: {path}") from exc
-        if (
-            locator_identity != identity.get("identity")
-            or source.get("requested_ref") != identity.get("requested_ref")
-            or source.get("resolved_revision") != identity.get("resolved_revision")
-        ):
-            raise ReleaseIntegrityError(f"install external source differs from catalog identity: {path}")
-    elif source.get("kind") == "hosted" and source_fields == hosted_fields:
-        source_path = source.get("path")
-        if not isinstance(source_path, str):
-            raise ReleaseIntegrityError(f"install hosted source locator is incomplete: {path}")
-        locator_identity = f"hosted:{_normalise_identity_path(source_path)}"
-        if (
-            locator_identity != identity.get("identity")
-            or source.get("resolved_revision") != identity.get("resolved_revision")
-        ):
-            raise ReleaseIntegrityError(f"install hosted source differs from catalog identity: {path}")
-    else:
-        raise ReleaseIntegrityError(f"install source is not an exact hosted/external locator variant: {path}")
+    if source != entry["source"]:
+        raise ReleaseIntegrityError(f"install source differs from catalog entry: {path}")
     if install["install"] != entry["install"]:
         raise ReleaseIntegrityError(f"install method differs from catalog entry: {path}")
-    if install["verification_summary"] != item["verification_summary"]:
-        raise ReleaseIntegrityError(f"install verification summary differs from catalog entry: {path}")
     unsigned = {key: value for key, value in install.items() if key != "install_digest"}
     if sha256_bytes(canonical_json(unsigned)) != install["install_digest"]:
         raise ReleaseIntegrityError(f"install machine JSON digest differs: {path}")
@@ -191,12 +155,12 @@ def _validate_artifact(
         if sha256_bytes(canonical_json(item["entry"])) != item["entry_digest"]:
             raise ReleaseIntegrityError(f"catalog entry digest differs for {skill_id}")
         entry = item["entry"]
+        _schema_check("entry", entry, f"catalog entry {skill_id}")
+        _validate_declared_source(entry["source"], f"catalog entry {skill_id}")
         _require_public_url(entry["install"].get("instructions_url"), f"catalog instructions URL for {skill_id}", optional=True)
         _require_public_url(entry["license"].get("url"), f"catalog license URL for {skill_id}", optional=True)
         if item["lifecycle"] != item["entry"]["lifecycle"]:
             raise ReleaseIntegrityError(f"catalog lifecycle differs for {skill_id}")
-        if item["lifecycle"] == "withdrawn" and item["install_capability"] != "disabled":
-            raise ReleaseIntegrityError(f"withdrawn skill {skill_id} must disable installation")
         install_path = f"data/skills/{skill_id}/install.json"
         _validate_install(_read_json(documents, install_path, f"install {skill_id}"), item, install_path)
 
@@ -236,7 +200,7 @@ def _expected_record(candidate: Candidate) -> dict[str, object]:
     if candidate.committed_at is None:
         raise ReleaseIntegrityError("activated candidate has no frozen committed_at")
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "release_id": candidate.release_id,
         "sequence": candidate.sequence,
         "source_commit": candidate.source_commit,
@@ -429,7 +393,7 @@ class Publisher:
             if reference_release != candidate.release_id or relative not in release:
                 raise ReleaseIntegrityError(f"candidate {candidate.release_id} event reference is outside its release")
         prospective = {
-            "schema_version": 1,
+            "schema_version": 2,
             "release_id": candidate.release_id,
             "sequence": candidate.sequence,
             "source_commit": candidate.source_commit,

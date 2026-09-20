@@ -360,7 +360,11 @@ def event_references(events: tuple[dict[str, Any], ...] | list[dict[str, Any]], 
 
 
 def _validate_record_schema(record: Mapping[str, Any]) -> None:
-    errors = sorted(validator_for("release").iter_errors(record), key=lambda error: list(error.absolute_path))
+    version = record.get("schema_version")
+    schema_name = "release-v1" if version == 1 else "release" if version == 2 else None
+    if schema_name is None:
+        raise ReleaseIntegrityError(f"release record has unsupported schema {version}")
+    errors = sorted(validator_for(schema_name).iter_errors(record), key=lambda error: list(error.absolute_path))
     if errors:
         first = errors[0]
         location = ".".join(str(part) for part in first.absolute_path) or "<root>"
@@ -793,7 +797,7 @@ class FileReleaseStore:
         head = self._read_json_at(self._feed_fd, "head.json")
         if head is None:
             return None
-        if set(head) != {"schema_version", "sequence", "release_id"} or head.get("schema_version") != 1:
+        if set(head) != {"schema_version", "sequence", "release_id"} or head.get("schema_version") not in {1, 2}:
             raise ReleaseIntegrityError("feed head has an invalid schema")
         _validate_sequence(head.get("sequence"))
         _validate_release_id(head.get("release_id"))
@@ -813,7 +817,7 @@ class FileReleaseStore:
         self._write_json_atomic_at(
             self._feed_fd,
             "head.json",
-            {"schema_version": 1, "sequence": sequence, "release_id": release_id},
+            {"schema_version": 2, "sequence": sequence, "release_id": release_id},
         )
 
     def read_feed(self) -> list[dict[str, Any]]:
@@ -836,7 +840,7 @@ class FileReleaseStore:
             if candidate is None or candidate.state not in {CandidateState.ACTIVATED, CandidateState.COMMITTED}:
                 raise ReleaseIntegrityError(f"feed record {sequence} lacks its durable candidate")
             expected = {
-                "schema_version": 1,
+                "schema_version": record["schema_version"],
                 "release_id": candidate.release_id,
                 "sequence": candidate.sequence,
                 "source_commit": candidate.source_commit,

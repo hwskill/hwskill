@@ -1,0 +1,159 @@
+{
+  "schema_version": 2,
+  "feed_url": "https://directory.test/feed",
+  "feed_id": "hwskill-main",
+  "head": {
+    "release_id": "release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e",
+    "schema_version": 2,
+    "sequence": 1
+  },
+  "records": [
+    {
+      "committed_at": "2026-09-20T01:00:00Z",
+      "events": [
+        {
+          "event_id": "event-2c8ae0a7c71bc7cbfba5be14fbb8b344d589bc24069776f0b076ddaef48411be",
+          "feed_id": "hwskill-main",
+          "machine_url": "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/data/recommendations.json",
+          "page_url": "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/recommendations/example-workflow/",
+          "published_at": "2026-09-20T01:00:00Z",
+          "release_id": "release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e",
+          "schema_version": 2,
+          "sequence": 1,
+          "skill_ids": [
+            "local/example"
+          ],
+          "subject_id": "example-workflow",
+          "subject_revision": "sha256:a25180c5b44432beb15ce8a31dcfce492998bd31cc4521375d27a974e2513260",
+          "type": "recommendation.published"
+        },
+        {
+          "event_id": "event-9000b0445c338d615ba169987b667d809a0b6b1ae07a6088da3daffa16d49387",
+          "feed_id": "hwskill-main",
+          "machine_url": "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/data/skills/local/example/install.json",
+          "page_url": "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/skills/local/example/",
+          "published_at": "2026-09-20T01:00:00Z",
+          "release_id": "release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e",
+          "schema_version": 2,
+          "sequence": 1,
+          "skill_ids": [
+            "local/example"
+          ],
+          "subject_id": "local/example",
+          "subject_revision": "sha256:608a46f697eadde793cb2a1332f85da4168328b3b6adece95d32d0f11e57b023",
+          "type": "skill.added"
+        }
+      ],
+      "previous_sequence": null,
+      "publication_time": "2026-09-20T01:00:00Z",
+      "release_id": "release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e",
+      "schema_version": 2,
+      "sequence": 1,
+      "source_commit": "2222222222222222222222222222222222222222"
+    }
+  ],
+  "documents": {
+    "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/data/catalog.json": {
+      "entries": [
+        {
+          "entry": {
+            "compatibility": {
+              "agents": [
+                "codex"
+              ],
+              "requirements": [],
+              "systems": [
+                "linux"
+              ]
+            },
+            "examples": [
+              {
+                "expected_outcome": "Evidence",
+                "prompt": "Debug it"
+              }
+            ],
+            "id": "local/example",
+            "install": {
+              "default_scope": "project",
+              "instructions_url": "https://source.example/install",
+              "method": "upstream"
+            },
+            "layer": "l2",
+            "license": {
+              "status": "unknown"
+            },
+            "lifecycle": "active",
+            "name": "Example",
+            "purposes": [
+              "debugging"
+            ],
+            "schema_version": 2,
+            "source": {
+              "kind": "external",
+              "locator": {
+                "file_url": "https://source.example/example/SKILL.md",
+                "path": "skills/example",
+                "ref": "main",
+                "repository": "https://source.example/example.git",
+                "type": "git"
+              },
+              "publicity": "public"
+            },
+            "summary": "Example skill"
+          },
+          "entry_digest": "sha256:1170006061c2ca73f0e3ce822d17e6fbaf1ff90c6b6cbc126720d46edce31c57",
+          "lifecycle": "active",
+          "translation": {
+            "body": "# Example\n\nTranslated body snapshot-v2.",
+            "body_format": "markdown",
+            "source_url": "https://source.example/example/SKILL.md",
+            "translated_at": "2026-09-20"
+          }
+        }
+      ],
+      "schema_version": 2,
+      "source_commit": "2222222222222222222222222222222222222222"
+    },
+    "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/data/recommendations.json": {
+      "recommendations": [
+        {
+          "author": "tests",
+          "body": "first",
+          "id": "example-workflow",
+          "schema_version": 1,
+          "skills": [
+            {
+              "id": "local/example"
+            }
+          ],
+          "status": "ready",
+          "title": "Example workflow"
+        }
+      ],
+      "schema_version": 1
+    },
+    "https://directory.test/releases/release-714a58019089a136cb93bc41b005b66f69a34d65e8b565ca61a4fd1289f98a0e/data/skills/local/example/install.json": {
+      "entry_digest": "sha256:1170006061c2ca73f0e3ce822d17e6fbaf1ff90c6b6cbc126720d46edce31c57",
+      "install": {
+        "default_scope": "project",
+        "instructions_url": "https://source.example/install",
+        "method": "upstream"
+      },
+      "install_digest": "sha256:06bfd2eec50c663c52fc333008a3b8250e01b5738ce49063f3995b1c8f99adfb",
+      "schema_version": 2,
+      "skill_id": "local/example",
+      "source": {
+        "kind": "external",
+        "locator": {
+          "file_url": "https://source.example/example/SKILL.md",
+          "path": "skills/example",
+          "ref": "main",
+          "repository": "https://source.example/example.git",
+          "type": "git"
+        },
+        "publicity": "public"
+      }
+    }
+  },
+  "snapshot_identity": "sha256:e66dd7021d8dd7b1704d47b8447b27efb3c33319959bb2da60f24680e659b9ff"
+}

@@ -4,57 +4,436 @@
   "title": "Catalog v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "source_commit", "entries"],
+  "required": [
+    "schema_version",
+    "source_commit",
+    "entries"
+  ],
   "properties": {
-    "schema_version": {"const": 2},
-    "source_commit": {"type": ["string", "null"]},
-    "entries": {"type": "array", "items": {"$ref": "#/$defs/item"}}
+    "schema_version": {
+      "const": 2
+    },
+    "source_commit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
   },
   "$defs": {
     "item": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["entry", "entry_digest", "lifecycle", "translation"],
+      "required": [
+        "entry",
+        "entry_digest",
+        "lifecycle",
+        "translation"
+      ],
       "properties": {
-        "entry": {"$ref": "#/$defs/entry"},
-        "entry_digest": {"type": "string", "minLength": 1},
-        "lifecycle": {"enum": ["active", "deprecated", "withdrawn"]},
-        "translation": {"$ref": "#/$defs/translation"}
+        "entry": {
+          "$ref": "#/$defs/entry"
+        },
+        "entry_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "deprecated",
+            "withdrawn"
+          ]
+        },
+        "translation": {
+          "$ref": "#/$defs/translation"
+        }
       }
     },
     "entry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "id", "name", "summary", "layer", "purposes", "examples", "source", "install", "compatibility", "license", "lifecycle"],
+      "required": [
+        "schema_version",
+        "id",
+        "name",
+        "summary",
+        "layer",
+        "purposes",
+        "examples",
+        "source",
+        "install",
+        "compatibility",
+        "license"
+      ],
       "properties": {
-        "schema_version": {"const": 2},
-        "id": {"type": "string", "minLength": 1},
-        "name": {"type": "string", "minLength": 1},
-        "summary": {"type": "string", "minLength": 1},
-        "layer": {"enum": ["l1", "l2", "l3", "l4", "l5"]},
-        "purposes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-        "examples": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["prompt", "expected_outcome"], "properties": {"prompt": {"type": "string", "minLength": 1}, "expected_outcome": {"type": "string", "minLength": 1}}}},
-        "source": {"type": "object"},
-        "install": {"type": "object"},
-        "compatibility": {"type": "object"},
-        "license": {"type": "object"},
-        "owner": {"type": "string", "minLength": 1},
-        "keywords": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "limitations": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "lifecycle": {"enum": ["active", "deprecated", "withdrawn"]},
-        "lifecycle_reason": {"type": "string", "minLength": 1},
-        "replacement_id": {"type": "string", "minLength": 1}
-      }
+        "schema_version": {
+          "const": 2
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layer": {
+          "enum": [
+            "l1",
+            "l2",
+            "l3",
+            "l4",
+            "l5"
+          ]
+        },
+        "purposes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "examples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "prompt",
+              "expected_outcome"
+            ],
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected_outcome": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "path"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hosted"
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "locator"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "external"
+                },
+                "publicity": {
+                  "enum": [
+                    "public",
+                    "private",
+                    "unknown"
+                  ]
+                },
+                "locator": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "repository",
+                        "path"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "git"
+                        },
+                        "repository": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "path": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "ref": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "file_url": {
+                          "type": "string",
+                          "format": "uri"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "url"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "web"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "version_note": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "install": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "default_scope"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "directory",
+                "upstream",
+                "unknown"
+              ]
+            },
+            "default_scope": {
+              "const": "project"
+            },
+            "instructions_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "included_skills": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "method": {
+                    "const": "upstream"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "instructions_url"
+                ]
+              }
+            }
+          ]
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "agents",
+            "systems",
+            "requirements"
+          ],
+          "properties": {
+            "agents": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "systems": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "requirements": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "identifier": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "identifier"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "url"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "deprecated",
+            "withdrawn"
+          ]
+        },
+        "lifecycle_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replacement_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lifecycle": {
+                "enum": [
+                  "deprecated",
+                  "withdrawn"
+                ]
+              }
+            },
+            "required": [
+              "lifecycle"
+            ]
+          },
+          "then": {
+            "required": [
+              "lifecycle_reason"
+            ]
+          }
+        }
+      ]
     },
     "translation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["body_format", "body", "translated_at", "source_url"],
+      "required": [
+        "body_format",
+        "body",
+        "translated_at",
+        "source_url"
+      ],
       "properties": {
-        "body_format": {"const": "markdown"},
-        "body": {"type": "string", "minLength": 1},
-        "translated_at": {"type": "string", "format": "date"},
-        "source_url": {"type": "string", "format": "uri"}
+        "body_format": {
+          "const": "markdown"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "translated_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri"
+        }
       }
     }
   }
