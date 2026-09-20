@@ -56,9 +56,10 @@ Maintainer confirmation on 2026-09-20 establishes the following without recordin
 - `skill-validation` exists.
 - Environment variables `VALIDATION_MODEL`, `DEEPSEEK_BASE_URL`, and `HWSKILL_VALIDATOR_APP_ID` exist.
 - Environment secrets `HWSKILL_VALIDATOR_APP_PRIVATE_KEY` and `DEEPSEEK_API_KEY` exist.
+- The private `HWSkill Gate` GitHub App exists with webhooks disabled, is installed only on `hwskill/hwskill`, and has Contents read, Pull requests read, Checks write, and implicit Metadata read access.
 - PV3 is complete.
 - The credential and model-configuration portion of PV5 is complete. Task 4 still implements and tests the USD 0.08 per-skill enforcement.
-- PV2 remains open until the App installation scope and effective permissions pass the smoke test in Task 5.
+- PV2 provisioning is complete. Task 5 still performs the functional smoke test with a short-lived installation token before PV2 acceptance is closed.
 - PV4 remains open until the GitHub plan and the corresponding reviewer or restricted-dispatch policy are verified in Task 6.
 
 ## Human Setup Runbook
