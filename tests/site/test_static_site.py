@@ -17,6 +17,9 @@ SITE = ROOT / "site"
 class StaticSiteContractTests(unittest.TestCase):
     def test_contribution_page_offers_skill_and_recommendation_prompts_that_end_in_a_pr(self) -> None:
         contribute = (SITE / "src/pages/contribute/index.astro").read_text(encoding="utf-8")
+        prompts = (SITE / "src/lib/contribution-prompts.ts").read_text(encoding="utf-8")
+        copy_component = (SITE / "src/components/CopyPrompt.astro").read_text(encoding="utf-8")
+        contribution_sources = contribute + prompts
         for prompt_id in ("skill-contribution-prompt", "recommendation-contribution-prompt"):
             self.assertIn(prompt_id, contribute)
         for resource in (
@@ -26,13 +29,13 @@ class StaticSiteContractTests(unittest.TestCase):
             "templates/recommendations/recommendation.md",
             "data/catalog.json",
         ):
-            self.assertIn(resource, contribute)
-        self.assertIn("未收录", contribute)
-        self.assertIn("同一个 Pull Request", contribute)
-        self.assertGreaterEqual(contribute.count("本提示词授权你"), 2)
-        self.assertIn("不授权合并", contribute)
-        self.assertRegex(contribute, r"最终[^`\n]*(?:Pull Request|PR)[^`\n]*URL")
-        self.assertIn("querySelectorAll", contribute)
+            self.assertIn(resource, contribution_sources)
+        self.assertIn("未收录", contribution_sources)
+        self.assertIn("同一个 Pull Request", contribution_sources)
+        self.assertGreaterEqual(prompts.count("本提示词授权你"), 2)
+        self.assertIn("不授权合并", prompts)
+        self.assertRegex(prompts, r"最终[^`\n]*(?:Pull Request|PR)[^`\n]*URL")
+        self.assertIn("querySelectorAll", copy_component)
 
     def test_repository_has_a_pull_request_template_for_agent_contributions(self) -> None:
         template = ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
@@ -56,9 +59,10 @@ class StaticSiteContractTests(unittest.TestCase):
     def test_copied_agent_prompts_use_complete_site_urls(self) -> None:
         install = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
         contribute = (SITE / "src/pages/contribute/index.astro").read_text(encoding="utf-8")
+        prompts = (SITE / "src/lib/contribution-prompts.ts").read_text(encoding="utf-8")
         self.assertIn("new URL(sitePath(", install)
         self.assertIn("Astro.site", install)
-        self.assertIn("new URL(sitePath(", contribute)
+        self.assertIn("new URL(sitePath(", prompts)
         self.assertIn("Astro.site", contribute)
 
     def test_ci_lockfile_downloads_packages_from_the_public_npm_registry(self) -> None:
@@ -124,17 +128,18 @@ class StaticSiteContractTests(unittest.TestCase):
 
     def test_pages_only_consume_normalized_generated_json(self) -> None:
         contribution_page = SITE / "src/pages/contribute/index.astro"
+        contribution_prompts = SITE / "src/lib/contribution-prompts.ts"
         sources = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (SITE / "src").rglob("*")
             if path.suffix in {".astro", ".ts", ".js", ".mjs"}
-            and path != contribution_page
+            and path not in {contribution_page, contribution_prompts}
         )
         self.assertNotRegex(sources, r"(?:entries|recommendations|curation)/.+\.ya?ml")
         self.assertNotIn("fetch(\"http", sources)
         self.assertIn("catalog.json", sources)
         self.assertIn("recommendations.json", sources)
-        contribution = contribution_page.read_text(encoding="utf-8")
+        contribution = contribution_prompts.read_text(encoding="utf-8")
         self.assertIn("templates/entries/external.yaml", contribution)
         self.assertIn("templates/recommendations/recommendation.md", contribution)
 
@@ -211,7 +216,7 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(recommendation, r"status\s*!==?\s*[\"']draft[\"']")
         self.assertIn("withdrawal_reason", recommendation)
         self.assertRegex(recommendation, r"status\s*===?\s*[\"']withdrawn[\"']")
-        self.assertRegex(recommendation, r"status\s*===?\s*[\"']ready[\"'][^\n]+SkillCard")
+        self.assertRegex(recommendation, r"status\s*===?\s*[\"']ready[\"'][^\n]+skill-link-groups")
         self.assertIn("recommendationData.recommendations.filter", data)
         self.assertRegex(data, r"status\s*===?\s*[\"']ready[\"']")
         card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
