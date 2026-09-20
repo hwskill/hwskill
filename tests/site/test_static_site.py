@@ -15,6 +15,32 @@ SITE = ROOT / "site"
 
 
 class StaticSiteContractTests(unittest.TestCase):
+    def test_contribution_page_offers_skill_and_recommendation_prompts_that_end_in_a_pr(self) -> None:
+        contribute = (SITE / "src/pages/contribute/index.astro").read_text(encoding="utf-8")
+        for prompt_id in ("skill-contribution-prompt", "recommendation-contribution-prompt"):
+            self.assertIn(prompt_id, contribute)
+        for resource in (
+            "schemas/entry.schema.json",
+            "schemas/recommendation.schema.json",
+            "templates/entries/external.yaml",
+            "templates/recommendations/recommendation.yaml",
+            "data/catalog.json",
+        ):
+            self.assertIn(resource, contribute)
+        self.assertIn("未收录", contribute)
+        self.assertIn("同一个 Pull Request", contribute)
+        self.assertGreaterEqual(contribute.count("本提示词授权你"), 2)
+        self.assertIn("不授权合并", contribute)
+        self.assertRegex(contribute, r"最终[^`\n]*(?:Pull Request|PR)[^`\n]*URL")
+        self.assertIn("querySelectorAll", contribute)
+
+    def test_repository_has_a_pull_request_template_for_agent_contributions(self) -> None:
+        template = ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
+        self.assertTrue(template.is_file())
+        text = template.read_text(encoding="utf-8")
+        for section in ("变更内容", "来源与版本", "验证", "验证边界"):
+            self.assertIn(section, text)
+
     def test_unverified_source_prompt_allows_informed_manual_installation(self) -> None:
         prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
         self.assertIn("可继续安装", prompt)
@@ -97,15 +123,20 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertIn("pagefind", package["scripts"]["index"])
 
     def test_pages_only_consume_normalized_generated_json(self) -> None:
+        contribution_page = SITE / "src/pages/contribute/index.astro"
         sources = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (SITE / "src").rglob("*")
             if path.suffix in {".astro", ".ts", ".js", ".mjs"}
+            and path != contribution_page
         )
         self.assertNotRegex(sources, r"(?:entries|recommendations|curation)/.+\.ya?ml")
         self.assertNotIn("fetch(\"http", sources)
         self.assertIn("catalog.json", sources)
         self.assertIn("recommendations.json", sources)
+        contribution = contribution_page.read_text(encoding="utf-8")
+        self.assertIn("templates/entries/external.yaml", contribution)
+        self.assertIn("templates/recommendations/recommendation.yaml", contribution)
 
     def test_internal_links_and_pagefind_follow_configured_base(self) -> None:
         config = (SITE / "astro.config.mjs").read_text(encoding="utf-8")
@@ -221,7 +252,14 @@ class StaticSiteContractTests(unittest.TestCase):
         checker = (SITE / "scripts/check-build.mjs").read_text(encoding="utf-8")
         for route in ("skills", "recommendations", "topics", "contribute"):
             self.assertIn(route, checker)
-        for resource in ("data/catalog.json", "schemas/entry.schema.json", "contribute/agent.md"):
+        for resource in (
+            "data/catalog.json",
+            "schemas/entry.schema.json",
+            "schemas/recommendation.schema.json",
+            "templates/entries/external.yaml",
+            "templates/recommendations/recommendation.yaml",
+            "contribute/agent.md",
+        ):
             self.assertIn(resource, checker)
         self.assertTrue(re.search(r"pagefind", checker, re.IGNORECASE))
 

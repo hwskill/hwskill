@@ -178,6 +178,9 @@ def _copy_public_resources(root: Path, output: Path) -> None:
             target = output / ("contribute/agent.md" if relative.name == "agent-contribution.md" else relative)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+    template_source = root / "templates"
+    if template_source.is_dir():
+        shutil.copytree(template_source, output / "templates")
 
 
 def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:

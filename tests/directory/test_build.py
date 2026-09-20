@@ -11,6 +11,25 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class DirectoryBuildTests(unittest.TestCase):
+    def test_build_publishes_current_contribution_templates_for_agent_prompts(self) -> None:
+        from hwskill.directory.catalog import build_repository
+
+        root = self.make_repository()
+        repository_templates = Path(__file__).parents[2] / "templates"
+        shutil.copytree(repository_templates, root / "templates")
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            build_repository(root, output)
+            for relative in (
+                "entries/external.yaml",
+                "entries/hosted.yaml",
+                "recommendations/recommendation.yaml",
+            ):
+                self.assertEqual(
+                    (output / "templates" / relative).read_bytes(),
+                    (repository_templates / relative).read_bytes(),
+                )
+
     def test_build_preserves_included_skill_dependencies_in_public_install_material(self) -> None:
         from hwskill.directory.catalog import build_repository
 
