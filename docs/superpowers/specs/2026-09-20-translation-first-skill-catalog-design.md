@@ -111,6 +111,8 @@ translated_at: 2026-09-20
 
 完整译文是原文的衍生内容。发布前必须确认许可证允许翻译与再分发，或取得明确授权。页面保留作者、许可证与原文链接。许可证未知、禁止衍生或授权不清楚时，条目保持 draft，不发布完整译文。
 
+仓库所有者已决定把 `local/gitcode-discussion-fetch` 和 `local/gitcode-pr-review-fetch` 的技能源文件及译文按 MIT 许可发布，允许修改与再分发；实现时在仓库根目录增加 `LICENSE` 并把两个 Entry 的许可证状态改为 known/MIT。
+
 ### 4.3 规范化输出
 
 Catalog v2 每个条目包含规范化翻译：
@@ -182,7 +184,7 @@ Catalog v2 每个条目包含规范化翻译：
 
 ## 8. 私有验证项目
 
-安装与使用验证代码由独立私有项目维护。公开目录仓库不能直接调用私有 reusable workflow，因此首版使用维护者手动 `workflow_dispatch`，由私有项目中的 GitHub App 身份读取 PR 并回写 Check。
+安装与使用验证代码由 `git@github.com:hwskill/hwskill-gate.git` 私有项目维护。公开目录仓库不能直接调用私有 reusable workflow，因此首版使用维护者手动 `workflow_dispatch`，由私有项目中的 GitHub App 身份读取 PR 并回写 Check。
 
 输入固定为目标仓库、PR 编号、精确 head SHA 和本次技能 ID。工作流必须重新确认 PR head SHA，且只读取与本次技能有关的 Entry、译文和来源材料。
 
@@ -215,6 +217,7 @@ Catalog v2 每个条目包含规范化翻译：
 - 相同 head SHA 与技能 ID 不重复计费。
 - 默认一个安装任务、一个使用任务、最多一次自动重试。
 - 默认使用低成本模型，并设置单 PR 的 Token、时间和费用上限。
+- 首版模型使用 DeepSeek Flash 系列的当前规范 API 名称 `deepseek-flash`；密钥只保存为私有仓库 `skill-validation` Environment 的 `DEEPSEEK_API_KEY` secret。
 - 不保存安装目录；普通日志和 Check Summary 足以保留合入证据。
 - 首版不部署常驻 Webhook 服务。投稿量证明自动化收益后，再评估 serverless GitHub App 触发器。
 
@@ -263,4 +266,3 @@ Catalog v1 与旧验证报告作为历史发布保留，不再更新。当前构
 5. 私有验证项目、GitHub App 与 required check。
 6. 完整目录、站点、搜索、历史读取和部署验证。
 7. 更新用户指南、贡献指南、部署指南、实施状态与验收报告。
-

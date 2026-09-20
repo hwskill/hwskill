@@ -4,15 +4,15 @@
 
 **Goal:** Build a low-cost private workflow that validates installation and one declared use task for a public HWSkill PR, then writes an ephemeral `hwskill-validation` GitHub Check for the exact PR head SHA.
 
-**Architecture:** A private repository owns trusted workflow code and secrets. A maintainer manually dispatches validation after public deterministic CI and review. The runner authenticates as a least-privilege GitHub App, reads only the target PR files, treats contributed and upstream content as untrusted data, runs in a disposable workspace, and writes a Check without storing validation state in the catalog.
+**Architecture:** The private repository `git@github.com:hwskill/hwskill-gate.git` owns trusted workflow code and secrets. A maintainer manually dispatches validation after public deterministic CI and review. The runner authenticates as a least-privilege GitHub App, reads only the target PR files, treats contributed and upstream content as untrusted data, runs in a disposable workspace, and writes a Check without storing validation state in the catalog.
 
-**Tech Stack:** Python 3.12, PyYAML 6, jsonschema 4, direct GitHub REST API, OpenAI Responses API, GitHub Actions, unittest, disposable process/container sandbox.
+**Tech Stack:** Python 3.12, PyYAML 6, jsonschema 4, direct GitHub REST API, DeepSeek Responses API, GitHub Actions, unittest, disposable process/container sandbox.
 
 **Spec:** `docs/superpowers/specs/2026-09-20-translation-first-skill-catalog-design.md`
 
 ## Global Constraints
 
-- This plan is executed in a new private repository named `hwskill/hwskill-validator`; it is not implemented in the public `hwskill/hwskill` tree.
+- This plan is executed in the existing private repository `git@github.com:hwskill/hwskill-gate.git`; it is not implemented in the public `hwskill/hwskill` tree.
 - The validator repository does not accept external pull requests. `pull_request_target` and execution of public-PR workflow code are forbidden.
 - Validate an explicit repository, PR number, expected head SHA, and skill ID. Abort before billing if the current head differs.
 - Never execute upstream installers, hooks, setup scripts, workflow files, or dependency commands. Copy declared skill material as data into a disposable target directory.
@@ -38,32 +38,59 @@ These actions require organization ownership, billing authority, secrets, or pol
 
 | ID | Human-provided item | Owner | Needed before | Acceptance evidence |
 |---|---|---|---|---|
-| PV1 | Create private repository `hwskill/hwskill-validator`, disable public forking, and restrict write access to maintainers | Organization administrator | Task 1 | Repository settings screenshot or reviewed settings record |
-| PV2 | Create GitHub App `HWSkill Validator`, install it only on `hwskill/hwskill`, and grant Metadata read, Contents read, Pull requests read, Checks write | Organization administrator | Task 5 | Installation ID is discoverable and a test token can read a PR and create a draft Check |
-| PV3 | Add Actions variable `HWSKILL_VALIDATOR_APP_ID` and secret `HWSKILL_VALIDATOR_APP_PRIVATE_KEY` | Secret administrator | Task 5 | Workflow secret/variable names exist; values are never committed or logged |
-| PV4 | Create protected Environment `skill-validation`, add required reviewers, and prevent self-review where the organization plan supports it | Organization administrator | Task 6 | Environment rule is visible and blocks an unapproved dispatch job |
-| PV5 | Choose a currently supported low-cost model and provide its API credential; approve maximum 150,000 input tokens and 20,000 output tokens per skill with two model calls total | Billing owner | Task 4 | `VALIDATION_MODEL`, reviewed budget, and `OPENAI_API_KEY` secret are configured in the Environment |
+| PV1 | Confirm access to `git@github.com:hwskill/hwskill-gate.git`, disable public forking, and restrict write access to maintainers | Organization administrator | Task 1 | SSH clone succeeds and repository settings are reviewed |
+| PV2 | Create private GitHub App `HWSkill Gate`, install it only on `hwskill/hwskill`, and grant Metadata read, Contents read, Pull requests read, Checks write | Organization administrator | Task 5 | Installation ID is discoverable and a test token can read a PR and create a draft Check |
+| PV3 | Add Environment variable `HWSKILL_VALIDATOR_APP_ID` and Environment secret `HWSKILL_VALIDATOR_APP_PRIVATE_KEY` | Secret administrator | Task 5 | Workflow secret/variable names exist; values are never committed or logged |
+| PV4 | Confirm the GitHub plan and create Environment `skill-validation`; GitHub Enterprise adds required reviewers and prevents self-review, while Team uses restricted manual dispatch without reviewer protection | Organization administrator | Task 6 | Environment secrets are present; Enterprise repositories also demonstrate a blocked unapproved job |
+| PV5 | Use the DeepSeek Flash family through the current canonical model ID `deepseek-flash`; approve maximum 150,000 input tokens and 20,000 output tokens per skill with two model calls total | Billing owner | Task 4 | `VALIDATION_MODEL=deepseek-flash`, reviewed budget, and `DEEPSEEK_API_KEY` secret are configured in the Environment |
 | PV6 | Approve the dispatch allowlist and designate maintainers who may request runs | Repository owner | Task 6 | `VALID_TARGETS` and team/reviewer policy are reviewed |
 | PV7 | Decide case by case whether skills needing private accounts, special networks, paid tools, or hardware are `not-applicable`, or provide a dedicated test resource | Maintainer and resource owner | Task 4 and each run | Approved reason in the protected workflow review or dedicated credential/resource |
 | PV8 | After a successful dry run, require the exact `hwskill-validation` Check on public `main` | Organization administrator | Public cutover | Branch protection rule contains the exact Check name |
 
-Agent work that can be prepared before PV1-PV5: complete repository skeleton as a patch or archive, write tests, define permissions, prepare App setup instructions, create sample payloads, and estimate maximum run cost. The Agent cannot create organization resources, accept billing, obtain secret values, approve protected environments, or decide whether a semantic behavior result is acceptable.
+Agent work that can be prepared before PV1-PV5: complete the repository skeleton, write tests, define permissions, prepare App setup instructions, create sample payloads, and estimate maximum run cost. The Agent cannot create organization resources, accept billing, obtain secret values, approve protected environments, or decide whether a semantic behavior result is acceptable. Never paste the DeepSeek API key into an issue, PR, plan, chat, shell history, or committed file.
+
+## Human Setup Runbook
+
+### GitHub App
+
+1. As an `hwskill` organization owner, open **Organization settings → Developer settings → GitHub Apps → New GitHub App**.
+2. Name the private app `HWSkill Gate`. Use `https://hwskill.github.io/` as its homepage. Disable webhooks because v1 uses only manual `workflow_dispatch`; no callback URL, webhook URL, client secret, or user authorization flow is needed.
+3. Set repository permissions to **Contents: Read-only**, **Pull requests: Read-only**, and **Checks: Read and write**. Metadata read access is implicit. Leave Administration, Actions, Workflows, Issues, Deployments, and organization permissions at no access.
+4. Limit installation to the owning organization. Install the app with **Only select repositories** and select only `hwskill/hwskill`; do not install it broadly across the organization.
+5. On the app settings page, copy the numeric **App ID** and generate one PEM private key. GitHub stores only the public half, so keep the downloaded PEM until it has been saved as an Environment secret.
+6. In `hwskill-gate`, store the App ID as Environment variable `HWSKILL_VALIDATOR_APP_ID` and the complete PEM as Environment secret `HWSKILL_VALIDATOR_APP_PRIVATE_KEY`. Delete the local PEM after the secret is verified and retain a documented rotation procedure.
+7. The workflow signs a short-lived JWT, requests an installation token scoped to `hwskill/hwskill`, and uses that token for REST reads and `hwskill-validation` Check writes. It never uses a personal access token.
+
+### Environment and Secrets
+
+1. In `hwskill-gate`, open **Settings → Environments → New environment**, name it `skill-validation`, and configure it before any workflow references it.
+2. Add Environment variable `VALIDATION_MODEL` with value `deepseek-flash` and `DEEPSEEK_BASE_URL` with value `https://api.deepseek.com`.
+3. Add Environment secrets `DEEPSEEK_API_KEY` and `HWSKILL_VALIDATOR_APP_PRIVATE_KEY`; add Environment variable `HWSKILL_VALIDATOR_APP_ID`.
+4. On GitHub Enterprise, select required reviewers, enable prevent self-review, and disallow administrator bypass. On GitHub Team, private-repository Environment secrets are available but required reviewers are not, so restrict write and Actions dispatch access to maintainers and treat manual dispatch as the approval boundary. GitHub Free does not provide private-repository Environments; upgrade the plan before this design's secret boundary is enabled, or explicitly revise the design to use weaker repository secrets.
+5. In `validate-pr.yml`, bind the job to `environment: skill-validation`. Environment secrets then become available only to that job and, where supported, only after reviewer approval.
+
+### DeepSeek Credential
+
+1. The billing owner creates a dedicated API key in the DeepSeek platform for this validator and applies a small account balance or provider-side spending limit when available.
+2. The billing owner enters the key directly into the `DEEPSEEK_API_KEY` Environment secret. The key is not given to the implementing Agent or pasted into this conversation.
+3. The official current model ID is `deepseek-flash`, which presently serves DeepSeek V4.1 Flash. The legacy `deepseek-v4-flash` alias is retired and temporarily routed to the current Flash model, so the workflow uses the canonical ID.
+4. Before enabling paid runs, perform a one-request secret smoke test whose output excludes request headers and then rotate the key if it was ever exposed outside GitHub Secrets.
 
 ## Cost Envelope
 
 - Default dispatch validates one skill. A PR with multiple skills uses an explicit comma-separated list and runs sequentially under one aggregate cap.
 - Reject source packages larger than 2 MiB or 200 files before model use.
 - Truncate model context by a fixed trusted policy: Entry, translated headings, original `SKILL.md`, referenced local text files, and declared example only.
-- Use at most two model calls: plan/evidence extraction and result judgment. Do not run open-ended autonomous loops.
+- Use at most two model calls through `POST https://api.deepseek.com/responses`: plan/evidence extraction and result judgment. Do not run open-ended autonomous loops.
 - Default wall-clock limit is 15 minutes per skill. Installation discovery commands receive 30 seconds each.
 - Store a private run-summary artifact for 14 days; do not store the installed workspace.
-- Before enabling the model, the billing owner records current provider prices and a calculated hard currency cap in `config/budget.yaml`. The workflow fails closed if the price table or cap is missing.
+- At the official 2026-09-20 peak cache-miss prices, 150,000 input and 20,000 output tokens cost at most about USD 0.069 per skill. Set `max_usd_per_skill: 0.08`; before enabling the model, the billing owner refreshes prices in `config/budget.yaml`. The workflow fails closed if the price table or cap is missing.
 
 ---
 
 ### Task 1: Create the Private Repository Skeleton and Trusted Configuration
 
-**Files in `hwskill/hwskill-validator`:**
+**Files in `hwskill/hwskill-gate`:**
 - Create: `pyproject.toml`
 - Create: `README.md`
 - Create: `config/policy.yaml`
@@ -79,7 +106,7 @@ Agent work that can be prepared before PV1-PV5: complete repository skeleton as 
 - `ValidationResult(conclusion, summary, details, fetched_commit, cost)` accepts only the four public result classes.
 - Trusted policy allows only `hwskill/hwskill` and model/budget identifiers defined on the default branch.
 
-- [ ] **Step 1: Obtain PV1 or prepare these files as a reviewable patch if the repository does not yet exist.**
+- [ ] **Step 1: Obtain PV1 by cloning `git@github.com:hwskill/hwskill-gate.git` and reviewing its access settings.**
 - [ ] **Step 2: Write failing model tests** for malformed repository names, nonpositive PR numbers, non-40-character SHA values, duplicate/unsafe skill IDs, unknown conclusions, and negative costs.
 - [ ] **Step 3: Run tests and confirm failure.**
 
@@ -173,7 +200,7 @@ git commit -m "feat: fetch bounded upstream skill data"
 - [ ] **Step 2: Add behavior tests** using a fake model client for expected result, wrong result, refusal, tool request, prompt injection in skill text, timeout, provider error, and token cap.
 - [ ] **Step 3: Implement a trusted installation adapter per supported Agent.** The adapter may copy files and invoke only a checked, fixed discovery command. It must never use commands supplied by the Entry or source.
 - [ ] **Step 4: Implement fixed prompts.** Delimit untrusted skill content, prohibit tool/network/credential access, ask for structured JSON evidence, and validate response schema before judging.
-- [ ] **Step 5: Obtain PV5 and PV7.** Add the chosen model and reviewed hard budget to protected configuration. Specialized resources are absent by default and yield `not-applicable` with a concrete reason.
+- [ ] **Step 5: Obtain PV5 and PV7.** Configure `deepseek-flash`, the reviewed hard budget, and `DEEPSEEK_API_KEY` in the Environment. Specialized resources are absent by default and yield `not-applicable` with a concrete reason.
 - [ ] **Step 6: Run tests and commit.**
 
 ```bash
@@ -227,7 +254,7 @@ git commit -m "feat: publish skill validation checks"
 - [ ] **Step 1: Add CLI tests** for parsing, target allowlist, stale SHA exit before model initialization, sequential multi-skill limits, and final aggregate conclusion.
 - [ ] **Step 2: Implement CLI orchestration.** Create the in-progress Check only after request validation; always complete it in a `finally` path when a Check ID exists.
 - [ ] **Step 3: Add `workflow_dispatch` only.** Pin every third-party Action by full commit SHA, set a 30-minute job timeout, disable credential persistence, and upload only the redacted JSON summary for 14 days.
-- [ ] **Step 4: Obtain PV4 and PV6.** Confirm an unapproved run blocks at the protected Environment and an unauthorized target fails before secret use.
+- [ ] **Step 4: Obtain PV4 and PV6.** On Enterprise, confirm an unapproved run blocks at the protected Environment. On other plans, confirm only maintainers can dispatch and an unauthorized target fails before secret use.
 - [ ] **Step 5: Document dispatch, retry, stale-head, not-applicable approval, secret rotation, budget updates, and incident shutdown.**
 - [ ] **Step 6: Run tests and commit.**
 
