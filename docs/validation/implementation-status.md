@@ -27,7 +27,7 @@
 | 9 迁移清理 | 已完成 | commit `91b3ec0`；只读 preview、固定 detached 旧版、新四入口、干净 wheel/sdist 和 21 项迁移清理测试通过 |
 | 10 文档与验收 | 已完成（本地边界） | commit `d57054d`；中文指南与可审计脚本已完成；隔离验收发现 275 项测试（其中 5 项递归验收测试按设计 skip），目录、站点、发布恢复、prepare/ack 全部通过；1,000/10,000 规模探针通过 |
 | 11 最终审阅 | 已完成（本地审阅） | 全分支本地审阅发现并修正规模 fixture 误用语义查询集；直接全测 275/275、锁文件 `npm ci`、Astro/Pagefind 与隔离验收通过；独立 reviewer 因代理用量上限未能启动，需在后续 PR 审阅补齐 |
-| 12 稳定系列与推荐中心 | 实施完成，待最终复审 | 固定提交收录 Superpowers 15 项和 Matt Pocock 25 项；推荐改用 Markdown Frontmatter；新增 `/recommendations/`、共享贡献提示词、安全渲染和精确关联技能检查 |
+| 12 稳定系列与推荐中心 | 已完成（本地审阅） | 固定提交收录 Superpowers 15 项和 Matt Pocock 25 项；推荐改用 Markdown Frontmatter；新增 `/recommendations/`、共享贡献提示词、安全渲染和精确关联技能检查；303 项 Python 测试、7 项 Node 测试、Astro/Pagefind 门禁通过，独立复审 clean |
 
 ## 已知边界与决定
 
