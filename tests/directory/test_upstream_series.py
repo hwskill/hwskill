@@ -68,6 +68,18 @@ class UpstreamSeriesTests(unittest.TestCase):
                 self.assertTrue(any("安装和行为未运行" in item for item in entry["limitations"]))
 
 
+    def test_executing_plans_includes_runtime_dependencies(self) -> None:
+        entry = load_yaml(ROOT / "entries/l1/superpowers/executing-plans.yaml")
+        self.assertEqual(set(entry["install"]["included_skills"]), {
+            "writing-plans",
+            "test-driven-development",
+            "systematic-debugging",
+            "verification-before-completion",
+            "requesting-code-review",
+            "finishing-a-development-branch",
+        })
+
+
     def test_mattpocock_inventory(self) -> None:
         paths = sorted((ROOT / "entries").glob("l*/mattpocock/*.yaml"))
         entries = {path.stem: (path, load_yaml(path)) for path in paths}

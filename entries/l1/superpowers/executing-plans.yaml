@@ -24,6 +24,9 @@ install:
   instructions_url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/README.md
   included_skills:
   - writing-plans
+  - test-driven-development
+  - systematic-debugging
+  - verification-before-completion
   - requesting-code-review
   - finishing-a-development-branch
 compatibility:

@@ -1,23 +1,15 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import { entries, recommendationData, recommendationSummary, type CatalogItem, type Recommendation } from "../../lib/data";
+import { entries, recommendationData, recommendationSummary, type Recommendation } from "../../lib/data";
+import { resolveRecommendationSkills } from "../../lib/recommendation-links.mjs";
 import { renderMarkdown } from "../../lib/markdown.mjs";
 import { sitePath } from "../../lib/urls";
 
-function linkedSkills(recommendation: Recommendation): CatalogItem[] {
-  const byId = new Map(entries.map((item) => [item.entry.id, item]));
-  const missing = recommendation.skills.map((skill) => skill.id).filter((id) => !byId.has(id));
-  if (missing.length) throw new Error(`Recommendation ${recommendation.id} references missing skills: ${missing.join(", ")}`);
-  return recommendation.skills.map((skill) => byId.get(skill.id)!);
-}
-
 export function getStaticPaths() {
-  const availableIds = new Set(entries.map((item) => item.entry.id));
   return recommendationData.recommendations
     .filter((item) => item.status !== "draft")
     .map((recommendation) => {
-      const missing = recommendation.skills.map((skill) => skill.id).filter((id) => !availableIds.has(id));
-      if (missing.length) throw new Error(`Recommendation ${recommendation.id} references missing skills: ${missing.join(", ")}`);
+      resolveRecommendationSkills(recommendation, entries);
       const format = (recommendation as Recommendation & { body_format?: string }).body_format;
       if (recommendation.status !== "withdrawn" && format && format !== "markdown") {
         throw new Error(`Recommendation ${recommendation.id} has unsupported body_format: ${format}`);
@@ -27,7 +19,7 @@ export function getStaticPaths() {
 }
 interface Props { recommendation: Recommendation }
 const { recommendation } = Astro.props;
-const linked = linkedSkills(recommendation);
+const linked = resolveRecommendationSkills(recommendation, entries);
 const grouped = [...Map.groupBy(linked, (item) => `${item.entry.id.split("/", 1)[0]}/${item.entry.layer}`)]
   .sort(([left], [right]) => left.localeCompare(right))
   .map(([key, items]) => ({ key, items: items.sort((left, right) => left.entry.name.localeCompare(right.entry.name, "zh-CN")) }));
