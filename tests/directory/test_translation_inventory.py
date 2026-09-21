@@ -18,8 +18,44 @@ NON_SERIES = {
     "local/gitcode-discussion-fetch",
     "local/gitcode-pr-review-fetch",
 }
-SUPERPOWERS: set[str] = set()
+SUPERPOWERS = {
+    f"superpowers/{name}"
+    for name in {
+        "brainstorming",
+        "diagnosing-superpowers",
+        "dispatching-parallel-agents",
+        "executing-plans",
+        "finishing-a-development-branch",
+        "receiving-code-review",
+        "requesting-code-review",
+        "subagent-driven-development",
+        "systematic-debugging",
+        "test-driven-development",
+        "using-git-worktrees",
+        "using-superpowers",
+        "verification-before-completion",
+        "writing-plans",
+        "writing-skills",
+    }
+}
 MATTPOCOCK: set[str] = set()
+SERIES_STRUCTURE = {
+    "superpowers/brainstorming": (10, 2),
+    "superpowers/diagnosing-superpowers": (6, 0),
+    "superpowers/dispatching-parallel-agents": (14, 8),
+    "superpowers/executing-plans": (13, 4),
+    "superpowers/finishing-a-development-branch": (21, 26),
+    "superpowers/receiving-code-review": (16, 24),
+    "superpowers/requesting-code-review": (6, 4),
+    "superpowers/subagent-driven-development": (15, 6),
+    "superpowers/systematic-debugging": (15, 6),
+    "superpowers/test-driven-development": (19, 26),
+    "superpowers/using-git-worktrees": (21, 16),
+    "superpowers/using-superpowers": (5, 0),
+    "superpowers/verification-before-completion": (9, 14),
+    "superpowers/writing-plans": (15, 10),
+    "superpowers/writing-skills": (76, 42),
+}
 
 
 class TranslationInventoryTests(unittest.TestCase):
@@ -47,6 +83,10 @@ class TranslationInventoryTests(unittest.TestCase):
                 self.assertTrue(document["body"].strip())
                 fences = re.findall(r"(?m)^\s*```", document["body"])
                 self.assertEqual(len(fences) % 2, 0)
+                if skill_id in SERIES_STRUCTURE:
+                    expected_headings, expected_fences = SERIES_STRUCTURE[skill_id]
+                    self.assertEqual(len(re.findall(r"(?m)^#{1,6} ", document["body"])), expected_headings)
+                    self.assertEqual(len(fences), expected_fences)
                 source_urls.append(build_source_url(entries[skill_id]))
 
         self.assertEqual(len(source_urls), len(expected))

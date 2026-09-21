@@ -126,8 +126,12 @@ class UpstreamSeriesTests(unittest.TestCase):
         self.assertTrue(superpowers["evidence"][0]["observed_at"].startswith("2026-09-20"))
         self.assertTrue(matt["evidence"][0]["observed_at"].startswith("2026-09-20"))
         for document in (superpowers, matt):
-            for heading in ("## 定位", "## 工作流", "## 适用场景", "## 成本与限制", "## 与另一个系列的比较", "## 组合边界", "## 验证状态"):
+            for heading in ("## 定位", "## 工作流", "## 适用场景", "## 成本与限制", "## 与另一个系列的比较", "## 组合边界"):
                 self.assertIn(heading, document["body"])
+        self.assertIn("## 阅读入口", superpowers["body"])
+        self.assertNotIn("验证状态", superpowers["body"])
+        for name in SUPERPOWERS:
+            self.assertIn(f"](/skills/superpowers/{name}/)", superpowers["body"])
 
 
 if __name__ == "__main__":
