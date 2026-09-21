@@ -41,7 +41,7 @@ class StaticSiteContractTests(unittest.TestCase):
         template = ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
         self.assertTrue(template.is_file())
         text = template.read_text(encoding="utf-8")
-        for section in ("变更内容", "来源与版本", "验证", "验证边界"):
+        for section in ("变更内容", "来源与版本", "技能验证报告", "确定性检查", "变更范围"):
             self.assertIn(section, text)
 
     def test_install_prompt_asks_agent_to_inspect_install_and_report_actual_results(self) -> None:
@@ -183,6 +183,23 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(detail, r"<BaseLayout[^>]+searchable")
         self.assertRegex(layout, r"data-pagefind-body=\{searchable")
 
+    def test_recommendations_and_skills_share_the_search_result_contract(self) -> None:
+        skill = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
+        recommendation = (SITE / "src/pages/recommendations/[id].astro").read_text(encoding="utf-8")
+        search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
+        evaluator = (SITE / "scripts/evaluate-search.mjs").read_text(encoding="utf-8")
+        cases = json.loads((SITE / "search-cases.json").read_text(encoding="utf-8"))
+
+        self.assertRegex(skill, r"searchKind=[\"']skill[\"']")
+        self.assertIn('searchKind={withdrawn ? undefined : "recommendation"}', recommendation)
+        self.assertRegex(recommendation, r"<BaseLayout[^>]+searchable")
+        self.assertIn("searchable={!withdrawn}", recommendation)
+        self.assertIn('record.meta.kind', search)
+        self.assertIn('"recommendation"', search)
+        self.assertIn("document.createElement", search)
+        self.assertIn("expected_urls", evaluator)
+        self.assertTrue(any(case.get("expected_urls") for case in cases))
+
     def test_search_only_commits_latest_async_request(self) -> None:
         search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
         self.assertRegex(search, r"let\s+latestRequest\s*=\s*0")
@@ -259,7 +276,7 @@ class StaticSiteContractTests(unittest.TestCase):
             if case["query"]:
                 self.assertLessEqual(len(case["expected_ids"]), 5)
         evaluator = (SITE / "scripts/evaluate-search.mjs").read_text(encoding="utf-8")
-        self.assertIn("non_skill_results", evaluator)
+        self.assertIn("non_search_results", evaluator)
         self.assertIn("unexpected", evaluator)
         search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
         self.assertNotIn('id="verification-filter"', search)

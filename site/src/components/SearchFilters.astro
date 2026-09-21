@@ -36,6 +36,29 @@ const pagefindBase = import.meta.env.BASE_URL;
   const MIN_ABSOLUTE_SCORE = 0.9;
   let latestRequest = 0;
 
+  type SearchRecord = { url: string; meta: Record<string, string>; excerpt: string; score?: number };
+
+  function recommendationCard(record: SearchRecord): HTMLElement {
+    const article = document.createElement("article");
+    article.className = "skill-card search-result-card";
+    article.dataset.resultKind = "recommendation";
+    const topline = document.createElement("div");
+    topline.className = "card-topline";
+    const label = document.createElement("span");
+    label.textContent = "技能推荐";
+    topline.append(label);
+    const heading = document.createElement("h3");
+    const link = document.createElement("a");
+    link.href = record.url;
+    link.textContent = record.meta.title ?? "未命名推荐";
+    heading.append(link);
+    const summary = document.createElement("p");
+    if (record.excerpt) summary.innerHTML = record.excerpt;
+    else summary.textContent = record.meta.summary || "查看推荐内容";
+    article.append(topline, heading, summary);
+    return article;
+  }
+
   function highlightCard(card: HTMLElement, terms: string[]): number {
     let matches = 0;
     for (const selector of ["h3", "p", ".chip-list"]) {
@@ -104,11 +127,32 @@ const pagefindBase = import.meta.env.BASE_URL;
       const ranked = [...resultMap.values()].sort((left, right) => right.score - left.score);
       const topScore = ranked[0]?.score ?? 0;
       const scoreFloor = Math.max(topScore * MIN_RELATIVE_SCORE, MIN_ABSOLUTE_SCORE);
-      const rankedResults = queries.length ? ranked.filter((result) => result.score >= scoreFloor).slice(0, 5) : ranked;
-      const records = await Promise.all(rankedResults.map((result) => result.data()));
+      const candidates = queries.length ? ranked.filter((result) => result.score >= MIN_ABSOLUTE_SCORE).slice(0, 20) : ranked;
+      const candidateRecords = await Promise.all(candidates.map(async (result) => ({ ...await result.data() as SearchRecord, score: result.score })));
+      const qualifying = queries.length
+        ? candidateRecords.filter((record) => (record.score ?? 0) >= scoreFloor)
+        : candidateRecords;
+      const requiredKinds = queries.length
+        ? ["skill", "recommendation"].flatMap((kind) => {
+            const record = candidateRecords.find((candidate) => candidate.meta.kind === kind);
+            return record ? [record] : [];
+          })
+        : [];
+      const rankedRecords = [...new Set([...qualifying, ...requiredKinds])]
+        .sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
+      const records = queries.length ? rankedRecords.slice(0, 5) : rankedRecords;
+      for (const required of requiredKinds) {
+        if (records.includes(required)) continue;
+        let replaceIndex = records.length - 1;
+        while (replaceIndex >= 0 && requiredKinds.includes(records[replaceIndex])) replaceIndex--;
+        if (replaceIndex >= 0) records[replaceIndex] = required;
+      }
+      records.sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
       if (requestId !== latestRequest) return;
       const terms = [input.value, ...queries].flatMap((query) => query.trim().split(/\s+/)).filter(Boolean);
       const cards = records.flatMap((record) => {
+        if (record.meta.kind === "recommendation") return [recommendationCard(record)];
+        if (record.meta.kind !== "skill") return [];
         const id = record.meta["skill-id"];
         const original = [...document.querySelectorAll<HTMLElement>("#all-skills [data-skill-id]")]
           .find((card) => card.dataset.skillId === id);

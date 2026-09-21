@@ -26,9 +26,9 @@ const grouped = [...Map.groupBy(linked, (item) => `${item.entry.id.split("/", 1)
 const withdrawn = recommendation.status === "withdrawn";
 const markdownBody = recommendation.body_format === "markdown" ? renderMarkdown(recommendation.body) : null;
 ---
-<BaseLayout title={recommendation.title} description={recommendationSummary(recommendation)}>
+<BaseLayout title={recommendation.title} description={recommendationSummary(recommendation)} searchable={!withdrawn} searchKind={withdrawn ? undefined : "recommendation"}>
   <article class="recommendation-detail">
-    <header class="page-heading"><p class="eyebrow">{withdrawn ? "已撤回推荐" : "独立推荐"}</p><h1>{recommendation.title}</h1><p>{recommendation.summary ?? `由 ${recommendation.author} 推荐`}</p><span class="recommendation-byline">由 {recommendation.author} 推荐</span></header>
+    <header class="page-heading"><p class="eyebrow">{withdrawn ? "已撤回推荐" : "独立推荐"}</p><h1 data-pagefind-meta="title">{recommendation.title}</h1><p data-pagefind-meta="summary">{recommendation.summary ?? `由 ${recommendation.author} 推荐`}</p><span class="recommendation-byline">由 {recommendation.author} 推荐</span></header>
     {withdrawn && <aside class="notice"><strong>此推荐已撤回，请勿继续采用。</strong><p>{recommendation.withdrawal_reason}</p></aside>}
     {markdownBody ? <div class="prose" set:html={markdownBody} /> : <div class="prose"><p>{recommendation.body}</p></div>}
     {!withdrawn && recommendation.evidence?.length && <section><h2>公开依据</h2><ul>{recommendation.evidence.map((evidence) => <li><a href={evidence.url} rel="noopener noreferrer">{evidence.description ?? evidence.url}</a></li>)}</ul></section>}

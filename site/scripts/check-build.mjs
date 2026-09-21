@@ -46,6 +46,10 @@ for (const expected of [
 }
 for (const recommendation of recommendations.filter((item) => item.status === "ready")) {
   const html = readFileSync(resolve(dist, `recommendations/${recommendation.id}/index.html`), "utf8");
+  if (!html.includes('data-pagefind-meta="kind"') || !html.includes('>recommendation</span>')) {
+    console.error(`推荐页缺少 Pagefind 类型元数据: ${recommendation.id}`);
+    process.exit(1);
+  }
   const links = [...html.matchAll(/href="([^"]*\/skills\/[^"#?]+)"/g)].map((match) => {
     const pathname = new URL(match[1], "https://hwskill.local").pathname;
     return pathname.match(/\/skills\/(.+?)\/?$/)?.[1] ?? "";

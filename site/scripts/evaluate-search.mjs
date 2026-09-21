@@ -60,16 +60,42 @@ try {
     const ranked = [...resultMap.values()].sort((left, right) => right.score - left.score);
     const topScore = ranked[0]?.score ?? 0;
     const scoreFloor = Math.max(topScore * MIN_RELATIVE_SCORE, MIN_ABSOLUTE_SCORE);
-    const rankedResults = variants.length ? ranked.filter((result) => result.score >= scoreFloor).slice(0, 5) : ranked;
-    const records = await Promise.all(rankedResults.map(async (result) => ({ ...(await result.data()), score: result.score })));
-    const non_skill_results = records.filter((record) => !record.meta["skill-id"]);
-    const skillIds = records.map((record) => record.meta["skill-id"]).filter(Boolean);
+    const candidates = variants.length ? ranked.filter((result) => result.score >= MIN_ABSOLUTE_SCORE).slice(0, 20) : ranked;
+    const candidateRecords = await Promise.all(candidates.map(async (result) => ({ ...(await result.data()), score: result.score })));
+    const qualifying = variants.length
+      ? candidateRecords.filter((record) => record.score >= scoreFloor)
+      : candidateRecords;
+    const requiredKinds = variants.length
+      ? ["skill", "recommendation"].map((kind) => candidateRecords.find((record) => record.meta.kind === kind)).filter(Boolean)
+      : [];
+    const rankedRecords = [...new Set([...qualifying, ...requiredKinds])].sort((left, right) => right.score - left.score);
+    const records = variants.length ? rankedRecords.slice(0, 5) : rankedRecords;
+    for (const required of requiredKinds) {
+      if (records.includes(required)) continue;
+      let replaceIndex = records.length - 1;
+      while (replaceIndex >= 0 && requiredKinds.includes(records[replaceIndex])) replaceIndex--;
+      if (replaceIndex >= 0) records[replaceIndex] = required;
+    }
+    records.sort((left, right) => right.score - left.score);
+    const non_search_results = records.filter((record) => !["skill", "recommendation"].includes(record.meta.kind)
+      || (record.meta.kind === "skill" && !record.meta["skill-id"]));
+    const skillIds = records.filter((record) => record.meta.kind === "skill").map((record) => record.meta["skill-id"]).filter(Boolean);
     const duplicateSkillIds = skillIds.filter((id, index) => skillIds.indexOf(id) !== index);
     const actual = [...new Set(skillIds)];
-    const missing = test.expected_ids.filter((id) => !actual.includes(id));
+    const checkSkills = test.kind !== "recommendation";
+    const missing = checkSkills ? test.expected_ids.filter((id) => !actual.includes(id)) : [];
     const allowed = test.allowed_ids ?? test.expected_ids;
-    const unexpected = actual.filter((id) => !allowed.includes(id));
-    if (missing.length || unexpected.length || non_skill_results.length || duplicateSkillIds.length) {
+    const unexpected = checkSkills ? actual.filter((id) => !allowed.includes(id)) : [];
+    const urls = records.filter((record) => record.meta.kind === "recommendation")
+      .map((record) => new URL(record.url, origin).pathname);
+    const actualUrls = [...new Set(urls)];
+    const checkUrls = test.kind === "recommendation" || "expected_urls" in test || "allowed_urls" in test;
+    const expectedUrls = test.expected_urls ?? [];
+    const allowedUrls = test.allowed_urls ?? expectedUrls;
+    const missingUrls = checkUrls ? expectedUrls.filter((url) => !actualUrls.includes(url)) : [];
+    const unexpectedUrls = checkUrls ? actualUrls.filter((url) => !allowedUrls.includes(url)) : [];
+    const duplicateUrls = urls.filter((url, index) => urls.indexOf(url) !== index);
+    if (missing.length || unexpected.length || missingUrls.length || unexpectedUrls.length || non_search_results.length || duplicateSkillIds.length || duplicateUrls.length) {
       failures.push({
         query: test.query,
         query_variants: variants,
@@ -78,9 +104,14 @@ try {
         allowed,
         actual,
         unexpected,
-        non_skill_results: non_skill_results.map((record) => record.url),
+        expected_urls: expectedUrls,
+        allowed_urls: allowedUrls,
+        actual_urls: actualUrls,
+        unexpected_urls: unexpectedUrls,
+        non_search_results: non_search_results.map((record) => record.url),
         duplicate_skill_ids: [...new Set(duplicateSkillIds)],
-        observed: records.slice(0, 5).map((record) => ({ url: record.url, title: record.meta.title, skill_id: record.meta["skill-id"] ?? null, score: record.score })),
+        duplicate_urls: [...new Set(duplicateUrls)],
+        observed: records.slice(0, 5).map((record) => ({ kind: record.meta.kind, url: record.url, title: record.meta.title, skill_id: record.meta["skill-id"] ?? null, score: record.score })),
       });
     }
   }

@@ -30,12 +30,12 @@ const searchTerms = (curation.topics ?? [])
   .filter((topic) => topicEntries(topic.slug).some((candidate) => candidate.entry.id === entry.id))
   .flatMap((topic) => [...topicAliases(topic.slug)]);
 ---
-<BaseLayout title={entry.name} description={entry.summary} searchable>
+<BaseLayout title={entry.name} description={entry.summary} searchable searchKind="skill">
   <article class="detail">
     <header class="detail-heading">
       <div class="card-topline"><span class={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</span><span>{sourceLabel}</span><span>{lifecycleLabel}</span></div>
       <h1 data-pagefind-meta="title">{entry.name}</h1>
-      <p class="detail-summary">{entry.summary}</p>
+      <p class="detail-summary" data-pagefind-meta="summary">{entry.summary}</p>
       {entry.lifecycle !== "active" && <div class="lifecycle-notice"><strong>{lifecycleLabel}</strong><p>{entry.lifecycle_reason}</p>{entry.replacement_id && <a href={sitePath(`/skills/${entry.replacement_id}/`)}>查看替代技能：{entry.replacement_id}</a>}</div>}
       {searchTerms.length > 0 && <div class="search-terms"><strong>检索词</strong><ul>{[...new Set(searchTerms)].map((term) => <li>{term}</li>)}</ul></div>}
       <span hidden data-pagefind-meta="skill-id">{entry.id}</span>

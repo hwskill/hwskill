@@ -6,9 +6,10 @@ interface Props {
   title: string;
   description?: string;
   searchable?: boolean;
+  searchKind?: "skill" | "recommendation";
 }
 
-const { title, description = "跨项目技能目录：按用途发现、了解并交给 Agent 安装。", searchable = false } = Astro.props;
+const { title, description = "跨项目技能目录：按用途发现、了解并交给 Agent 安装。", searchable = false, searchKind } = Astro.props;
 ---
 <!doctype html>
 <html lang="zh-CN">
@@ -30,6 +31,7 @@ const { title, description = "跨项目技能目录：按用途发现、了解�
       </nav>
     </header>
     <main id="main" data-pagefind-body={searchable ? "" : undefined}>
+      {searchKind && <span hidden data-pagefind-meta="kind">{searchKind}</span>}
       <slot />
     </main>
     <footer data-pagefind-ignore>
