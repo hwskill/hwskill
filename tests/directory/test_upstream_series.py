@@ -132,6 +132,10 @@ class UpstreamSeriesTests(unittest.TestCase):
         self.assertNotIn("验证状态", superpowers["body"])
         for name in SUPERPOWERS:
             self.assertIn(f"](/skills/superpowers/{name}/)", superpowers["body"])
+        self.assertIn("## 阅读入口", matt["body"])
+        self.assertNotIn("验证状态", matt["body"])
+        for name in MATT_ENGINEERING | MATT_PRODUCTIVITY:
+            self.assertIn(f"](/skills/mattpocock/{name}/)", matt["body"])
 
 
 if __name__ == "__main__":

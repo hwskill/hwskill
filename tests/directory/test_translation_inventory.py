@@ -38,7 +38,36 @@ SUPERPOWERS = {
         "writing-skills",
     }
 }
-MATTPOCOCK: set[str] = set()
+MATTPOCOCK = {
+    f"mattpocock/{name}"
+    for name in {
+        "ask-matt",
+        "code-review",
+        "codebase-design",
+        "diagnosing-bugs",
+        "domain-modeling",
+        "grill-me",
+        "grill-with-docs",
+        "grilling",
+        "handoff",
+        "implement",
+        "improve-codebase-architecture",
+        "prototype",
+        "research",
+        "resolving-merge-conflicts",
+        "setup-matt-pocock-skills",
+        "tdd",
+        "teach",
+        "to-questionnaire",
+        "to-spec",
+        "to-tickets",
+        "triage",
+        "wait-what",
+        "wayfinder",
+        "wizard",
+        "writing-for-agents",
+    }
+}
 SERIES_STRUCTURE = {
     "superpowers/brainstorming": (10, 2),
     "superpowers/diagnosing-superpowers": (6, 0),
@@ -55,6 +84,31 @@ SERIES_STRUCTURE = {
     "superpowers/verification-before-completion": (9, 14),
     "superpowers/writing-plans": (15, 10),
     "superpowers/writing-skills": (76, 42),
+    "mattpocock/ask-matt": (9, 0),
+    "mattpocock/code-review": (7, 0),
+    "mattpocock/codebase-design": (8, 8),
+    "mattpocock/diagnosing-bugs": (14, 0),
+    "mattpocock/domain-modeling": (9, 4),
+    "mattpocock/grill-with-docs": (0, 0),
+    "mattpocock/implement": (0, 0),
+    "mattpocock/improve-codebase-architecture": (5, 0),
+    "mattpocock/prototype": (3, 0),
+    "mattpocock/research": (0, 0),
+    "mattpocock/resolving-merge-conflicts": (0, 0),
+    "mattpocock/setup-matt-pocock-skills": (11, 2),
+    "mattpocock/tdd": (5, 0),
+    "mattpocock/to-spec": (8, 0),
+    "mattpocock/to-tickets": (12, 0),
+    "mattpocock/triage": (10, 4),
+    "mattpocock/wayfinder": (17, 4),
+    "mattpocock/wizard": (6, 0),
+    "mattpocock/grill-me": (0, 0),
+    "mattpocock/grilling": (0, 2),
+    "mattpocock/handoff": (0, 0),
+    "mattpocock/teach": (12, 0),
+    "mattpocock/to-questionnaire": (7, 0),
+    "mattpocock/wait-what": (0, 0),
+    "mattpocock/writing-for-agents": (7, 0),
 }
 
 
