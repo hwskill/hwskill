@@ -1,8 +1,8 @@
 ---
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import InstallPrompt from "../../../components/InstallPrompt.astro";
-import VerificationMatrix from "../../../components/VerificationMatrix.astro";
-import { curation, entries, recommendationSummary, recommendations, sourceRepository, topicAliases, topicEntries, verificationLabel, verificationState, type CatalogItem } from "../../../lib/data";
+import { curation, entries, recommendationSummary, recommendations, sourceRepository, topicAliases, topicEntries, type CatalogItem } from "../../../lib/data";
+import { renderMarkdown } from "../../../lib/markdown.mjs";
 import { sitePath } from "../../../lib/urls";
 
 export function getStaticPaths() {
@@ -16,11 +16,16 @@ interface Props { item: CatalogItem }
 const { item } = Astro.props;
 const { entry } = item;
 const related = recommendations.filter((recommendation) => recommendation.skills.some((skill) => skill.id === entry.id));
-const repository = sourceRepository(entry.source.identity);
-const verification = verificationLabel(item);
-const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.source_identity.resolved_revision ? "外部固定来源" : item.source_identity.requested_ref ? "外部来源（版本待核验）" : "外部来源（版本未指定）";
-const resolvedVersion = item.source_identity.resolved_revision ?? (entry.source.kind === "hosted" ? "随本目录版本" : item.source_identity.requested_ref ? `指定版本待核验：${item.source_identity.requested_ref}` : "未指定版本");
+const repository = sourceRepository(entry.source);
+const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : "外部来源";
+const declaredRef = entry.source.kind === "hosted"
+  ? "随本目录版本"
+  : entry.source.locator.type === "git"
+    ? entry.source.locator.ref ?? "跟随上游默认分支"
+    : entry.source.locator.version_note ?? "跟随来源页面更新";
+const installCapability = entry.lifecycle === "withdrawn" ? "disabled" : entry.install.method === "unknown" ? "guidance_only" : "actionable";
 const lifecycleLabel = entry.lifecycle === "active" ? "正常收录" : entry.lifecycle === "deprecated" ? "已弃用" : "已撤回";
+const translationBody = renderMarkdown(item.translation.body);
 const searchTerms = (curation.topics ?? [])
   .filter((topic) => topicEntries(topic.slug).some((candidate) => candidate.entry.id === entry.id))
   .flatMap((topic) => [...topicAliases(topic.slug)]);
@@ -34,10 +39,10 @@ const searchTerms = (curation.topics ?? [])
       {entry.lifecycle !== "active" && <div class="lifecycle-notice"><strong>{lifecycleLabel}</strong><p>{entry.lifecycle_reason}</p>{entry.replacement_id && <a href={sitePath(`/skills/${entry.replacement_id}/`)}>查看替代技能：{entry.replacement_id}</a>}</div>}
       {searchTerms.length > 0 && <div class="search-terms"><strong>检索词</strong><ul>{[...new Set(searchTerms)].map((term) => <li>{term}</li>)}</ul></div>}
       <span hidden data-pagefind-meta="skill-id">{entry.id}</span>
+      <span hidden data-pagefind-meta="lifecycle">{entry.lifecycle}</span>
       <span hidden data-pagefind-filter="layer">{entry.layer}</span>
       {entry.compatibility.agents.map((agent) => <span hidden data-pagefind-filter="agent">{agent}</span>)}
       <span hidden data-pagefind-filter="source">{entry.source.kind}</span>
-      <span hidden data-pagefind-filter="verification">{verificationState(item)}</span>
       <span class="detail-id">{entry.id}</span>
     </header>
     <section class="detail-grid">
@@ -47,19 +52,32 @@ const searchTerms = (curation.topics ?? [])
         {entry.limitations?.length && <section><p class="eyebrow">已知限制</p><ul>{entry.limitations.map((item) => <li>{item}</li>)}</ul></section>}
       </div>
       <aside class="facts" data-pagefind-ignore>
-        <h2>使用前核对</h2>
+        <h2>技能信息</h2>
         <dl>
           <div><dt>来源</dt><dd>{entry.source.kind === "hosted" ? "本目录" : "外部来源"}</dd></div>
-          <div><dt>来源版本</dt><dd class="mono">{resolvedVersion}</dd></div>
+          <div><dt>声明引用</dt><dd class="mono">{declaredRef}</dd></div>
           <div><dt>默认范围</dt><dd>{entry.install.default_scope}</dd></div>
+          <div><dt>适用 Agent</dt><dd>{entry.compatibility.agents.join("、")}</dd></div>
+          <div><dt>适用系统</dt><dd>{entry.compatibility.systems.join("、")}</dd></div>
+          {entry.compatibility.requirements.length > 0 && <div><dt>使用要求</dt><dd>{entry.compatibility.requirements.join("；")}</dd></div>}
           <div><dt>许可证</dt><dd>{entry.license.status === "known" ? entry.license.identifier : "未独立确认"}</dd></div>
         </dl>
         {repository && <a href={repository} rel="noreferrer">打开来源 ↗</a>}
-        <a href={sitePath(`/data/skills/${entry.id}/install.json`)}>{entry.lifecycle === "withdrawn" ? "读取历史安装记录（勿用于新安装）" : "读取安装 JSON"}</a>
+        <a href={sitePath(`/data/skills/${entry.id}/install.json`)}>{entry.lifecycle === "withdrawn" ? "读取历史安装资料（勿用于新安装）" : "读取安装资料 JSON"}</a>
       </aside>
     </section>
-    <section class="section-block"><div class="section-heading"><div><p class="eyebrow">验证矩阵</p><h2>{verification}</h2></div></div><VerificationMatrix summary={item.verification_summary} /></section>
-    <InstallPrompt id={entry.id} installCapability={item.install_capability} lifecycleReason={entry.lifecycle_reason} />
+    <InstallPrompt id={entry.id} installCapability={installCapability} lifecycleReason={entry.lifecycle_reason} />
+    <section class="translation-section section-block">
+      <div class="section-heading"><div><p class="eyebrow">技能正文</p><h2>中文译文</h2></div></div>
+      <aside class="translation-notice" role="note">
+        <p>本文为技能原文的中文译文，可能滞后于上游内容，请以原文为准。</p>
+        <div class="translation-meta">
+          <a href={item.translation.source_url} rel="noopener noreferrer">查看原文 ↗</a>
+          <time datetime={item.translation.translated_at}>翻译日期：{item.translation.translated_at}</time>
+        </div>
+      </aside>
+      <div class="prose translation-body" data-pagefind-weight="0.05" set:html={translationBody} />
+    </section>
     {related.length > 0 && <section class="section-block"><p class="eyebrow">关联推荐</p><div class="recommendation-list">{related.map((rec) => <article><a href={sitePath(`/recommendations/${rec.id}/`)}>{rec.title}</a><p>{recommendationSummary(rec)}</p></article>)}</div></section>}
   </article>
 </BaseLayout>

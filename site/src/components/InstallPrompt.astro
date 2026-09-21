@@ -3,9 +3,7 @@ interface Props { id: string; installCapability: string; lifecycleReason?: strin
 import { sitePath } from "../lib/urls";
 const { id, installCapability, lifecycleReason = null } = Astro.props;
 const url = new URL(sitePath(`/data/skills/${id}/install.md`), Astro.site).href;
-const prompt = installCapability === "guidance_only"
-  ? `请读取 ${url}，核对技能 ID、来源、请求版本、完整文件与项目级安装方法。安装和行为尚未验证；若能从来源确认所需材料及方法，可继续安装，不要覆盖同名技能。无法确认时请停止并说明缺少哪些证据；完成后报告实际目标、版本和识别结果。`
-  : `请读取 ${url}，核对技能 ID、来源版本和项目级目标后安装。不要覆盖同名技能；完成后报告实际目标、版本和识别结果。`;
+const prompt = `请读取 ${url}，检查技能 ID、声明的来源、可选引用、完整文件和项目级安装说明。按照上游明确提供的方法安装并尝试使用该技能，不要覆盖同名技能；记录实际命令、安装目标、取得的引用、安装结果和使用结果。遇到失败时停止并说明原因，最终报告实际结果。`;
 ---
 {installCapability === "disabled" ? (
 <section class="install-panel" data-pagefind-ignore>
@@ -19,7 +17,7 @@ const prompt = installCapability === "guidance_only"
 <section class="install-panel" data-pagefind-ignore>
   <div>
     <p class="eyebrow">交给 Agent</p>
-    <h2>{installCapability === "guidance_only" ? "核对来源后自行安装" : "复制项目级安装提示"}</h2>
+    <h2>{installCapability === "guidance_only" ? "检查来源并准备安装" : "复制项目级安装提示"}</h2>
   </div>
   <textarea id={`install-${id.replaceAll("/", "-")}`} readonly rows="5">{prompt}</textarea>
   <div class="install-actions">

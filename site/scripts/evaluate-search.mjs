@@ -7,7 +7,8 @@ const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
 const cases = JSON.parse(readFileSync(resolve(root, "search-cases.json"), "utf8"));
 const curation = JSON.parse(readFileSync(resolve(root, ".generated/directory/curation.json"), "utf8"));
-const MIN_RELATIVE_SCORE = 0.8;
+const MIN_RELATIVE_SCORE = 0.9;
+const MIN_ABSOLUTE_SCORE = 0.9;
 const mime = { ".js": "text/javascript", ".json": "application/json", ".wasm": "application/wasm", ".css": "text/css", ".html": "text/html" };
 
 const server = createServer((request, response) => {
@@ -48,8 +49,9 @@ try {
   for (const test of cases) {
     const filters = test.filters ?? {};
     const variants = queryVariants(test.query);
-    const responses = variants.length ? [await pagefind.search(variants[0], { filters })] : [await pagefind.search(null, { filters })];
-    if (variants.length > 1 && responses[0].results.length === 0) responses.push(await pagefind.search(variants[1], { filters }));
+    const responses = variants.length
+      ? await Promise.all(variants.map((variant) => pagefind.search(variant, { filters })))
+      : [await pagefind.search(null, { filters })];
     const resultMap = new Map();
     for (const response of responses) for (const result of response.results) {
       const prior = resultMap.get(result.id);
@@ -57,7 +59,8 @@ try {
     }
     const ranked = [...resultMap.values()].sort((left, right) => right.score - left.score);
     const topScore = ranked[0]?.score ?? 0;
-    const rankedResults = variants.length ? ranked.filter((result) => result.score >= topScore * MIN_RELATIVE_SCORE).slice(0, 5) : ranked;
+    const scoreFloor = Math.max(topScore * MIN_RELATIVE_SCORE, MIN_ABSOLUTE_SCORE);
+    const rankedResults = variants.length ? ranked.filter((result) => result.score >= scoreFloor).slice(0, 5) : ranked;
     const records = await Promise.all(rankedResults.map(async (result) => ({ ...(await result.data()), score: result.score })));
     const non_skill_results = records.filter((record) => !record.meta["skill-id"]);
     const skillIds = records.map((record) => record.meta["skill-id"]).filter(Boolean);

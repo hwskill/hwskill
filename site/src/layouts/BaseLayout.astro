@@ -8,7 +8,7 @@ interface Props {
   searchable?: boolean;
 }
 
-const { title, description = "跨项目技能目录：按用途发现、核验并交给 Agent 安装。", searchable = false } = Astro.props;
+const { title, description = "跨项目技能目录：按用途发现、了解并交给 Agent 安装。", searchable = false } = Astro.props;
 ---
 <!doctype html>
 <html lang="zh-CN">
@@ -33,7 +33,7 @@ const { title, description = "跨项目技能目录：按用途发现、核验�
       <slot />
     </main>
     <footer data-pagefind-ignore>
-      <p>目录随源码提交发布；外部来源另列版本核验状态。“兼容”不等于“已验证”。</p>
+      <p>目录随源码提交发布；外部来源、声明引用与兼容信息以条目为准。</p>
       <a href={sitePath("/contribute/")}>修正条目</a>
     </footer>
   </body>

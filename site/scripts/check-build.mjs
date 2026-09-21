@@ -52,8 +52,8 @@ for (const recommendation of recommendations.filter((item) => item.status === "r
   }).filter(Boolean);
   const expected = recommendation.skills.map((skill) => skill.id).sort();
   const actual = [...new Set(links)].sort();
-  if (links.length !== actual.length || JSON.stringify(actual) !== JSON.stringify(expected)) {
-    console.error(`推荐页关联技能链接不完整或重复: ${recommendation.id}`);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    console.error(`推荐页关联技能链接不完整或包含未知技能: ${recommendation.id}`);
     process.exit(1);
   }
 }
@@ -61,6 +61,21 @@ for (const item of catalog.entries) {
   const html = readFileSync(resolve(dist, `skills/${item.entry.id}/index.html`), "utf8");
   if (!html.includes('lang="zh-CN"') || !html.includes('data-pagefind-filter="layer"')) {
     console.error(`详情页缺少中文语言或 Pagefind 元数据: ${item.entry.id}`);
+    process.exit(1);
+  }
+  for (const expected of [
+    "本文为技能原文的中文译文，可能滞后于上游内容，请以原文为准。",
+    "查看原文",
+    item.translation.source_url,
+    item.translation.translated_at,
+  ]) {
+    if (!html.includes(expected)) {
+      console.error(`详情页缺少译文信息: ${item.entry.id}: ${expected}`);
+      process.exit(1);
+    }
+  }
+  if (/验证矩阵|安装与行为已验证|未完成验证/u.test(html)) {
+    console.error(`详情页仍包含已移除的核验状态: ${item.entry.id}`);
     process.exit(1);
   }
 }

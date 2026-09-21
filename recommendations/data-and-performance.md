@@ -5,7 +5,7 @@ skills:
 - id: community/performance-patterns
 - id: data-engineering/spark-and-distributed-processing
 title: 性能、数据工程与结果呈现
-summary: 覆盖 C++ 性能与 Spark 分布式处理；两个外部条目均仅有来源与元数据核验，未执行安装或行为测试。PPT 候选因固定 revision 路径不可解析而暂缓。
+summary: 覆盖 C++ 性能与 Spark 分布式处理；两个外部条目随各自上游来源更新。PPT 候选暂未纳入本推荐。
 author: hwskill-maintainers
 topics:
 - performance
@@ -18,4 +18,4 @@ evidence:
 status: ready
 ---
 
-覆盖 C++ 性能与 Spark 分布式处理；两个外部条目均仅有来源与元数据核验，未执行安装或行为测试。PPT 候选因固定 revision 路径不可解析而暂缓。
+覆盖 C++ 性能与 Spark 分布式处理；两个外部条目随各自上游来源更新。PPT 候选暂未纳入本推荐。

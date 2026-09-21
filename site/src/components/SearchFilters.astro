@@ -18,9 +18,6 @@ const pagefindBase = import.meta.env.BASE_URL;
     <label>Agent
       <select id="agent-filter"><option value="">全部</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option><option value="gemini-cli">Gemini CLI</option></select>
     </label>
-    <label>验证
-      <select id="verification-filter"><option value="">全部</option><option value="pass">安装与行为已验证</option><option value="not_run">未完成验证</option><option value="blocked">验证受阻</option><option value="fail">验证失败</option><option value="unknown">状态未知</option></select>
-    </label>
   </div>
   <p id="search-status" class="search-status" role="status">输入用途，或直接使用筛选浏览。</p>
 </section>
@@ -32,11 +29,11 @@ const pagefindBase = import.meta.env.BASE_URL;
   const layer = document.querySelector<HTMLSelectElement>("#layer-filter");
   const source = document.querySelector<HTMLSelectElement>("#source-filter");
   const agent = document.querySelector<HTMLSelectElement>("#agent-filter");
-  const verification = document.querySelector<HTMLSelectElement>("#verification-filter");
   const status = document.querySelector<HTMLElement>("#search-status");
   const results = document.querySelector<HTMLElement>("#search-results");
   const synonyms = JSON.parse(panel?.dataset.synonyms ?? "{}") as Record<string, string[]>;
-  const MIN_RELATIVE_SCORE = 0.8;
+  const MIN_RELATIVE_SCORE = 0.9;
+  const MIN_ABSOLUTE_SCORE = 0.9;
   let latestRequest = 0;
 
   function highlightCard(card: HTMLElement, terms: string[]): number {
@@ -80,10 +77,10 @@ const pagefindBase = import.meta.env.BASE_URL;
   }
 
   async function search() {
-    if (!input || !layer || !source || !agent || !verification || !status || !results) return;
+    if (!input || !layer || !source || !agent || !status || !results) return;
     const requestId = ++latestRequest;
     const queries = queryVariants(input.value);
-    const filters = Object.fromEntries(Object.entries({ layer: layer.value, source: source.value, agent: agent.value, verification: verification.value }).filter(([, value]) => value));
+    const filters = Object.fromEntries(Object.entries({ layer: layer.value, source: source.value, agent: agent.value }).filter(([, value]) => value));
     if (queries.length === 0 && Object.keys(filters).length === 0) {
       results.replaceChildren();
       results.hidden = true;
@@ -96,8 +93,9 @@ const pagefindBase = import.meta.env.BASE_URL;
       const pagefindUrl = new URL(pagefindPath, window.location.origin).href;
       const pagefind = await import(/* @vite-ignore */ pagefindUrl);
       await pagefind.options({ ranking: { termSimilarity: 0 } });
-      const responses = queries.length ? [await pagefind.search(queries[0], { filters })] : [await pagefind.search(null, { filters })];
-      if (queries.length > 1 && responses[0].results.length === 0) responses.push(await pagefind.search(queries[1], { filters }));
+      const responses = queries.length
+        ? await Promise.all(queries.map((query) => pagefind.search(query, { filters })))
+        : [await pagefind.search(null, { filters })];
       const resultMap = new Map<string, { id: string; score: number; data: () => Promise<{ url: string; meta: Record<string, string>; excerpt: string }> }>();
       for (const response of responses) for (const result of response.results) {
         const prior = resultMap.get(result.id);
@@ -105,7 +103,8 @@ const pagefindBase = import.meta.env.BASE_URL;
       }
       const ranked = [...resultMap.values()].sort((left, right) => right.score - left.score);
       const topScore = ranked[0]?.score ?? 0;
-      const rankedResults = queries.length ? ranked.filter((result) => result.score >= topScore * MIN_RELATIVE_SCORE).slice(0, 5) : ranked;
+      const scoreFloor = Math.max(topScore * MIN_RELATIVE_SCORE, MIN_ABSOLUTE_SCORE);
+      const rankedResults = queries.length ? ranked.filter((result) => result.score >= scoreFloor).slice(0, 5) : ranked;
       const records = await Promise.all(rankedResults.map((result) => result.data()));
       if (requestId !== latestRequest) return;
       const terms = [input.value, ...queries].flatMap((query) => query.trim().split(/\s+/)).filter(Boolean);
@@ -133,5 +132,5 @@ const pagefindBase = import.meta.env.BASE_URL;
       document.querySelector<HTMLElement>("#all-skills")?.removeAttribute("hidden");
     }
   }
-  [input, layer, source, agent, verification].forEach((element) => element?.addEventListener("input", search));
+  [input, layer, source, agent].forEach((element) => element?.addEventListener("input", search));
 </script>

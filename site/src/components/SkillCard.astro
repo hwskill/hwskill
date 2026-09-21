@@ -1,19 +1,18 @@
 ---
 import type { CatalogItem } from "../lib/data";
-import { sourceRepository, verificationLabel } from "../lib/data";
+import { sourceRepository } from "../lib/data";
 import { sitePath } from "../lib/urls";
 
 interface Props { item: CatalogItem; badgeUrl?: string | null }
 const { item, badgeUrl = null } = Astro.props;
 const { entry } = item;
-const repository = sourceRepository(entry.source.identity);
-const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.source_identity.resolved_revision ? "外部固定来源" : item.source_identity.requested_ref ? "外部来源（版本待核验）" : "外部来源（版本未指定）";
+const repository = sourceRepository(entry.source);
+const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : "外部来源";
 ---
-<article class="skill-card" data-skill-card data-skill-id={entry.id} data-layer={entry.layer} data-source={entry.source.kind} data-agents={entry.compatibility.agents.join(" ")}>
+<article class="skill-card" data-skill-card data-skill-id={entry.id} data-layer={entry.layer} data-source={entry.source.kind} data-lifecycle={entry.lifecycle} data-agents={entry.compatibility.agents.join(" ")}>
   <div class="card-topline">
     <span class={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</span>
-    <span class="status-dot" aria-hidden="true"></span>
-    <span class="verification">{verificationLabel(item)}</span>
+    <span>{sourceLabel}</span>
     {entry.lifecycle !== "active" && <span>{entry.lifecycle === "deprecated" ? "已弃用" : "已撤回"}</span>}
   </div>
   <h3><a href={sitePath(`/skills/${entry.id}/`)}>{entry.name}</a></h3>
@@ -22,7 +21,7 @@ const sourceLabel = entry.source.kind === "hosted" ? "本目录托管" : item.so
     {entry.purposes.slice(0, 3).map((purpose) => <li>{purpose}</li>)}
   </ul>
   <div class="card-footer">
-    <span>{sourceLabel}</span>
+    <span>{entry.compatibility.agents.join(" · ")}</span>
     {repository && <a href={repository} rel="noreferrer">来源</a>}
     {badgeUrl && <img class="stars-badge" src={badgeUrl} alt="上游仓库 Stars" loading="lazy" onerror="this.hidden=true" />}
   </div>

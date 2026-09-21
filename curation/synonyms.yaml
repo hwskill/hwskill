@@ -1,7 +1,8 @@
 synonyms:
   spark: [pyspark, 分布式处理]
   performance: [perf, 性能分析, c++]
-  review: [pr, 代码检视, gitcode]
+  review: [代码检视]
+  pull request: [pr]
   slides: [ppt, pptx, 演示文稿]
   planning: [计划, 规划, 实施方案, spec]
   testing: [test, tdd, 测试驱动开发]
