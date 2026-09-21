@@ -1,9 +1,9 @@
 schema_version: 2
 id: community/performance-patterns
 name: Performance Patterns
-summary: 面向 C/C++、perf 与 CUDA 的性能分析和优化工作流技能。
+summary: Intel 官方维护的 x86 C/C++ 性能模式目录，支持根据源代码或 perf、VTune、火焰图证据选择修复与验证步骤。
 layer: l3
-purposes: [C++ 性能分析, perf 工具使用, CUDA 性能优化]
+purposes: [x86 C++ 性能分析, SIMD 优化, 性能模式修复]
 examples:
   - prompt: 分析这个 C++ 热点并给出可验证的性能实验建议。
     expected_outcome: 形成假设、测量和验证步骤。
@@ -12,16 +12,22 @@ source:
   publicity: public
   locator:
     type: git
-    repository: https://github.com/2233admin/performance-patterns-skill.git
+    repository: https://github.com/intel/intel-performance-skills.git
     path: skills/performance-patterns
 install:
-  method: unknown
+  method: upstream
   default_scope: project
+  instructions_url: https://github.com/intel/intel-performance-skills/blob/HEAD/README.md
 compatibility:
-  agents: [codex, claude-code]
+  agents: [codex, claude-code, github-copilot, gemini-cli, opencode]
   systems: [linux]
-  requirements: [C/C++ 工具链, perf 或 CUDA 工具按具体任务需要]
+  requirements: [x86 C/C++ 工具链, perf、VTune 或火焰图证据按具体任务需要]
 license:
   status: known
   identifier: MIT
-  url: https://github.com/2233admin/performance-patterns-skill/blob/HEAD/LICENSE
+  url: https://github.com/intel/intel-performance-skills/blob/HEAD/COPYRIGHT.md
+owner: Intel Corporation
+keywords: [x86, C++, SIMD, perf, VTune, false-sharing, CRC32C]
+limitations:
+  - 官方技能聚焦 x86 Linux 与 CPU 性能模式；Windows、WSL 和 CUDA 路由属于第三方衍生版本的扩展范围。
+  - 目录只核对公开来源、技能路径与 MIT 许可，尚未完成安装、行为或目标硬件效果验证。

@@ -26,7 +26,7 @@
   {"kind":"mixed","query":"C++ 性能","expected_ids":["community/performance-patterns"]},
   {"kind":"mixed","query":"PR 检视","expected_ids":["local/gitcode-pr-review-fetch"],"allowed_ids":["local/gitcode-pr-review-fetch","mattpocock/code-review","superpowers/requesting-code-review","superpowers/receiving-code-review"]},
   {"kind":"mixed","query":"GitCode 归档","expected_ids":["local/gitcode-discussion-fetch"]},
-  {"kind":"mixed","query":"CUDA 优化","expected_ids":["community/performance-patterns"]},
+  {"kind":"mixed","query":"x86 SIMD","expected_ids":["community/performance-patterns"]},
   {"kind":"synonym","query":"pyspark","expected_ids":["data-engineering/spark-and-distributed-processing"]},
   {"kind":"synonym","query":"perf","expected_ids":["community/performance-patterns"]},
   {"kind":"synonym","query":"代码检视","expected_ids":["mattpocock/code-review"],"allowed_ids":["mattpocock/code-review","superpowers/requesting-code-review","superpowers/receiving-code-review","mattpocock/improve-codebase-architecture"]},

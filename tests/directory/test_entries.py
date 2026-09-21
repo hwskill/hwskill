@@ -483,6 +483,21 @@ class DirectoryValidationTests(unittest.TestCase):
             document = load_yaml(next(entries.rglob(relative)))
             self.assertEqual(document["source"]["locator"]["path"], skill_path)
 
+    def test_performance_patterns_uses_intel_upstream_and_names_the_derivative(self) -> None:
+        from hwskill.directory.recommendations import load_recommendation
+        from hwskill.directory.yaml_io import load_yaml
+
+        entry = load_yaml(Path("entries/l3/community/performance-patterns.yaml"))
+        self.assertEqual(entry["source"]["locator"]["repository"], "https://github.com/intel/intel-performance-skills.git")
+        self.assertEqual(entry["license"]["url"], "https://github.com/intel/intel-performance-skills/blob/HEAD/COPYRIGHT.md")
+        translation = Path("translations/community/performance-patterns.md").read_text(encoding="utf-8")
+        self.assertIn("检测并修复 x86/C/C++ 性能模式", translation)
+        self.assertNotIn("第 0 步——确定平台路线", translation)
+        recommendation = load_recommendation(Path("recommendations/data-and-performance.md"))
+        self.assertEqual(recommendation["evidence"][0]["url"], "https://github.com/intel/intel-performance-skills")
+        self.assertIn("2233admin/performance-patterns-skill", recommendation["body"])
+        self.assertIn("衍生版本", recommendation["body"])
+
 
     def test_markdown_recommendation_is_normalized_and_path_checked(self) -> None:
         from hwskill.directory.recommendations import load_recommendation

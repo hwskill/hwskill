@@ -1,6 +1,6 @@
 synonyms:
   spark: [pyspark, 分布式处理]
-  performance: [perf, 性能分析, c++]
+  performance: [perf, 性能分析, c++, x86, simd, vtune]
   review: [代码检视]
   pull request: [pr]
   slides: [ppt, pptx, 演示文稿]
