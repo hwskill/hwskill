@@ -18,4 +18,6 @@ compatibility:
   systems: [linux, windows]
   requirements: [GitCode 访问凭据和网络访问]
 license:
-  status: unknown
+  status: known
+  identifier: MIT
+  url: https://github.com/hwskill/hwskill/blob/main/LICENSE
