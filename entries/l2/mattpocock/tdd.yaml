@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: mattpocock/tdd
 name: Tdd
 summary: 以垂直切片执行红绿重构，并强调高价值集成测试。
@@ -17,11 +17,10 @@ source:
     type: git
     repository: https://github.com/mattpocock/skills.git
     path: skills/engineering/tdd
-    requested_ref: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
 install:
   method: upstream
   default_scope: project
-  instructions_url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/README.md
+  instructions_url: https://github.com/mattpocock/skills/blob/HEAD/README.md
 compatibility:
   agents:
   - codex
@@ -35,7 +34,7 @@ compatibility:
 license:
   status: known
   identifier: MIT
-  url: https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/LICENSE
+  url: https://github.com/mattpocock/skills/blob/HEAD/LICENSE
 owner: Matt Pocock
 keywords:
 - tdd
@@ -43,6 +42,5 @@ keywords:
 - 红绿重构
 - 集成测试
 limitations:
-- 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 用户调用方式、工具权限和配套文档取决于目标 Agent 与项目配置。
 lifecycle: active

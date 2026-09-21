@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: community/performance-patterns
 name: Performance Patterns
 summary: 面向 C/C++、perf 与 CUDA 的性能分析和优化工作流技能。
@@ -14,7 +14,6 @@ source:
     type: git
     repository: https://github.com/2233admin/performance-patterns-skill.git
     path: skills/performance-patterns
-    requested_ref: 144ab7cd163f9eeda23479be2bfde603fa3b2106
 install:
   method: unknown
   default_scope: project
@@ -25,5 +24,4 @@ compatibility:
 license:
   status: known
   identifier: MIT
-  url: https://github.com/2233admin/performance-patterns-skill/blob/144ab7cd163f9eeda23479be2bfde603fa3b2106/LICENSE
-limitations: [external 正文未复制；安装、行为和目标硬件效果均未运行]
+  url: https://github.com/2233admin/performance-patterns-skill/blob/HEAD/LICENSE

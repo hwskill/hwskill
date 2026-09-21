@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/gitcode-discussion-fetch
 name: GitCode Discussion Fetch
 summary: 获取 GitCode Discussion 的正文、顶层评论和嵌套回复并保存为可读 Markdown。
@@ -19,4 +19,3 @@ compatibility:
   requirements: [GitCode 访问凭据和网络访问]
 license:
   status: unknown
-limitations: [未在本目录构建中执行联网获取或行为验证]

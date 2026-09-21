@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/gitcode-pr-review-fetch
 name: GitCode Pull Request Review Fetch
 summary: 获取 GitCode Pull Request 的变更、行级评论与讨论状态，供可追溯检视使用。
@@ -19,4 +19,3 @@ compatibility:
   requirements: [GitCode 访问凭据和网络访问]
 license:
   status: unknown
-limitations: [未在本目录构建中执行联网获取或行为验证]
