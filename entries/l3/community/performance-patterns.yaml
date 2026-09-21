@@ -5,8 +5,15 @@ summary: Intel 官方维护的 x86 C/C++ 性能模式目录，支持根据源代
 layer: l3
 purposes: [x86 C++ 性能分析, SIMD 优化, 性能模式修复]
 examples:
-  - prompt: 分析这个 C++ 热点并给出可验证的性能实验建议。
-    expected_outcome: 形成假设、测量和验证步骤。
+  - prompt: >-
+      分析下面的 C++17 热点并给出可验证的性能实验建议。目标环境是 x86 Linux；perf stat
+      显示该循环 IPC 为 0.7、cache-misses 为 25%。数据结构是
+      `struct Particle { double x, y, z, vx, vy, vz; };`，热点循环只执行
+      `sum += particles[i].x;`。不得编造尚未执行的测量结果。
+    expected_outcome: >-
+      提出 AoS 布局加载无关字段造成缓存与带宽浪费的可检验假设；建议以 SoA 或独立 x 数组作为候选修改，
+      使用固定输入和多次预热后的 perf stat 对比 cycles、instructions、IPC、cache-misses 与耗时，
+      同时检查数值结果一致，并明确只有实测改善后才接受修改。
 source:
   kind: external
   publicity: public
