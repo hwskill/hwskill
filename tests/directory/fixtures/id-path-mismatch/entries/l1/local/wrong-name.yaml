@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/right-name
 name: Mismatch
 summary: The file name differs from the ID.

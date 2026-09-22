@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: local/two
 name: Two web source
 summary: Equivalent spelling of the first web source.

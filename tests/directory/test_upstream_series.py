@@ -7,7 +7,6 @@ from hwskill.directory.yaml_io import load_yaml
 
 
 ROOT = Path(__file__).parents[2]
-SUPERPOWERS_REF = "5bf4e78011075bcfc0dc295f0724994cd123ee71"
 SUPERPOWERS = {
     "brainstorming": "l1",
     "diagnosing-superpowers": "l1",
@@ -27,7 +26,6 @@ SUPERPOWERS = {
 }
 
 
-MATT_REF = "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
 MATT_ENGINEERING = {
     "ask-matt", "code-review", "codebase-design", "diagnosing-bugs",
     "domain-modeling", "grill-with-docs", "implement",
@@ -51,21 +49,23 @@ class UpstreamSeriesTests(unittest.TestCase):
             with self.subTest(name=name):
                 path, entry = entries[name]
                 self.assertEqual(path, ROOT / "entries" / layer / "superpowers" / f"{name}.yaml")
+                self.assertEqual(entry["schema_version"], 2)
                 self.assertEqual(entry["id"], f"superpowers/{name}")
                 locator = entry["source"]["locator"]
                 self.assertEqual(locator["repository"], "https://github.com/obra/superpowers.git")
                 self.assertEqual(locator["path"], f"skills/{name}")
-                self.assertEqual(locator["requested_ref"], SUPERPOWERS_REF)
+                self.assertNotIn("requested_ref", locator)
+                self.assertNotIn("ref", locator)
                 self.assertEqual(entry["install"]["method"], "upstream")
-                self.assertEqual(entry["install"]["instructions_url"], f"https://github.com/obra/superpowers/blob/{SUPERPOWERS_REF}/README.md")
+                self.assertEqual(entry["install"]["instructions_url"], "https://github.com/obra/superpowers/blob/HEAD/README.md")
                 self.assertEqual(entry["license"]["identifier"], "MIT")
-                self.assertEqual(entry["license"]["url"], f"https://github.com/obra/superpowers/blob/{SUPERPOWERS_REF}/LICENSE")
+                self.assertEqual(entry["license"]["url"], "https://github.com/obra/superpowers/blob/HEAD/LICENSE")
                 self.assertEqual(entry["owner"], "Jesse Vincent")
                 self.assertEqual(entry["lifecycle"], "active")
                 self.assertTrue(entry["purposes"])
                 self.assertTrue(entry["examples"])
                 self.assertTrue(entry["limitations"])
-                self.assertTrue(any("安装和行为未运行" in item for item in entry["limitations"]))
+                self.assertFalse(any("未运行" in item or "未验证" in item for item in entry["limitations"]))
 
 
     def test_executing_plans_includes_runtime_dependencies(self) -> None:
@@ -91,20 +91,22 @@ class UpstreamSeriesTests(unittest.TestCase):
                 layer = "l2" if category == "engineering" else "l1"
                 path, entry = entries[name]
                 self.assertEqual(path, ROOT / "entries" / layer / "mattpocock" / f"{name}.yaml")
+                self.assertEqual(entry["schema_version"], 2)
                 self.assertEqual(entry["id"], f"mattpocock/{name}")
                 locator = entry["source"]["locator"]
                 self.assertEqual(locator["repository"], "https://github.com/mattpocock/skills.git")
                 self.assertEqual(locator["path"], f"skills/{category}/{name}")
-                self.assertEqual(locator["requested_ref"], MATT_REF)
+                self.assertNotIn("requested_ref", locator)
+                self.assertNotIn("ref", locator)
                 self.assertFalse(locator["path"].startswith(("skills/in-progress/", "skills/misc/", "skills/deprecated/")))
                 self.assertEqual(entry["install"]["method"], "upstream")
-                self.assertEqual(entry["install"]["instructions_url"], f"https://github.com/mattpocock/skills/blob/{MATT_REF}/README.md")
+                self.assertEqual(entry["install"]["instructions_url"], "https://github.com/mattpocock/skills/blob/HEAD/README.md")
                 self.assertEqual(entry["license"]["identifier"], "MIT")
-                self.assertEqual(entry["license"]["url"], f"https://github.com/mattpocock/skills/blob/{MATT_REF}/LICENSE")
+                self.assertEqual(entry["license"]["url"], "https://github.com/mattpocock/skills/blob/HEAD/LICENSE")
                 self.assertEqual(entry["owner"], "Matt Pocock")
                 self.assertEqual(entry["lifecycle"], "active")
                 self.assertTrue(entry["purposes"] and entry["examples"] and entry["limitations"])
-                self.assertTrue(any("安装和行为未运行" in item for item in entry["limitations"]))
+                self.assertFalse(any("未运行" in item or "未验证" in item for item in entry["limitations"]))
 
 
     def test_series_recommendations_cover_exact_inventory(self) -> None:
@@ -124,8 +126,16 @@ class UpstreamSeriesTests(unittest.TestCase):
         self.assertTrue(superpowers["evidence"][0]["observed_at"].startswith("2026-09-20"))
         self.assertTrue(matt["evidence"][0]["observed_at"].startswith("2026-09-20"))
         for document in (superpowers, matt):
-            for heading in ("## 定位", "## 工作流", "## 适用场景", "## 成本与限制", "## 与另一个系列的比较", "## 组合边界", "## 验证状态"):
+            for heading in ("## 定位", "## 工作流", "## 适用场景", "## 成本与限制", "## 与另一个系列的比较", "## 组合边界"):
                 self.assertIn(heading, document["body"])
+        self.assertIn("## 阅读入口", superpowers["body"])
+        self.assertNotIn("验证状态", superpowers["body"])
+        for name in SUPERPOWERS:
+            self.assertIn(f"](/skills/superpowers/{name}/)", superpowers["body"])
+        self.assertIn("## 阅读入口", matt["body"])
+        self.assertNotIn("验证状态", matt["body"])
+        for name in MATT_ENGINEERING | MATT_PRODUCTIVITY:
+            self.assertIn(f"](/skills/mattpocock/{name}/)", matt["body"])
 
 
 if __name__ == "__main__":

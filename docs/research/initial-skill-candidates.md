@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | local/gitcode-pr-review-fetch | 本仓 hosted；[技能目录](../../skills-src/l2/local/gitcode-pr-review-fetch/) | 完整 hosted 目录；许可证 unknown | Codex、网络和 GitCode 凭据；联网行为未运行 | 收录 |
 | local/gitcode-discussion-fetch | 本仓 hosted；[技能目录](../../skills-src/l2/local/gitcode-discussion-fetch/) | 完整 hosted 目录；许可证 unknown | Codex、网络和 GitCode 凭据；联网行为未运行 | 收录 |
-| community/performance-patterns | [2233admin/performance-patterns-skill](https://github.com/2233admin/performance-patterns-skill) @ `144ab7cd163f9eeda23479be2bfde603fa3b2106` | `skills/performance-patterns`；MIT | Codex/Claude、C/C++/perf/CUDA；固定 revision 的该路径含 SKILL.md；未做安装、行为或硬件效果验证 | 收录 |
+| community/performance-patterns | [intel/intel-performance-skills](https://github.com/intel/intel-performance-skills) @ `e9d0b6410fb1ad7a50fb81e0868fd23ae886882c` | `skills/performance-patterns`；MIT（`COPYRIGHT.md`） | Intel 官方 x86 C/C++/perf/VTune 模式目录；固定 revision 的该路径含 SKILL.md；未做安装、行为或硬件效果验证。2233admin 版本声明为其 Windows port，并扩展 Windows、WSL、Linux 与 CUDA 路由，不作为主要来源 | 收录 |
 | data-engineering/spark-and-distributed-processing | [vaquarkhan/data-engineering-agent-skills](https://github.com/vaquarkhan/data-engineering-agent-skills) @ `421ef57e8d42c464b29339193c18dd5bd2946bc2` | `skills/spark-and-distributed-processing`；MIT | Spark/Python；固定 revision 的该路径含 SKILL.md；本平台不执行整包脚本 | 收录 |
 | openai/slides | [OpenAI skills](https://github.com/openai/skills) @ `49f948faa9258a0c61caceaf225e179651397431` | 此 revision 未发现 `skills/.curated/slides`；许可证未知 | 固定来源无法解析，未安装或运行 | 暂缓，不发布 |
 | superpowers/systematic-debugging | [obra/superpowers](https://github.com/obra/superpowers) @ `b36e0829c6d0140e93cfef2ca599b1b07d4a7797` | `skills/systematic-debugging`；许可证 unknown | 多 Agent Markdown skill；依赖项目调试/测试工具；未运行 | 收录 |

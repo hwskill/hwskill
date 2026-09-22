@@ -40,15 +40,15 @@ Superpowers 是一套带顺序约束的 Agent 软件研发方法。它把“先�
 
 一条典型路径如下：
 
-1. `using-superpowers` 先判断当前任务应调用哪些技能。
-2. `brainstorming` 通过对话澄清目标、约束和设计，并把设计变成可审查的文档。
-3. `writing-plans` 把设计拆成带文件路径、测试方式和提交边界的实施步骤。
-4. `using-git-worktrees` 为变更建立隔离工作区，避免干扰当前检出。
-5. `executing-plans` 在当前会话逐项实现；任务足够独立时，可由 `subagent-driven-development` 或 `dispatching-parallel-agents` 分派工作。
-6. 实现阶段以 `test-driven-development` 建立红绿循环；出现异常时使用 `systematic-debugging` 先定位根因。
-7. `verification-before-completion` 要求在声明完成前重新执行验证并查看输出。
-8. `requesting-code-review` 和 `receiving-code-review` 约束评审发起与反馈处理，`finishing-a-development-branch` 负责合并、PR 或保留分支等收尾动作。
-9. 如果技能机制本身表现异常，可用 `diagnosing-superpowers` 检查触发与执行过程；需要编写或维护技能时使用 `writing-skills`。
+1. [`using-superpowers`](/skills/superpowers/using-superpowers/) 先判断当前任务应调用哪些技能。
+2. [`brainstorming`](/skills/superpowers/brainstorming/) 通过对话澄清目标、约束和设计，并把设计变成可审查的文档。
+3. [`writing-plans`](/skills/superpowers/writing-plans/) 把设计拆成带文件路径、测试方式和提交边界的实施步骤。
+4. [`using-git-worktrees`](/skills/superpowers/using-git-worktrees/) 为变更建立隔离工作区，避免干扰当前检出。
+5. [`executing-plans`](/skills/superpowers/executing-plans/) 在当前会话逐项实现；任务足够独立时，可由 [`subagent-driven-development`](/skills/superpowers/subagent-driven-development/) 或 [`dispatching-parallel-agents`](/skills/superpowers/dispatching-parallel-agents/) 分派工作。
+6. 实现阶段以 [`test-driven-development`](/skills/superpowers/test-driven-development/) 建立红绿循环；出现异常时使用 [`systematic-debugging`](/skills/superpowers/systematic-debugging/) 先定位根因。
+7. [`verification-before-completion`](/skills/superpowers/verification-before-completion/) 要求在声明完成前重新执行验证并查看输出。
+8. [`requesting-code-review`](/skills/superpowers/requesting-code-review/) 和 [`receiving-code-review`](/skills/superpowers/receiving-code-review/) 约束评审发起与反馈处理，[`finishing-a-development-branch`](/skills/superpowers/finishing-a-development-branch/) 负责合并、PR 或保留分支等收尾动作。
+9. 如果技能机制本身表现异常，可用 [`diagnosing-superpowers`](/skills/superpowers/diagnosing-superpowers/) 检查触发与执行过程；需要编写或维护技能时使用 [`writing-skills`](/skills/superpowers/writing-skills/)。
 
 设计确认、破坏性操作和最终集成仍由人决定。获得明确范围后，Agent 可以自主完成可逆的实现、验证和整理工作。
 
@@ -85,8 +85,6 @@ Superpowers 的优势来自流程约束，这也会增加前期对话、设计�
 
 同一阶段只选择一个主技能：例如测试驱动在 `superpowers/test-driven-development` 与 `mattpocock/tdd` 中二选一，调试和代码评审也应明确由哪套规则主导。这样可以避免相互矛盾的完成条件和重复工作。
 
-## 验证状态
+## 阅读入口
 
-本推荐基于 Superpowers 仓库固定提交 `5bf4e78011075bcfc0dc295f0724994cd123ee71` 的稳定技能目录、README 和 MIT 许可证核验，目录共收录 15 个技能。当前没有逐一安装并运行这些技能，也没有验证所有 Agent 宿主的兼容性。
-
-未完成行为验证不会阻止用户复制安装提示词或继续安装。网站应清楚显示“来源与元数据已核验，安装和行为未运行”的提示，让用户在执行前审阅上游说明、固定版本和权限需求。
+以上技能名称均链接到站内详情页。详情页保留用途、适用范围、示例、依赖、限制和许可证等元数据，并在正文开头标明中文译文，提供跳转到上游 `SKILL.md` 的“查看原文”链接。

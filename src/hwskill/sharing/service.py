@@ -63,11 +63,14 @@ def _item_from_dict(value: Mapping[str, Any]) -> UpdateItem:
         summary=value["summary"],
         skill_refs=tuple(value["skill_refs"]),
         recommendation_refs=tuple(value["recommendation_refs"]),
-        source_versions=tuple(SourceVersion.from_dict(item) for item in value["source_versions"]),
+        source_versions=(
+            tuple(SourceVersion.from_dict(item) for item in value["source_versions"])
+            if "source_versions" in value else None
+        ),
         detail_url=value["detail_url"],
         install_urls=tuple(value["install_urls"]),
         lifecycle=value["lifecycle"],
-        install_capability=value["install_capability"],
+        install_capability=value.get("install_capability"),
         purposes=tuple(value.get("purposes", ())),
         topics=tuple(value.get("topics", ())),
     )

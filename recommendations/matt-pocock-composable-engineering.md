@@ -94,8 +94,16 @@ Matt Pocock 系列覆盖的沟通与探索入口更多；Superpowers 对任务�
 
 测试驱动、调试、代码评审等重叠职责应明确唯一主规则。例如选择 `mattpocock/tdd` 后，不要在同一任务中再要求另一套 TDD 技能重复启动；组合结果需要写清输入、产物和何时结束。
 
-## 验证状态
+## 阅读入口
 
-本推荐基于 Matt Pocock skills 仓库固定提交 `c55ee46073ed923f86ce59a5eb3b6d895095d1b7` 的稳定目录、README 和 MIT 许可证核验，共收录 engineering 18 个、productivity 7 个技能。当前没有逐一安装和运行这些技能，也没有验证外部文档、任务跟踪器或所有 Agent 宿主集成。
+**需求与沟通：**[`grill-me`](/skills/mattpocock/grill-me/)、[`grill-with-docs`](/skills/mattpocock/grill-with-docs/)、[`grilling`](/skills/mattpocock/grilling/)、[`domain-modeling`](/skills/mattpocock/domain-modeling/)、[`to-questionnaire`](/skills/mattpocock/to-questionnaire/)、[`wait-what`](/skills/mattpocock/wait-what/)。
 
-未完成行为验证不会阻止用户复制安装提示词或继续安装。网站应把验证层级、固定版本和潜在外部依赖放在操作入口附近，让用户知情后继续，而不是将“未验证”处理为不可安装。
+**规格与推进：**[`ask-matt`](/skills/mattpocock/ask-matt/)、[`setup-matt-pocock-skills`](/skills/mattpocock/setup-matt-pocock-skills/)、[`to-spec`](/skills/mattpocock/to-spec/)、[`to-tickets`](/skills/mattpocock/to-tickets/)、[`triage`](/skills/mattpocock/triage/)、[`wayfinder`](/skills/mattpocock/wayfinder/)、[`handoff`](/skills/mattpocock/handoff/)。
+
+**实现与质量：**[`implement`](/skills/mattpocock/implement/)、[`tdd`](/skills/mattpocock/tdd/)、[`code-review`](/skills/mattpocock/code-review/)、[`diagnosing-bugs`](/skills/mattpocock/diagnosing-bugs/)、[`resolving-merge-conflicts`](/skills/mattpocock/resolving-merge-conflicts/)。
+
+**设计与探索：**[`codebase-design`](/skills/mattpocock/codebase-design/)、[`improve-codebase-architecture`](/skills/mattpocock/improve-codebase-architecture/)、[`prototype`](/skills/mattpocock/prototype/)、[`research`](/skills/mattpocock/research/)、[`wizard`](/skills/mattpocock/wizard/)。
+
+**知识工作：**[`teach`](/skills/mattpocock/teach/)、[`writing-for-agents`](/skills/mattpocock/writing-for-agents/)。
+
+以上链接进入站内中文译文详情页。详情页保留用途、适用范围、示例、依赖、限制和许可证等元数据，并提供跳转到上游 `SKILL.md` 的“查看原文”链接。

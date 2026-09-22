@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: superpowers/dispatching-parallel-agents
 name: Dispatching Parallel Agents
 summary: 识别互不依赖的任务并并行委派给多个 Agent，最后汇总结果。
@@ -16,11 +16,10 @@ source:
     type: git
     repository: https://github.com/obra/superpowers.git
     path: skills/dispatching-parallel-agents
-    requested_ref: 5bf4e78011075bcfc0dc295f0724994cd123ee71
 install:
   method: upstream
   default_scope: project
-  instructions_url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/README.md
+  instructions_url: https://github.com/obra/superpowers/blob/HEAD/README.md
 compatibility:
   agents:
   - codex
@@ -37,13 +36,12 @@ compatibility:
 license:
   status: known
   identifier: MIT
-  url: https://github.com/obra/superpowers/blob/5bf4e78011075bcfc0dc295f0724994cd123ee71/LICENSE
+  url: https://github.com/obra/superpowers/blob/HEAD/LICENSE
 owner: Jesse Vincent
 keywords:
 - dispatching-parallel-agents
 - 并行任务编排
 - 多 Agent 协作
 limitations:
-- 外部正文未复制；来源与元数据于 2026-09-20 核对，安装和行为未运行。
 - 技能触发和工具可用性取决于目标 Agent 宿主。
 lifecycle: active

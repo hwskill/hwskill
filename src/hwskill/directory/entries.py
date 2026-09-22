@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .models import DirectoryIssue, ValidationReport
 from .recommendations import RecommendationContractError, load_recommendation
 from .schema import validator_for
+from .translations import TranslationContractError, load_translation, translation_path
 from .yaml_io import YamlContractError, load_yaml
 
 
@@ -114,13 +115,17 @@ def _is_safe_external_path(value: object) -> bool:
     return all(part not in {"", ".", ".."} for part in value.split("/"))
 
 
-def _is_safe_requested_ref(value: object) -> bool:
+def _is_safe_ref(value: object) -> bool:
     return (
         isinstance(value, str)
         and bool(value)
         and not value.startswith("-")
         and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
     )
+
+
+# Kept while the legacy migration preview is converted to Entry v2.
+_is_safe_requested_ref = _is_safe_ref
 
 
 def _validate_entry_public_security(
@@ -138,8 +143,18 @@ def _validate_entry_public_security(
         if locator["type"] == "git":
             if not _is_safe_external_path(locator.get("path")):
                 issues.append(_issue(path, root, "source.locator.path", "external-path-unsafe", "External Git path must be a strict POSIX relative path.", "Use a non-empty relative path without traversal, empty segments, or backslashes."))
-            if not _is_safe_requested_ref(locator.get("requested_ref")):
-                issues.append(_issue(path, root, "source.locator.requested_ref", "external-ref-unsafe", "External Git requested_ref must not be blank, option-like, whitespace-bearing, or contain controls.", "Use an explicit safe revision without a leading dash."))
+            ref = locator.get("ref")
+            if ref is not None and not _is_safe_ref(ref):
+                issues.append(_issue(path, root, "source.locator.ref", "external-ref-unsafe", "External Git ref must not be blank, option-like, whitespace-bearing, or contain controls.", "Use a safe branch, tag, or commit without a leading dash."))
+            file_url = locator.get("file_url")
+            if file_url is not None and not _url_is_http(file_url):
+                issues.append(_issue(path, root, "source.locator.file_url", "public-url-unsafe", "External skill file URL must be a credential-free http(s) URL.", "Use an explicit public skill file URL without userinfo credentials."))
+            try:
+                repository_host = urlsplit(locator["repository"]).hostname
+            except ValueError:
+                repository_host = None
+            if repository_host and repository_host.lower() != "github.com" and file_url is None:
+                issues.append(_issue(path, root, "source.locator.file_url", "source-file-url-required", "Non-GitHub Git sources require an explicit skill file URL.", "Add file_url pointing to the upstream SKILL.md."))
     for field, value in (
         ("install.instructions_url", entry["install"].get("instructions_url")),
         ("license.url", entry["license"].get("url")),
@@ -206,13 +221,15 @@ def validate_repository(repo_root: Path) -> ValidationReport:
     root = repo_root.resolve()
     entry_paths = sorted((root / "entries").rglob("*.yaml")) if (root / "entries").is_dir() else []
     recommendation_paths = sorted((root / "recommendations").rglob("*.md")) if (root / "recommendations").is_dir() else []
+    translation_paths = sorted((root / "translations").rglob("*.md")) if (root / "translations").is_dir() else []
     template_entry_paths = sorted((root / "templates" / "entries").rglob("*.yaml")) if (root / "templates" / "entries").is_dir() else []
     template_recommendation_paths = sorted((root / "templates" / "recommendations").rglob("*.md")) if (root / "templates" / "recommendations").is_dir() else []
     curation_paths = sorted((root / "curation").glob("*.yaml")) if (root / "curation").is_dir() else []
-    all_paths = [*entry_paths, *recommendation_paths, *template_entry_paths, *template_recommendation_paths, *curation_paths]
+    all_paths = [*entry_paths, *recommendation_paths, *translation_paths, *template_entry_paths, *template_recommendation_paths, *curation_paths]
     issues: list[DirectoryIssue] = []
     entries: list[tuple[Path, dict[str, Any]]] = []
     recommendations: list[tuple[Path, dict[str, Any]]] = []
+    translations: list[tuple[Path, dict[str, Any]]] = []
     curation_sections: set[str] = set()
 
     for path in entry_paths:
@@ -249,6 +266,35 @@ def validate_repository(repo_root: Path) -> ValidationReport:
         if not source_errors and not output_errors:
             recommendations.append((path, document))
             _validate_recommendation_public_security(path, root, document, issues)
+
+    for path in translation_paths:
+        try:
+            document = load_translation(path)
+        except TranslationContractError as exc:
+            issues.append(_issue(path, root, exc.field, exc.code, str(exc), "Use a complete Markdown translation with YAML Frontmatter."))
+            continue
+        except (OSError, YamlContractError) as exc:
+            text = str(exc)
+            code = "yaml-merge-key" if "merge key" in text else "yaml-duplicate-key" if "duplicate YAML key" in text else "yaml-invalid"
+            issues.append(_issue(path, root, "$", code, text, "Use JSON-compatible YAML Frontmatter with unique keys."))
+            continue
+        skill_id = document.get("skill_id")
+        if isinstance(skill_id, str):
+            try:
+                expected = translation_path(root, skill_id)
+            except ValueError:
+                expected = None
+            if expected is not None and path != expected:
+                issues.append(_issue(path, root, "skill_id", "translation-path-mismatch", "Translation skill_id must match translations/<namespace>/<name>.md.", "Rename the file or correct its Frontmatter skill_id."))
+        source_document = {key: value for key, value in document.items() if key not in {"body", "body_format"}}
+        schema_errors = sorted(
+            _schema_errors(validator_for("translation-source").iter_errors(source_document)),
+            key=lambda error: list(error.absolute_path),
+        )
+        for error in schema_errors:
+            issues.append(_issue(path, root, _schema_field(error), f"schema-{error.validator}", error.message, "Update the translation Frontmatter to match its source Schema contract."))
+        if not schema_errors:
+            translations.append((path, document))
 
     for path in template_entry_paths:
         try:
@@ -326,6 +372,28 @@ def validate_repository(repo_root: Path) -> ValidationReport:
             else:
                 identities[identity] = path
 
+    translations_by_id: dict[str, list[Path]] = {}
+    valid_translation_ids: set[str] = set()
+    for path, translation in translations:
+        skill_id = translation["skill_id"]
+        translations_by_id.setdefault(skill_id, []).append(path)
+        expected = translation_path(root, skill_id)
+        if path != expected:
+            continue
+        elif skill_id not in by_id:
+            issues.append(_issue(path, root, "skill_id", "translation-orphan", f"Translation references missing skill {skill_id!r}.", "Add the matching Entry or remove the orphan translation."))
+        else:
+            valid_translation_ids.add(skill_id)
+    for skill_id, paths in translations_by_id.items():
+        if len(paths) > 1:
+            valid_translation_ids.discard(skill_id)
+            for path in paths:
+                issues.append(_issue(path, root, "skill_id", "duplicate-translation-id", f"Duplicate translation skill_id {skill_id!r}.", "Use one translation file per skill."))
+
+    for entry_id, (path, _) in by_id.items():
+        if entry_id not in valid_translation_ids:
+            issues.append(_issue(path, root, "translation", "translation-missing", f"Publishable entry {entry_id!r} requires a valid Chinese translation.", f"Add {translation_path(root, entry_id).relative_to(root)}."))
+
     for path, entry in entries:
         replacement_id = entry.get("replacement_id")
         if replacement_id is not None and replacement_id not in by_id:
@@ -347,6 +415,7 @@ def validate_repository(repo_root: Path) -> ValidationReport:
         entry_id for entry_id, (path, entry) in by_id.items()
         if len(entry_paths_by_id[entry_id]) == 1
         and str(path.relative_to(root)) not in invalid_files
+        and entry_id in valid_translation_ids
         and entry.get("lifecycle", "active") == "active"
     }
     for path, recommendation in recommendations:
@@ -360,7 +429,10 @@ def validate_repository(repo_root: Path) -> ValidationReport:
                 issues.append(_issue(path, root, "skills", "recommendation-unpublishable-entry", f"Ready recommendation references invalid entry {skill['id']!r}.", "Fix the entry before publishing this recommendation."))
 
     invalid_files = {issue.file for issue in issues}
-    publishable_entries = tuple(sorted(entry_id for entry_id, (path, entry) in by_id.items() if str(path.relative_to(root)) not in invalid_files))
+    publishable_entries = tuple(sorted(
+        entry_id for entry_id, (path, entry) in by_id.items()
+        if str(path.relative_to(root)) not in invalid_files and entry_id in valid_translation_ids
+    ))
     publishable_recommendations = tuple(sorted(
         recommendation["id"] for path, recommendation in recommendations
         if recommendation["status"] in {"ready", "withdrawn"}

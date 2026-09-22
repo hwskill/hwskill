@@ -5,7 +5,7 @@ import hashlib
 import json
 import unittest
 
-from tests.sharing.support import clone_release_documents, mutable_snapshot, refresh_snapshot_identity, valid_snapshot
+from tests.sharing.support import clone_release_documents, mutable_snapshot, refresh_snapshot_identity, valid_snapshot, valid_v2_snapshot
 
 
 def digest(value: object) -> str:
@@ -19,6 +19,18 @@ def content_digest(value: object) -> str:
 
 
 class UpdateFilteringTests(unittest.TestCase):
+    def test_v2_items_use_lifecycle_and_omit_resolution_and_capability_state(self) -> None:
+        from hwskill.sharing.filtering import build_items
+
+        items = build_items(valid_v2_snapshot(), from_sequence=0)
+
+        self.assertEqual(len(items), 1)
+        value = items[0].to_dict()
+        self.assertEqual(value["schema_version"], 2)
+        self.assertEqual(value["lifecycle"], "active")
+        self.assertNotIn("source_versions", value)
+        self.assertNotIn("install_capability", value)
+
     def test_new_skill_and_its_first_recommendation_merge_into_one_stable_item(self) -> None:
         from hwskill.sharing.filtering import build_items
 

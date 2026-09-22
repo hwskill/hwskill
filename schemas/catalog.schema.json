@@ -1,275 +1,360 @@
 {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://hwskill.dev/schemas/catalog.schema.json",
-    "title": "Catalog v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "schema_version",
-        "source_commit",
-        "entries"
-    ],
-    "properties": {
-        "schema_version": {
-            "const": 1
-        },
-        "source_commit": {
-            "type": [
-                "string",
-                "null"
-            ]
-        },
-        "entries": {
-            "type": "array",
-            "items": {
-                "$ref": "#/$defs/entry"
-            }
-        }
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwskill.dev/schemas/catalog.schema.json",
+  "title": "Catalog v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_commit",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
     },
-    "$defs": {
+    "source_commit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry",
+        "entry_digest",
+        "lifecycle",
+        "translation"
+      ],
+      "properties": {
         "entry": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "entry",
-                "entry_digest",
-                "source_identity",
-                "lifecycle",
-                "install_capability",
-                "verification_summary"
-            ],
-            "properties": {
-                "entry": {
-                    "$ref": "#/$defs/normalizedEntry"
-                },
-                "entry_digest": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "source_identity": {
-                    "$ref": "#/$defs/sourceIdentity"
-                },
-                "lifecycle": {
-                    "enum": [
-                        "active",
-                        "deprecated",
-                        "withdrawn"
-                    ]
-                },
-                "install_capability": {
-                    "enum": [
-                        "installable",
-                        "guidance_only",
-                        "temporarily_unavailable",
-                        "disabled"
-                    ]
-                },
-                "verification_summary": {
-                    "$ref": "#/$defs/verificationSummary"
-                }
-            }
+          "$ref": "#/$defs/entry"
         },
-        "normalizedEntry": {
+        "entry_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "deprecated",
+            "withdrawn"
+          ]
+        },
+        "translation": {
+          "$ref": "#/$defs/translation"
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "name",
+        "summary",
+        "layer",
+        "purposes",
+        "examples",
+        "source",
+        "install",
+        "compatibility",
+        "license"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layer": {
+          "enum": [
+            "l1",
+            "l2",
+            "l3",
+            "l4",
+            "l5"
+          ]
+        },
+        "purposes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "examples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-                "schema_version",
-                "id",
-                "name",
-                "summary",
-                "layer",
-                "purposes",
-                "examples",
-                "source",
-                "install",
-                "compatibility",
-                "license",
-                "lifecycle"
+              "prompt",
+              "expected_outcome"
             ],
             "properties": {
-                "schema_version": {
-                    "const": 1
+              "prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected_outcome": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "path"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "hosted"
                 },
-                "id": {
-                    "type": "string",
-                    "minLength": 1
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "locator"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "external"
                 },
-                "name": {
-                    "type": "string",
-                    "minLength": 1
+                "publicity": {
+                  "enum": [
+                    "public",
+                    "private",
+                    "unknown"
+                  ]
                 },
-                "summary": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "layer": {
-                    "enum": [
-                        "l1",
-                        "l2",
-                        "l3",
-                        "l4",
-                        "l5"
-                    ]
-                },
-                "purposes": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                },
-                "examples": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                            "prompt",
-                            "expected_outcome"
-                        ],
-                        "properties": {
-                            "prompt": {
-                                "type": "string",
-                                "minLength": 1
-                            },
-                            "expected_outcome": {
-                                "type": "string",
-                                "minLength": 1
-                            }
+                "locator": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "repository",
+                        "path"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "git"
+                        },
+                        "repository": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "path": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "ref": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "file_url": {
+                          "type": "string",
+                          "format": "uri"
                         }
-                    }
-                },
-                "source": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "kind",
-                        "identity"
-                    ],
-                    "properties": {
-                        "kind": {
-                            "enum": [
-                                "hosted",
-                                "external"
-                            ]
-                        },
-                        "identity": {
-                            "type": "string",
-                            "minLength": 1
-                        }
-                    }
-                },
-                "install": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "method",
-                        "default_scope"
-                    ],
-                    "properties": {
-                        "method": {
-                            "enum": [
-                                "directory",
-                                "upstream",
-                                "unknown"
-                            ]
-                        },
-                        "default_scope": {
-                            "const": "project"
-                        },
-                        "instructions_url": {
-                            "type": [
-                                "string",
-                                "null"
-                            ],
-                            "format": "uri"
-                        },
-                        "included_skills": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "minLength": 1
-                            }
-                        }
-                    }
-                },
-                "compatibility": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "agents",
-                        "systems",
-                        "requirements"
-                    ],
-                    "properties": {
-                        "agents": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        },
-                        "systems": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        },
-                        "requirements": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                },
-                "license": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "status"
-                    ],
-                    "properties": {
-                        "status": {
-                            "enum": [
-                                "known",
-                                "unknown"
-                            ]
-                        },
-                        "identifier": {
-                            "type": "string"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "url"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "web"
                         },
                         "url": {
-                            "type": "string",
-                            "format": "uri"
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "version_note": {
+                          "type": "string",
+                          "minLength": 1
                         }
+                      }
                     }
-                },
-                "lifecycle": {
-                    "enum": [
-                        "active",
-                        "deprecated",
-                        "withdrawn"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "install": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "default_scope"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "directory",
+                "upstream",
+                "unknown"
+              ]
+            },
+            "default_scope": {
+              "const": "project"
+            },
+            "instructions_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "included_skills": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "method": {
+                    "const": "upstream"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "instructions_url"
+                ]
+              }
+            }
+          ]
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "agents",
+            "systems",
+            "requirements"
+          ],
+          "properties": {
+            "agents": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "systems": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "requirements": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "identifier": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "known"
+                  }
+                }
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "identifier"
                     ]
-                },
-                "lifecycle_reason": {
-                    "type": [
-                        "string",
-                        "null"
+                  },
+                  {
+                    "required": [
+                      "url"
                     ]
-                },
-        "replacement_id": {
-          "type": [
-            "string",
-            "null"
+                  }
+                ]
+              }
+            }
           ]
         },
         "owner": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string",
+          "minLength": 1
         },
         "keywords": {
           "type": "array",
@@ -284,101 +369,72 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "deprecated",
+            "withdrawn"
+          ]
+        },
+        "lifecycle_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replacement_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"
         }
-            }
-        },
-        "sourceIdentity": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "kind",
-                "identity"
-            ],
+      },
+      "allOf": [
+        {
+          "if": {
             "properties": {
-                "kind": {
-                    "enum": [
-                        "hosted",
-                        "external"
-                    ]
-                },
-                "identity": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "requested_ref": {
-                    "type": [
-                        "string",
-                        "null"
-                    ]
-                },
-                "resolved_revision": {
-                    "type": [
-                        "string",
-                        "null"
-                    ]
-                },
-                "content_digest": {
-                    "type": [
-                        "string",
-                        "null"
-                    ]
-                }
-            }
-        },
-        "verificationSummary": {
-            "type": "object",
-            "additionalProperties": false,
+              "lifecycle": {
+                "enum": [
+                  "deprecated",
+                  "withdrawn"
+                ]
+              }
+            },
             "required": [
-                "metadata",
-                "acquisition",
-                "installation",
-                "behavior"
-            ],
-            "properties": {
-                "metadata": {
-                    "$ref": "#/$defs/summaryStage"
-                },
-                "acquisition": {
-                    "$ref": "#/$defs/summaryStage"
-                },
-                "installation": {
-                    "$ref": "#/$defs/summaryStage"
-                },
-                "behavior": {
-                    "$ref": "#/$defs/summaryStage"
-                }
-            }
-        },
-        "summaryStage": {
-            "type": "object",
-            "additionalProperties": false,
+              "lifecycle"
+            ]
+          },
+          "then": {
             "required": [
-                "result"
-            ],
-            "properties": {
-                "result": {
-                    "enum": [
-                        "pass",
-                        "fail",
-                        "blocked",
-                        "not_run",
-                        "unknown"
-                    ]
-                },
-                "report_id": {
-                    "type": [
-                        "string",
-                        "null"
-                    ]
-                },
-                "executed_at": {
-                    "type": [
-                        "string",
-                        "null"
-                    ],
-                    "format": "date-time"
-                }
-            }
+              "lifecycle_reason"
+            ]
+          }
         }
+      ]
+    },
+    "translation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_format",
+        "body",
+        "translated_at",
+        "source_url"
+      ],
+      "properties": {
+        "body_format": {
+          "const": "markdown"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "translated_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
     }
+  }
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from importlib.resources import files
 import json
@@ -7,12 +8,14 @@ from pathlib import Path
 import shutil
 import tempfile
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from .digest import canonical_json, sha256_bytes
-from .entries import _source_identity, validate_repository
+from .entries import validate_repository
 from .hosted_content import copy_hosted_content, hosted_directory
 from .models import DirectoryIssue
 from .recommendations import load_recommendation
+from .translations import load_translation, translation_path
 from .yaml_io import load_yaml
 
 PUBLIC_SOURCE_REPOSITORY = "https://github.com/hwskill/hwskill"
@@ -38,129 +41,119 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_bytes(canonical_json(data))
 
 
-def _identity(entry: dict[str, Any], root: Path, source_commit: str | None = None) -> dict[str, Any]:
+def _quoted_path(value: str) -> str:
+    return "/".join(quote(part, safe="") for part in value.split("/"))
+
+
+def build_source_url(entry: dict[str, Any]) -> str:
     source = entry["source"]
     if source["kind"] == "hosted":
-        source_root = hosted_directory(root, source["path"])
-        from .hosted_content import directory_digest
-        return {"kind": "hosted", "identity": _source_identity(entry), "resolved_revision": source_commit, "content_digest": directory_digest(source_root)}
+        return f"{PUBLIC_SOURCE_REPOSITORY}/blob/HEAD/{_quoted_path(source['path'])}/SKILL.md"
     locator = source["locator"]
-    return {"kind": "external", "identity": _source_identity(entry), "requested_ref": locator.get("requested_ref", locator.get("version_note")), "resolved_revision": None, "content_digest": None}
+    if locator["type"] == "web":
+        return locator["url"]
+    if locator.get("file_url"):
+        return locator["file_url"]
+    repository = urlsplit(locator["repository"])
+    if repository.hostname is None or repository.hostname.lower() != "github.com":
+        raise ValueError("Non-GitHub Git locators require file_url.")
+    repository_path = repository.path.strip("/")
+    if repository_path.endswith(".git"):
+        repository_path = repository_path[:-4]
+    parts = repository_path.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError("GitHub repository URL must identify owner/repository.")
+    repository_url = f"https://github.com/{quote(parts[0], safe='')}/{quote(parts[1], safe='')}"
+    ref = quote(locator.get("ref", "HEAD"), safe="")
+    return f"{repository_url}/blob/{ref}/{_quoted_path(locator['path'])}/SKILL.md"
 
 
-def _summary() -> dict[str, dict[str, Any]]:
-    stage = {"result": "not_run", "report_id": None, "executed_at": None}
-    return {name: dict(stage) for name in ("metadata", "acquisition", "installation", "behavior")}
-
-
-def _normalized(entry: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
-    source = {"kind": entry["source"]["kind"], "identity": identity["identity"]}
-    normalized = {
-        "schema_version": 1, "id": entry["id"], "name": entry["name"], "summary": entry["summary"],
-        "layer": entry["layer"], "purposes": entry["purposes"], "examples": entry["examples"],
-        "source": source,
-        "install": {
-            "method": entry["install"]["method"],
-            "default_scope": entry["install"]["default_scope"],
-            "instructions_url": entry["install"].get("instructions_url"),
-            **({"included_skills": entry["install"]["included_skills"]} if "included_skills" in entry["install"] else {}),
-        },
-        "compatibility": entry["compatibility"], "license": entry["license"],
-        "lifecycle": entry.get("lifecycle", "active"), "lifecycle_reason": entry.get("lifecycle_reason"), "replacement_id": entry.get("replacement_id"),
-    }
-    for field in ("owner", "keywords", "limitations"):
-        if field in entry:
-            normalized[field] = entry[field]
+def _normalized(entry: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(entry)
+    normalized["schema_version"] = 2
+    normalized["lifecycle"] = entry.get("lifecycle", "active")
     return normalized
 
 
-def _install_capability(entry: dict[str, Any], identity: dict[str, Any]) -> str:
-    if entry.get("lifecycle") == "withdrawn":
-        return "disabled"
-    install = entry["install"]
-    if install["method"] == "unknown" or not identity.get("resolved_revision"):
-        return "guidance_only"
-    if entry["source"]["kind"] == "hosted":
-        return "installable" if install["method"] == "directory" and identity.get("content_digest") else "guidance_only"
-    if not identity.get("content_digest"):
-        return "guidance_only"
-    if install["method"] == "upstream" and not install.get("instructions_url"):
-        return "guidance_only"
-    return "installable"
+def _translation(entry: dict[str, Any], root: Path) -> dict[str, Any]:
+    document = load_translation(translation_path(root, entry["id"]))
+    return {
+        "body_format": "markdown",
+        "body": document["body"],
+        "translated_at": document["translated_at"],
+        "source_url": build_source_url(entry),
+    }
 
 
-def _install_markdown(entry: dict[str, Any], identity: dict[str, Any]) -> str:
+def _install_markdown(entry: dict[str, Any]) -> str:
     install = entry["install"]
     source = entry["source"]
-    if source["kind"] == "external":
-        locator = source["locator"]
-        url = locator.get("repository", locator.get("url"))
-        source_lines = [str(url), f"路径：{locator.get('path', '不适用')}", f"请求版本：{locator.get('requested_ref', locator.get('version_note', 'unknown'))}", "解析提交：未解析（验证阶段记录实际 commit）"]
-    else:
-        revision = identity.get("resolved_revision")
-        source_lines = [
+    lines = [
+        f"# {entry['name']} 安装说明",
+        "",
+        f"技能 ID：`{entry['id']}`",
+        f"安装方式：{install['method']}",
+        f"默认范围：{install['default_scope']}",
+        "",
+        "## 声明来源",
+        "",
+    ]
+    if source["kind"] == "hosted":
+        lines.extend([
             f"仓库：{PUBLIC_SOURCE_REPOSITORY}",
             f"仓库内路径：{source['path']}",
-            f"固定提交：{revision or '未取得'}",
-        ]
-        if revision:
-            source_lines.append(f"完整技能目录：{PUBLIC_SOURCE_REPOSITORY}/tree/{revision}/{source['path']}")
-    capability = _install_capability(entry, identity)
-    capability_label = {"installable": "可按固定来源安装", "guidance_only": "安装前需自行核对来源与方法", "disabled": "已停用新安装"}[capability]
-    lines = [f"# {entry['name']} 安装说明", "", f"技能 ID：`{entry['id']}`", f"安装方式：{install['method']}", f"默认范围：{install['default_scope']}", f"安装能力：{capability_label}", "", "## 来源", "", *source_lines, "", "## 验证状态", "", "安装与行为验证：not_run（本构建未执行安装或行为测试）。", ""]
-    if install["method"] == "unknown":
-        lines.extend(["未提供可执行安装命令；请按来源人工确认安装方式。", ""])
-    elif install.get("instructions_url"):
-        lines.extend([f"上游指引：{install['instructions_url']}", ""])
-    elif source["kind"] == "hosted" and install["method"] == "directory":
-        if capability == "installable":
-            lines.extend([
-                "## 项目级安装",
-                "",
-                "从上述仓库检出固定提交，复制整个技能目录（包括 SKILL.md 和配套文件）到当前 Agent 的项目级技能目录。",
-                "不要覆盖已有同名技能；先确认目标路径及该 Agent 的项目级技能目录约定。",
-                "安装后检查 SKILL.md 与配套文件齐全，并确认 Agent 能识别该技能；报告实际目标路径和提交。",
-                "",
-            ])
-        else:
-            lines.extend(["尚未取得完整的固定来源材料，不能据此进行可复现安装。", ""])
-    if install.get("included_skills"):
-        lines.extend([f"同时安装：{'、'.join(install['included_skills'])}", ""])
-    if capability == "guidance_only":
-        lines.extend([
-            "## 自行安装",
-            "",
-            "可自行从来源取得技能，核对请求版本、完整文件及适用的项目级安装方法后安装；不要覆盖同名技能。",
-            "本目录未验证安装或行为，也未提供可复现的自动安装材料；无法确认来源或方法时请先停止并说明原因。",
-            "",
+            f"技能原文：{build_source_url(entry)}",
         ])
-    return "\n".join(lines)
-
-
-def _install_data(entry: dict[str, Any], entry_digest: str, identity: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
-    source = entry["source"]
-    if source["kind"] == "external":
+    else:
         locator = source["locator"]
         if locator["type"] == "git":
-            public_source = {"kind": "external", "repository": locator["repository"], "path": locator["path"], "requested_ref": locator["requested_ref"], "resolved_revision": None}
+            lines.extend([
+                f"仓库：{locator['repository']}",
+                f"路径：{locator['path']}",
+                f"ref：{locator.get('ref', '未指定，读取默认分支 HEAD')}",
+                f"技能原文：{build_source_url(entry)}",
+            ])
         else:
-            public_source = {"kind": "external", "url": locator["url"], "requested_ref": locator.get("version_note"), "resolved_revision": None}
+            lines.extend([
+                f"页面：{locator['url']}",
+                f"版本说明：{locator.get('version_note', '未提供')}",
+            ])
+    lines.extend(["", "## 给 Agent 的安装要求", ""])
+    if install["method"] == "unknown":
+        lines.extend([
+            "来源未声明可直接执行的安装方法。请先阅读来源，确认完整文件、目标 Agent 的项目级技能目录、依赖和权限，再报告可行步骤。",
+            "不要猜测命令，也不要覆盖已有同名技能。",
+        ])
     else:
-        public_source = {"kind": "hosted", "path": source["path"], "resolved_revision": identity["resolved_revision"]}
-    public_install = {
-        "method": entry["install"]["method"],
-        "default_scope": entry["install"]["default_scope"],
-        "instructions_url": entry["install"].get("instructions_url"),
-        **({"included_skills": entry["install"]["included_skills"]} if "included_skills" in entry["install"] else {}),
+        lines.extend([
+            "读取来源中的完整技能目录及配套文件，确认依赖、权限和目标 Agent 的项目级技能目录。",
+            "按作者声明的方法安装，不要覆盖已有同名技能；安装后检查 Agent 能发现该技能，并报告实际来源、目标路径和结果。",
+        ])
+    if install.get("instructions_url"):
+        lines.extend(["", f"上游安装说明：{install['instructions_url']}"])
+    if install.get("included_skills"):
+        lines.extend(["", f"同时包含：{'、'.join(install['included_skills'])}"])
+    return "\n".join([*lines, ""])
+
+
+def _install_data(entry: dict[str, Any], entry_digest: str) -> dict[str, Any]:
+    public_install = deepcopy(entry["install"])
+    document = {
+        "schema_version": 2,
+        "skill_id": entry["id"],
+        "entry_digest": entry_digest,
+        "source": deepcopy(entry["source"]),
+        "install": public_install,
     }
-    return {"schema_version": 1, "skill_id": entry["id"], "entry_digest": entry_digest, "source": public_source, "install": public_install, "verification_summary": summary}
+    document["install_digest"] = sha256_bytes(canonical_json(document))
+    return document
 
 
 def _assert_safe_output(root: Path, out_dir: Path) -> Path:
     output = out_dir.resolve()
     if output == root or output in root.parents:
         raise BuildInputError(DirectoryIssue("--out", "out", "unsafe-output-path", "error", "Output path overlaps repository source material.", "Choose a separate derived output directory."))
-    sources = [root / "entries", root / "recommendations", root / "curation", root / "skills-src", root / "schemas", root / "templates", root / "CONTRIBUTING.md", root / "docs/guides/agent-contribution.md"]
+    sources = [root / "entries", root / "recommendations", root / "translations", root / "curation", root / "skills-src", root / "schemas", root / "templates", root / "CONTRIBUTING.md", root / "docs/guides/agent-contribution.md"]
     if any(output == source or output in source.parents or source in output.parents for source in sources):
         raise BuildInputError(DirectoryIssue("--out", "out", "unsafe-output-path", "error", "Output path overlaps repository source material.", "Choose a separate derived output directory."))
     return output
@@ -200,18 +193,18 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             entry = load_yaml(path)
             if entry["id"] not in report.publishable_entry_ids:
                 continue
-            identity = _identity(entry, root, report.source_commit)
-            normalized = _normalized(entry, identity)
+            normalized = _normalized(entry)
             entry_digest = sha256_bytes(canonical_json(normalized))
-            summary = _summary()
-            capability = _install_capability(entry, identity)
-            entries.append({"entry": normalized, "entry_digest": entry_digest, "source_identity": identity, "lifecycle": normalized["lifecycle"], "install_capability": capability, "verification_summary": summary})
+            entries.append({
+                "entry": normalized,
+                "entry_digest": entry_digest,
+                "lifecycle": normalized["lifecycle"],
+                "translation": _translation(entry, root),
+            })
             skill_dir = staging / "skills" / entry["id"]
-            install_data = _install_data(entry, entry_digest, identity, summary)
-            install_data["install_digest"] = sha256_bytes(canonical_json(install_data))
-            _write_json(skill_dir / "install.json", install_data)
+            _write_json(skill_dir / "install.json", _install_data(entry, entry_digest))
             skill_dir.mkdir(parents=True, exist_ok=True)
-            (skill_dir / "install.md").write_text(_install_markdown(entry, identity), encoding="utf-8")
+            (skill_dir / "install.md").write_text(_install_markdown(entry), encoding="utf-8")
             if entry["source"]["kind"] == "hosted":
                 copy_hosted_content(hosted_directory(root, entry["source"]["path"]), skill_dir / "content")
         entries.sort(key=lambda item: item["entry"]["id"])
@@ -226,10 +219,10 @@ def build_repository(repo_root: Path, out_dir: Path) -> BuildResult:
             curation.update(load_yaml(path))
         if set(curation) != {"topics", "synonyms"}:
             raise ValueError("curation output requires topics and synonyms")
-        _write_json(staging / "catalog.json", {"schema_version": 1, "source_commit": report.source_commit, "entries": entries})
+        _write_json(staging / "catalog.json", {"schema_version": 2, "source_commit": report.source_commit, "entries": entries})
         _write_json(staging / "recommendations.json", {"schema_version": 1, "recommendations": recommendations})
         _write_json(staging / "curation.json", curation)
-        _write_json(staging / "status.json", {"schema_version": 1, "input_digest": report.input_digest, "result": "pass", "entry_count": len(entries), "recommendation_count": len(recommendations), "verification_note": "installation/behavior 未运行"})
+        _write_json(staging / "status.json", {"schema_version": 2, "input_digest": report.input_digest, "result": "pass", "entry_count": len(entries), "recommendation_count": len(recommendations)})
         _copy_public_resources(root, staging)
         legacy_backup = parent / f".{output.name}.previous"
         if legacy_backup.exists():

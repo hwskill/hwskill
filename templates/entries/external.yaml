@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: namespace/skill-name
 name: 技能名称
 summary: 一句话说明外部技能解决的问题。
@@ -14,7 +14,8 @@ source:
     type: git
     repository: https://github.com/owner/repository.git
     path: skills/skill-name
-    requested_ref: immutable-full-commit-sha
+    file_url: https://example.com/source/SKILL.md
+    ref: immutable-full-commit-sha
 install:
   method: unknown
   default_scope: project

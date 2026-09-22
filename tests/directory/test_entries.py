@@ -30,6 +30,102 @@ class DirectoryValidationTests(unittest.TestCase):
         self.assertEqual(report.publishable_entry_ids, ("local/hosted", "upstream/external"))
         self.assertEqual(report.publishable_recommendation_ids, ("review-tools",))
 
+    def test_translation_loader_normalizes_crlf_and_appends_one_newline(self) -> None:
+        from hwskill.directory.translations import load_translation, translation_path
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = translation_path(root, "local/hosted")
+            path.parent.mkdir(parents=True)
+            path.write_bytes(
+                b"---\r\nschema_version: 1\r\nskill_id: local/hosted\r\n"
+                b"translated_at: 2026-09-20\r\n---\r\n\r\n# Translation\r\n\r\n"
+            )
+
+            document = load_translation(path)
+
+        self.assertEqual(document["skill_id"], "local/hosted")
+        self.assertEqual(document["body_format"], "markdown")
+        self.assertEqual(document["body"], "# Translation\n")
+
+    def test_translation_loader_rejects_invalid_frontmatter_and_empty_body(self) -> None:
+        from hwskill.directory.translations import TranslationContractError, load_translation
+
+        cases = {
+            "missing-opening.md": ("schema_version: 1\n", "translation-frontmatter-missing"),
+            "missing-closing.md": ("---\nschema_version: 1\n", "translation-frontmatter-unclosed"),
+            "empty-body.md": (
+                "---\nschema_version: 1\nskill_id: local/hosted\ntranslated_at: 2026-09-20\n---\n   \n",
+                "translation-body-empty",
+            ),
+        }
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, (contents, expected_code) in cases.items():
+                with self.subTest(name=name):
+                    path = root / name
+                    path.write_text(contents, encoding="utf-8")
+                    with self.assertRaises(TranslationContractError) as raised:
+                        load_translation(path)
+                    self.assertEqual(raised.exception.code, expected_code)
+
+    def test_translation_loader_preserves_duplicate_key_error(self) -> None:
+        from hwskill.directory.translations import load_translation
+        from hwskill.directory.yaml_io import YamlContractError
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "duplicate.md"
+            path.write_text(
+                "---\nschema_version: 1\nskill_id: local/hosted\n"
+                "skill_id: local/other\ntranslated_at: 2026-09-20\n---\nBody\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(YamlContractError):
+                load_translation(path)
+
+    def test_translation_requires_matching_skill_id_and_valid_frontmatter(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        hosted = root / "translations/local/hosted.md"
+        hosted.parent.mkdir(parents=True, exist_ok=True)
+        hosted.write_text(
+            "---\nschema_version: 1\nskill_id: local/other\n"
+            "translated_at: yesterday\nunexpected: true\n---\n\n# Hosted\n",
+            encoding="utf-8",
+        )
+
+        report = validate_repository(root)
+        codes = {issue.code for issue in report.issues}
+        self.assertIn("translation-path-mismatch", codes)
+        self.assertIn("schema-format", codes)
+        self.assertIn("schema-additionalProperties", codes)
+
+    def test_publishable_entry_requires_translation_and_orphans_are_rejected(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "repository"
+        shutil.copytree(FIXTURES / "valid", root)
+        missing = root / "translations/local/hosted.md"
+        missing.unlink()
+        orphan = root / "translations/local/orphan.md"
+        orphan.write_text(
+            "---\nschema_version: 1\nskill_id: local/orphan\n"
+            "translated_at: 2026-09-20\n---\n\n# Orphan\n",
+            encoding="utf-8",
+        )
+
+        report = validate_repository(root)
+        codes = {issue.code for issue in report.issues}
+        self.assertIn("translation-missing", codes)
+        self.assertIn("translation-orphan", codes)
+        self.assertNotIn("local/hosted", report.publishable_entry_ids)
+
     def test_rejects_duplicate_yaml_key(self) -> None:
         report = self.validate("duplicate-key")
         self.assertTrue(any(issue.code == "yaml-duplicate-key" for issue in report.issues))
@@ -138,12 +234,12 @@ class DirectoryValidationTests(unittest.TestCase):
                     report.issues,
                 )
 
-    def test_rejects_git_path_and_requested_ref_option_injection_shapes(self) -> None:
+    def test_rejects_git_path_and_ref_option_injection_shapes(self) -> None:
         from hwskill.directory.entries import validate_repository
 
         cases = {
             "path": ["/absolute", ".", "skills/../evil", "skills//evil", "skills\\evil"],
-            "requested_ref": ["", " v1", "v1 ", "--upload-pack=evil", "v1\tother"],
+            "ref": ["", " v1", "v1 ", "--upload-pack=evil", "v1\tother"],
         }
         for field, values in cases.items():
             for index, value in enumerate(values):
@@ -165,6 +261,77 @@ class DirectoryValidationTests(unittest.TestCase):
                         or (value == "" and any(issue.code.startswith("schema-") for issue in report.issues)),
                         report.issues,
                     )
+
+    def test_entry_v2_accepts_omitted_branch_tag_and_commit_refs(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        for ref in (None, "main", "v2.0.0", "a" * 40):
+            with self.subTest(ref=ref):
+                temporary = TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                root = Path(temporary.name) / "repository"
+                shutil.copytree(FIXTURES / "valid", root)
+                for path in (root / "entries").rglob("*.yaml"):
+                    text = path.read_text(encoding="utf-8")
+                    if "ref: v1.2.3" in text:
+                        replacement = "" if ref is None else f"    ref: {ref}\n"
+                        text = text.replace("    ref: v1.2.3\n", replacement)
+                    path.write_text(text, encoding="utf-8")
+
+                report = validate_repository(root)
+
+                self.assertEqual(report.result, "pass", report.issues)
+
+    def test_entry_v2_rejects_unsafe_optional_refs(self) -> None:
+        from hwskill.directory.entries import validate_repository
+
+        for ref in ("--upload-pack=evil", " branch", "branch ", "branch\tother"):
+            with self.subTest(ref=ref):
+                temporary = TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                root = Path(temporary.name) / "repository"
+                shutil.copytree(FIXTURES / "valid", root)
+                for path in (root / "entries").rglob("*.yaml"):
+                    text = path.read_text(encoding="utf-8")
+                    text = text.replace("ref: v1.2.3", f"ref: {json.dumps(ref)}")
+                    path.write_text(text, encoding="utf-8")
+
+                report = validate_repository(root)
+
+                self.assertTrue(any(issue.code == "external-ref-unsafe" for issue in report.issues), report.issues)
+
+    def test_build_source_url_uses_ref_head_and_explicit_file_url(self) -> None:
+        from hwskill.directory.catalog import build_source_url
+
+        base = {
+            "source": {
+                "kind": "external",
+                "locator": {
+                    "type": "git",
+                    "repository": "https://github.com/example/tools.git",
+                    "path": "skills/review helper",
+                },
+            }
+        }
+        self.assertEqual(
+            build_source_url(base),
+            "https://github.com/example/tools/blob/HEAD/skills/review%20helper/SKILL.md",
+        )
+        base["source"]["locator"]["ref"] = "release/v2"
+        self.assertEqual(
+            build_source_url(base),
+            "https://github.com/example/tools/blob/release%2Fv2/skills/review%20helper/SKILL.md",
+        )
+        base["source"]["locator"] = {
+            "type": "git",
+            "repository": "https://git.example.test/team/tools.git",
+            "path": "skills/review",
+            "file_url": "https://git.example.test/team/tools/files/skills/review/SKILL.md",
+        }
+        self.assertEqual(
+            build_source_url(base),
+            "https://git.example.test/team/tools/files/skills/review/SKILL.md",
+        )
 
     def test_draft_recommendation_is_valid_but_not_publishable(self) -> None:
         report = self.validate("draft")
@@ -224,9 +391,9 @@ class DirectoryValidationTests(unittest.TestCase):
         from hwskill.directory.schema import validator_for
 
         cases = {
-            "catalog": {"schema_version": 1, "source_commit": None, "entries": [{}]},
+            "catalog": {"schema_version": 2, "source_commit": None, "entries": [{}]},
             "verification": {"schema_version": 1, "report_id": "r", "skill_id": "local/test", "source_identity": {}, "entry_digest": "a", "install_digest": "b", "host": "codex", "runner_identity": "runner", "executed_at": "2026-01-01T00:00:00Z", "stages": {}, "evidence_refs": []},
-            "release": {"schema_version": 1, "release_id": "r", "sequence": 1, "source_commit": "abc", "publication_time": "2026-01-01T00:00:00Z", "committed_at": "2026-01-01T00:00:00Z", "events": [{}]},
+            "release": {"schema_version": 2, "release_id": "r", "sequence": 1, "source_commit": "abc", "publication_time": "2026-01-01T00:00:00Z", "committed_at": "2026-01-01T00:00:00Z", "events": [{}]},
         }
         for name, document in cases.items():
             with self.subTest(schema=name):
@@ -315,6 +482,21 @@ class DirectoryValidationTests(unittest.TestCase):
         for relative, skill_path in expected.items():
             document = load_yaml(next(entries.rglob(relative)))
             self.assertEqual(document["source"]["locator"]["path"], skill_path)
+
+    def test_performance_patterns_uses_intel_upstream_and_names_the_derivative(self) -> None:
+        from hwskill.directory.recommendations import load_recommendation
+        from hwskill.directory.yaml_io import load_yaml
+
+        entry = load_yaml(Path("entries/l3/community/performance-patterns.yaml"))
+        self.assertEqual(entry["source"]["locator"]["repository"], "https://github.com/intel/intel-performance-skills.git")
+        self.assertEqual(entry["license"]["url"], "https://github.com/intel/intel-performance-skills/blob/HEAD/COPYRIGHT.md")
+        translation = Path("translations/community/performance-patterns.md").read_text(encoding="utf-8")
+        self.assertIn("检测并修复 x86/C/C++ 性能模式", translation)
+        self.assertNotIn("第 0 步——确定平台路线", translation)
+        recommendation = load_recommendation(Path("recommendations/data-and-performance.md"))
+        self.assertEqual(recommendation["evidence"][0]["url"], "https://github.com/intel/intel-performance-skills")
+        self.assertIn("2233admin/performance-patterns-skill", recommendation["body"])
+        self.assertIn("衍生版本", recommendation["body"])
 
 
     def test_markdown_recommendation_is_normalized_and_path_checked(self) -> None:

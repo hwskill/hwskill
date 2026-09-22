@@ -19,7 +19,7 @@ def _latest_states(snapshot: FeedSnapshot) -> tuple[dict[str, tuple[str, str]], 
         for skill_id in event["skill_ids"]:
             item = skill_item(snapshot, event, skill_id)
             lifecycle = item["entry"].get("lifecycle", item.get("lifecycle"))
-            capability = item.get("install_capability")
+            capability = item.get("install_capability") if snapshot.schema_version == 1 else None
             skills[skill_id] = (lifecycle, capability)
         if event_type.startswith("skill."):
             if event_type == "skill.withdrawn":
@@ -37,6 +37,8 @@ def _skill_metadata(snapshot: FeedSnapshot, event: Mapping[str, Any], skill_id: 
     entry = item["entry"]
     machine = install_url(str(event["machine_url"]), skill_id)
     install = snapshot.documents[machine]
+    if snapshot.schema_version == 2:
+        return item, entry, machine, None
     source = install.get("source", {})
     identity = item.get("source_identity", {})
     requested_ref = source.get("requested_ref")
@@ -62,7 +64,7 @@ def _make_item(
     primary = recommendation_event or events[0]
     skill_ids = tuple(sorted({skill_id for event in events for skill_id in event["skill_ids"]}))
     metadata = [_skill_metadata(snapshot, primary, skill_id) for skill_id in skill_ids]
-    source_versions = tuple(item[3] for item in metadata)
+    source_versions = tuple(item[3] for item in metadata) if snapshot.schema_version == 1 else None
     install_urls = tuple(item[2] for item in metadata)
     purposes = tuple(sorted({purpose for _, entry, _, _ in metadata for purpose in entry.get("purposes", [])}))
     recommendation_refs = tuple(
@@ -100,14 +102,16 @@ def _make_item(
         "temporarily_unavailable": 2,
         "disabled": 3,
     }
-    install_capability = max(
-        (item[0]["install_capability"] for item in metadata),
-        key=lambda capability: capability_priority[capability],
-    )
+    install_capability = None
+    if snapshot.schema_version == 1:
+        install_capability = max(
+            (item[0]["install_capability"] for item in metadata),
+            key=lambda capability: capability_priority[capability],
+        )
     event_ids = tuple(event["event_id"] for event in events)
     item_id = "item-" + stable_digest({"event_ids": event_ids}).removeprefix("sha256:")
     return UpdateItem(
-        schema_version=1,
+        schema_version=snapshot.schema_version,
         item_id=item_id,
         sequence=int(primary["sequence"]),
         event_ids=event_ids,
@@ -165,7 +169,10 @@ def build_items(
             if any(
                 latest_skills.get(skill_id) is None
                 or latest_skills[skill_id][0] != "active"
-                or latest_skills[skill_id][1] not in {"installable", "guidance_only"}
+                or (
+                    snapshot.schema_version == 1
+                    and latest_skills[skill_id][1] not in {"installable", "guidance_only"}
+                )
                 for skill_id in event["skill_ids"]
             ):
                 continue
@@ -173,8 +180,11 @@ def build_items(
             latest = latest_skills.get(event["subject_id"])
             event_item = skill_item(snapshot, event, event["subject_id"])
             event_lifecycle = event_item["entry"].get("lifecycle", event_item.get("lifecycle", "active"))
-            event_state = (event_lifecycle, event_item["install_capability"])
-            latest_available = latest is not None and latest[0] == "active" and latest[1] in {"installable", "guidance_only"}
+            event_capability = event_item.get("install_capability") if snapshot.schema_version == 1 else None
+            event_state = (event_lifecycle, event_capability)
+            latest_available = latest is not None and latest[0] == "active" and (
+                snapshot.schema_version == 2 or latest[1] in {"installable", "guidance_only"}
+            )
             is_latest_control = event_type == "skill.updated" and event_state == latest and not latest_available
             if not latest_available and not is_latest_control:
                 continue

@@ -41,20 +41,21 @@ class StaticSiteContractTests(unittest.TestCase):
         template = ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
         self.assertTrue(template.is_file())
         text = template.read_text(encoding="utf-8")
-        for section in ("变更内容", "来源与版本", "验证", "验证边界"):
+        for section in ("变更内容", "来源与版本", "技能验证报告", "确定性检查", "变更范围"):
             self.assertIn(section, text)
 
-    def test_unverified_source_prompt_allows_informed_manual_installation(self) -> None:
+    def test_install_prompt_asks_agent_to_inspect_install_and_report_actual_results(self) -> None:
         prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
-        self.assertIn("可继续安装", prompt)
-        self.assertNotIn("请不要猜测命令或直接安装", prompt)
+        for phrase in ("声明的来源", "安装", "尝试使用", "实际结果"):
+            self.assertIn(phrase, prompt)
+        self.assertNotRegex(prompt, r"未验证|验证状态|核验来源")
 
-    def test_external_source_page_distinguishes_requested_from_resolved_version(self) -> None:
+    def test_external_source_page_displays_optional_declared_ref_without_verification_language(self) -> None:
         detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
         card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
-        self.assertIn("source_identity.requested_ref", detail)
-        self.assertIn("指定版本待核验", detail)
-        self.assertIn("版本待核验", card)
+        self.assertIn("entry.source.locator.ref", detail)
+        self.assertIn("声明引用", detail)
+        self.assertNotRegex(detail + card, r"待核验|固定来源|版本未指定")
 
     def test_copied_agent_prompts_use_complete_site_urls(self) -> None:
         install = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
@@ -170,14 +171,34 @@ class StaticSiteContractTests(unittest.TestCase):
     def test_skill_detail_exposes_pagefind_filters_and_copy_fallback(self) -> None:
         detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
         layout = (SITE / "src/layouts/BaseLayout.astro").read_text(encoding="utf-8")
-        for metadata in ("layer", "agent", "source", "verification"):
+        for metadata in ("layer", "agent", "source"):
             with self.subTest(metadata=metadata):
                 self.assertRegex(detail, rf'data-pagefind-filter=["\'][^"\']*{metadata}')
+        self.assertIn('data-pagefind-meta="lifecycle"', detail)
+        card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
+        self.assertIn("data-lifecycle", card)
         prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
         self.assertIn("navigator.clipboard", prompt)
         self.assertRegex(prompt, r"select\(\)|setSelectionRange")
         self.assertRegex(detail, r"<BaseLayout[^>]+searchable")
         self.assertRegex(layout, r"data-pagefind-body=\{searchable")
+
+    def test_recommendations_and_skills_share_the_search_result_contract(self) -> None:
+        skill = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
+        recommendation = (SITE / "src/pages/recommendations/[id].astro").read_text(encoding="utf-8")
+        search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
+        evaluator = (SITE / "scripts/evaluate-search.mjs").read_text(encoding="utf-8")
+        cases = json.loads((SITE / "search-cases.json").read_text(encoding="utf-8"))
+
+        self.assertRegex(skill, r"searchKind=[\"']skill[\"']")
+        self.assertIn('searchKind={withdrawn ? undefined : "recommendation"}', recommendation)
+        self.assertRegex(recommendation, r"<BaseLayout[^>]+searchable")
+        self.assertIn("searchable={!withdrawn}", recommendation)
+        self.assertIn('record.meta.kind', search)
+        self.assertIn('"recommendation"', search)
+        self.assertIn("document.createElement", search)
+        self.assertIn("expected_urls", evaluator)
+        self.assertTrue(any(case.get("expected_urls") for case in cases))
 
     def test_search_only_commits_latest_async_request(self) -> None:
         search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
@@ -191,11 +212,18 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(search, r"new URL\(pagefindPath, window\.location\.origin\)\.href")
         self.assertRegex(search, r"import\(/\* @vite-ignore \*/ pagefindUrl\)")
 
-    def test_verification_stages_have_explicit_lifecycle_order(self) -> None:
-        matrix = (SITE / "src/components/VerificationMatrix.astro").read_text(encoding="utf-8")
-        positions = [matrix.index(f'"{stage}"') for stage in ("metadata", "acquisition", "installation", "behavior")]
-        self.assertEqual(positions, sorted(positions))
-        self.assertNotIn("Object.entries(summary)", matrix)
+    def test_verification_ui_is_removed(self) -> None:
+        self.assertFalse((SITE / "src/components/VerificationMatrix.astro").exists())
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (SITE / "src").rglob("*")
+            if path.suffix in {".astro", ".ts", ".js", ".mjs"}
+        )
+        self.assertNotRegex(sources, r"verificationLabel|verificationState|verification_summary|verification-filter|验证矩阵")
+        public_copy = sources + "\n" + "\n".join(
+            path.read_text(encoding="utf-8") for path in (ROOT / "recommendations").glob("*.md")
+        )
+        self.assertNotRegex(public_copy, r"验证状态|已验证|未验证|核验状态|安装或行为验证|安装与行为验证")
 
     def test_lifecycle_pages_are_retained_but_not_featured_or_installable_when_withdrawn(self) -> None:
         data = (SITE / "src/lib/data.ts").read_text(encoding="utf-8")
@@ -228,12 +256,13 @@ class StaticSiteContractTests(unittest.TestCase):
         data = (SITE / "src/lib/data.ts").read_text(encoding="utf-8")
         detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
         card = (SITE / "src/components/SkillCard.astro").read_text(encoding="utf-8")
-        self.assertIn('identity.startsWith("web:")', data)
+        self.assertIn('source.locator.type === "git"', data)
         self.assertIn("topicAliases", data)
         self.assertRegex(data, r"Object\.entries\(curation\.synonyms")
         self.assertRegex(data, r"group\.some\([^\n]+aliases\.has")
-        self.assertRegex(detail, r"entry\.source\.kind\s*===\s*[\"']hosted[\"'][^\n]+随本目录版本")
-        self.assertIn("版本待核验", detail)
+        self.assertRegex(detail, r"entry\.source\.kind\s*===\s*[\"']hosted[\"']")
+        self.assertIn("随本目录版本", detail)
+        self.assertIn("声明引用", detail)
         self.assertIn("外部来源", card)
 
     def test_query_evaluation_covers_at_least_thirty_cases(self) -> None:
@@ -247,11 +276,11 @@ class StaticSiteContractTests(unittest.TestCase):
             if case["query"]:
                 self.assertLessEqual(len(case["expected_ids"]), 5)
         evaluator = (SITE / "scripts/evaluate-search.mjs").read_text(encoding="utf-8")
-        self.assertIn("non_skill_results", evaluator)
+        self.assertIn("non_search_results", evaluator)
         self.assertIn("unexpected", evaluator)
         search = (SITE / "src/components/SearchFilters.astro").read_text(encoding="utf-8")
-        self.assertIn('id="verification-filter"', search)
-        self.assertRegex(search, r"verification:\s*verification\.value")
+        self.assertNotIn('id="verification-filter"', search)
+        self.assertNotRegex(search, r"verification:\s*verification\.value")
 
     def test_build_output_contract_is_checked_by_script(self) -> None:
         checker = (SITE / "scripts/check-build.mjs").read_text(encoding="utf-8")

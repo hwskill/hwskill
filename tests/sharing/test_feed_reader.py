@@ -286,27 +286,12 @@ class FeedReaderTests(unittest.TestCase):
         from hwskill.publishing.store import FileReleaseStore
         from hwskill.sharing.feed_reader import FeedReader
 
-        payload = mutable_snapshot()
+        from tests.publishing.test_release import make_site, request_for
+
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            artifact = root / "artifact"
-            for url, document in payload["documents"].items():
-                relative = url.split("/data/", 1)[1]
-                target = artifact / "data" / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps(document, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-            for relative in ("index.html", "skills/acme/alpha/index.html", "recommendations/alpha-guide/index.html"):
-                target = artifact / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("<html>fixture</html>", encoding="utf-8")
-            catalog_bytes = (artifact / "data/catalog.json").read_bytes()
-            request = ReleaseRequest(
-                source_commit=payload["documents"]["https://directory.test/releases/release-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/data/catalog.json"]["source_commit"],
-                catalog_digest="sha256:" + hashlib.sha256(catalog_bytes).hexdigest(),
-                snapshot_digest="sha256:integration",
-                build_config_identity="sharing-integration-v1",
-                artifact_dir=artifact,
-            )
+            artifact = make_site(root, marker="reader-integration")
+            request = request_for(artifact, source_commit="1" * 40)
             store = FileReleaseStore(root / "published")
             Publisher(store, feed_id="hwskill-main", public_base_url="https://directory.test").publish(request)
             documents = {
@@ -319,42 +304,21 @@ class FeedReaderTests(unittest.TestCase):
         self.assertEqual(snapshot.head_sequence, 1)
         self.assertEqual(len(snapshot.records[0]["events"]), 2)
 
-    def test_task5_active_temporarily_unavailable_skill_is_read_but_not_promoted(self) -> None:
+    def test_v2_active_skill_update_is_filtered_without_capability_state(self) -> None:
         from hwskill.publishing.models import ReleaseRequest
         from hwskill.publishing.service import Publisher
         from hwskill.publishing.store import FileReleaseStore
         from hwskill.sharing.feed_reader import FeedReader
         from hwskill.sharing.filtering import build_items
 
+        from tests.publishing.test_release import make_site, request_for
+
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            def artifact(name: str, source_commit: str, capability: str) -> tuple[Path, ReleaseRequest]:
-                payload = mutable_snapshot()
-                output = root / name
-                for url, original in payload["documents"].items():
-                    document = deepcopy(original)
-                    if url.endswith("/data/catalog.json"):
-                        document["source_commit"] = source_commit
-                        document["entries"][0]["install_capability"] = capability
-                    relative = url.split("/data/", 1)[1]
-                    target = output / "data" / relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(json.dumps(document, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-                for relative in ("index.html", "skills/acme/alpha/index.html", "recommendations/alpha-guide/index.html"):
-                    target = output / relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text("<html>fixture</html>", encoding="utf-8")
-                catalog_bytes = (output / "data/catalog.json").read_bytes()
-                return output, ReleaseRequest(
-                    source_commit=source_commit,
-                    catalog_digest="sha256:" + hashlib.sha256(catalog_bytes).hexdigest(),
-                    snapshot_digest=f"sha256:{name}",
-                    build_config_identity="sharing-temporarily-unavailable-v1",
-                    artifact_dir=output,
-                )
-
-            _, available = artifact("available", "1" * 40, "installable")
-            _, unavailable = artifact("unavailable", "2" * 40, "temporarily_unavailable")
+            first = make_site(root, source_kind="external", source_requested_ref="v1", marker="reader-v2-first")
+            second = make_site(root, source_kind="external", source_requested_ref="v2", marker="reader-v2-second")
+            available = request_for(first, source_commit="1" * 40)
+            unavailable = request_for(second, source_commit="2" * 40)
             store = FileReleaseStore(root / "published")
             publisher = Publisher(store, feed_id="hwskill-main", public_base_url="https://directory.test")
             publisher.publish(available)
@@ -371,7 +335,7 @@ class FeedReaderTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].change_type, "skill.updated")
         self.assertEqual(items[0].lifecycle, "active")
-        self.assertEqual(items[0].install_capability, "temporarily_unavailable")
+        self.assertNotIn("install_capability", items[0].to_dict())
 
     def test_reads_a_task2_web_source_published_by_task5(self) -> None:
         from hwskill.directory.catalog import build_repository
@@ -389,7 +353,7 @@ class FeedReaderTests(unittest.TestCase):
             external.write_text(
                 external.read_text(encoding="utf-8").replace(
                     "type: git\n    repository: https://example.com/org/repository.git\n"
-                    "    path: skills/review\n    requested_ref: v1.2.3",
+                    "    path: skills/review\n    file_url: https://example.com/source/SKILL.md\n    ref: v1.2.3",
                     "type: web\n    url: HTTPS://EXAMPLE.COM/tools/review/\n"
                     "    version_note: maintained release page",
                 ),
@@ -412,12 +376,15 @@ class FeedReaderTests(unittest.TestCase):
                 install["source"],
                 {
                     "kind": "external",
-                    "url": "HTTPS://EXAMPLE.COM/tools/review/",
-                    "requested_ref": "maintained release page",
-                    "resolved_revision": None,
+                    "publicity": "public",
+                    "locator": {
+                        "type": "web",
+                        "url": "HTTPS://EXAMPLE.COM/tools/review/",
+                        "version_note": "maintained release page",
+                    },
                 },
             )
-            self.assertEqual(web_item["source_identity"]["identity"], "web:https://example.com/tools/review")
+            self.assertNotIn("source_identity", web_item)
 
             (artifact / "index.html").write_text("<html>fixture</html>", encoding="utf-8")
             for item in catalog["entries"]:
@@ -451,14 +418,11 @@ class FeedReaderTests(unittest.TestCase):
         self.assertTrue(
             any(event["subject_id"] == "upstream/external" for event in snapshot.records[0]["events"])
         )
-        version = next(
-            version
-            for item in build_items(snapshot, from_sequence=0)
-            for version in item.source_versions
-            if version.skill_id == "upstream/external"
+        external_update = next(
+            item for item in build_items(snapshot, from_sequence=0)
+            if "upstream/external" in item.skill_refs
         )
-        self.assertEqual(version.requested_ref, "maintained release page")
-        self.assertIsNone(version.resolved_revision)
+        self.assertNotIn("source_versions", external_update.to_dict())
 
     def test_reads_a_task5_recommendation_withdrawal_from_its_own_release(self) -> None:
         from hwskill.publishing.models import ReleaseRequest
@@ -467,41 +431,13 @@ class FeedReaderTests(unittest.TestCase):
         from hwskill.sharing.feed_reader import FeedReader
 
         with TemporaryDirectory() as temporary:
+            from tests.publishing.test_release import make_site, request_for
+
             root = Path(temporary)
-
-            def artifact(name: str, source_commit: str, status: str) -> tuple[Path, ReleaseRequest]:
-                payload = mutable_snapshot()
-                output = root / name
-                for url, original in payload["documents"].items():
-                    document = deepcopy(original)
-                    if url.endswith("/data/catalog.json"):
-                        document["source_commit"] = source_commit
-                    if url.endswith("/data/recommendations.json") and status == "withdrawn":
-                        document["recommendations"][0]["status"] = "withdrawn"
-                        document["recommendations"][0]["withdrawal_reason"] = "No longer recommended."
-                    relative = url.split("/data/", 1)[1]
-                    target = output / "data" / relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(json.dumps(document, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-                for relative in (
-                    "index.html",
-                    "skills/acme/alpha/index.html",
-                    "recommendations/alpha-guide/index.html",
-                ):
-                    target = output / relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text("<html>fixture</html>", encoding="utf-8")
-                catalog_bytes = (output / "data/catalog.json").read_bytes()
-                return output, ReleaseRequest(
-                    source_commit=source_commit,
-                    catalog_digest="sha256:" + hashlib.sha256(catalog_bytes).hexdigest(),
-                    snapshot_digest=f"sha256:{name}",
-                    build_config_identity="sharing-withdrawal-integration-v1",
-                    artifact_dir=output,
-                )
-
-            _, ready = artifact("ready", "a" * 40, "ready")
-            _, withdrawn = artifact("withdrawn", "b" * 40, "withdrawn")
+            ready_site = make_site(root, marker="reader-ready")
+            withdrawn_site = make_site(root, recommendation_status="withdrawn", marker="reader-withdrawn")
+            ready = request_for(ready_site, source_commit="a" * 40)
+            withdrawn = request_for(withdrawn_site, source_commit="b" * 40)
             store = FileReleaseStore(root / "published")
             publisher = Publisher(store, feed_id="hwskill-main", public_base_url="https://directory.test")
             publisher.publish(ready)

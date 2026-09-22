@@ -28,23 +28,11 @@ def _recommendations(release: Mapping[str, bytes] | None) -> dict[str, dict[str,
 
 def _skill_semantic(item: dict[str, Any]) -> dict[str, Any]:
     entry = item["entry"]
-    source_identity = item.get("source_identity", {})
-    source_revision = (
-        source_identity.get("resolved_revision")
-        if source_identity.get("kind") == "external"
-        else None
-    )
-    semantic = {
+    return {
         "source": entry.get("source"),
-        "source_revision": source_revision,
         "install": entry.get("install"),
         "lifecycle": entry.get("lifecycle", item.get("lifecycle", "active")),
-        "install_capability": item.get("install_capability"),
     }
-    if source_identity.get("kind") == "external":
-        semantic["source_locator"] = source_identity.get("identity")
-        semantic["requested_ref"] = source_identity.get("requested_ref")
-    return semantic
 
 
 def _event_id(feed_id: str, event_type: str, subject_id: str, revision: str, previous_event_id: str | None) -> str:
@@ -110,7 +98,7 @@ def derive_events(
         )
         events.append(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "feed_id": feed_id,
                 "event_id": event_id,
                 "sequence": sequence,

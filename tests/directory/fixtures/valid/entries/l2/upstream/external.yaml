@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 id: upstream/external
 name: External skill
 summary: A referenced upstream skill.
@@ -14,7 +14,8 @@ source:
     type: git
     repository: https://example.com/org/repository.git
     path: skills/review
-    requested_ref: v1.2.3
+    file_url: https://example.com/source/SKILL.md
+    ref: v1.2.3
 install:
   method: upstream
   default_scope: project
