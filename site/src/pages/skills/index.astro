@@ -5,7 +5,7 @@ import SkillCard from "../../components/SkillCard.astro";
 import { curation, entries } from "../../lib/data";
 ---
 <BaseLayout title="查找技能" description="按用途、层级、Agent 与来源查找带中文译文的技能。">
-  <header class="page-heading"><p class="eyebrow">技能目录</p><h1>你今天要完成什么？</h1><p>搜索用途、工具名或任务描述；筛选不依赖关键词。</p></header>
+  <header class="page-heading"><p class="eyebrow">技能目录</p><h1>技能目录</h1><p>按用途、工具、Agent 和来源检索技能。</p></header>
   <SearchFilters synonyms={curation.synonyms ?? {}} />
   <section id="all-skills" class="section-block">
     <div class="section-heading"><h2>全部技能</h2><span>{entries.length} 项</span></div>

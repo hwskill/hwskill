@@ -1,17 +1,15 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import CopyPrompt from "../../components/CopyPrompt.astro";
 import { recommendationSummary, recommendations } from "../../lib/data";
-import { buildContributionUrls, buildRecommendationPrompt } from "../../lib/contribution-prompts";
+import { buildContributionUrls } from "../../lib/contribution-prompts";
 import { sitePath } from "../../lib/urls";
 
 const urls = buildContributionUrls(Astro.site!);
-const prompt = buildRecommendationPrompt(urls);
 ---
 <BaseLayout title="技能推荐" description="从完整工作流和具体场景理解技能组合，并用 Agent 提示词贡献新的 Markdown 推荐文章。">
   <header class="page-heading recommendation-heading">
     <p class="eyebrow">技能推荐</p>
-    <h1>从场景理解技能，再选择组合</h1>
+    <h1>技能推荐</h1>
     <p>当前收录 {recommendations.length} 篇可发布推荐。文章由 Markdown 维护，明确适用场景、成本、组合边界和作者判断。</p>
   </header>
   <section class="section-block">
@@ -28,9 +26,9 @@ const prompt = buildRecommendationPrompt(urls);
   <section class="recommendation-contribution">
     <div>
       <p class="eyebrow">贡献推荐</p>
-      <h2>复制提示词，让 Agent 创建可审阅的 PR</h2>
-      <p>补充主题、技能与公开依据后交给 Agent。推荐正文使用 Markdown，并清楚区分来源事实与作者判断；安装和使用检查记录随 Pull Request 提交。</p>
-      <p><strong>未收录技能必须在同一个 Pull Request 中补齐</strong>，推荐与关联条目会一起校验。</p>
+      <h2>推荐技能</h2>
+      <p>分享技能的适用场景、推荐理由与使用经验，Agent 可协助整理推荐文案。</p>
+      <p><strong>未收录技能必须在同一个 Pull Request 中补齐</strong>，Agent 会同时准备技能元数据、中文翻译、许可证核验和验证报告。</p>
       <div class="resource-links">
         <a href={urls.agentGuide}>完整 Agent 指引</a>
         <a href={urls.recommendationSchema}>Recommendation Source Schema</a>
@@ -39,6 +37,6 @@ const prompt = buildRecommendationPrompt(urls);
         <a href={urls.repository}>GitHub 仓库</a>
       </div>
     </div>
-    <div class="prompt-box"><CopyPrompt id="recommendation-hub-prompt" label="复制推荐贡献提示词" value={prompt} rows={20} /></div>
+    <a class="primary-action" href={`${sitePath("/contribute/")}#recommendation`}>我要推荐 →</a>
   </section>
 </BaseLayout>

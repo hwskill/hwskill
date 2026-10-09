@@ -17,6 +17,7 @@ const { title, description = "跨项目技能目录：按用途发现、了解�
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content={description} />
+    <meta name="hwskill:catalog" content={new URL(sitePath("/data/catalog.json"), Astro.site).href} />
     <title>{title} · HWSkill</title>
   </head>
   <body>
@@ -24,10 +25,9 @@ const { title, description = "跨项目技能目录：按用途发现、了解�
     <header class="site-header" data-pagefind-ignore>
       <a class="brand" href={sitePath("/")} aria-label="HWSkill 首页"><span>HW</span>Skill</a>
       <nav aria-label="主导航">
-        <a href={sitePath("/skills/")}>找技能</a>
+        <a href={sitePath("/skills/")}>技能目录</a>
         <a href={sitePath("/recommendations/")}>技能推荐</a>
-        <a href={sitePath("/contribute/")}>贡献</a>
-        <a href={sitePath("/data/catalog.json")}>机器目录</a>
+        <a href={sitePath("/contribute/")}>我要推荐</a>
       </nav>
     </header>
     <main id="main" data-pagefind-body={searchable ? "" : undefined}>

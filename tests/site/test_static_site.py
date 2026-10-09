@@ -17,11 +17,12 @@ SITE = ROOT / "site"
 class StaticSiteContractTests(unittest.TestCase):
     def test_contribution_page_offers_skill_and_recommendation_prompts_that_end_in_a_pr(self) -> None:
         contribute = (SITE / "src/pages/contribute/index.astro").read_text(encoding="utf-8")
-        prompts = (SITE / "src/lib/contribution-prompts.ts").read_text(encoding="utf-8")
-        copy_component = (SITE / "src/components/CopyPrompt.astro").read_text(encoding="utf-8")
-        contribution_sources = contribute + prompts
-        for prompt_id in ("skill-contribution-prompt", "recommendation-contribution-prompt"):
-            self.assertIn(prompt_id, contribute)
+        prompts = (SITE / "src/lib/contribution-form.mjs").read_text(encoding="utf-8")
+        prompt_urls = (SITE / "src/lib/contribution-prompts.ts").read_text(encoding="utf-8")
+        form_component = (SITE / "src/components/ContributionForm.astro").read_text(encoding="utf-8")
+        contribution_sources = contribute + prompts + prompt_urls + form_component
+        self.assertEqual(contribute.count("<ContributionForm"), 1)
+        self.assertIn("prepareUnifiedContribution", form_component)
         for resource in (
             "schemas/entry.schema.json",
             "schemas/recommendation-source.schema.json",
@@ -35,7 +36,12 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertGreaterEqual(prompts.count("本提示词授权你"), 2)
         self.assertIn("不授权合并", prompts)
         self.assertRegex(prompts, r"最终[^`\n]*(?:Pull Request|PR)[^`\n]*URL")
-        self.assertIn("querySelectorAll", copy_component)
+        for capability in ("联网能力", "本地工作区读写能力", "subagent 或命令执行能力"):
+            self.assertIn(capability, prompts)
+        for behavior in ("prepareUnifiedContribution", "navigator.clipboard", "aria-live", "data-error-for"):
+            self.assertIn(behavior, form_component)
+        self.assertIn("<form", form_component)
+        self.assertNotIn("CopyPrompt", contribute)
 
     def test_repository_has_a_pull_request_template_for_agent_contributions(self) -> None:
         template = ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
@@ -43,6 +49,12 @@ class StaticSiteContractTests(unittest.TestCase):
         text = template.read_text(encoding="utf-8")
         for section in ("变更内容", "来源与版本", "技能验证报告", "确定性检查", "变更范围"):
             self.assertIn(section, text)
+
+    def test_external_template_does_not_turn_optional_ref_into_a_fake_required_commit(self) -> None:
+        import yaml
+
+        template = yaml.safe_load((ROOT / "templates/entries/external.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("ref", template["source"]["locator"])
 
     def test_install_prompt_asks_agent_to_inspect_install_and_report_actual_results(self) -> None:
         prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
@@ -214,10 +226,15 @@ class StaticSiteContractTests(unittest.TestCase):
 
     def test_verification_ui_is_removed(self) -> None:
         self.assertFalse((SITE / "src/components/VerificationMatrix.astro").exists())
+        contribution_workflow = {
+            SITE / "src/components/ContributionForm.astro",
+            SITE / "src/lib/contribution-form.mjs",
+        }
         sources = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (SITE / "src").rglob("*")
             if path.suffix in {".astro", ".ts", ".js", ".mjs"}
+            and path not in contribution_workflow
         )
         self.assertNotRegex(sources, r"verificationLabel|verificationState|verification_summary|verification-filter|验证矩阵")
         public_copy = sources + "\n" + "\n".join(
@@ -297,6 +314,14 @@ class StaticSiteContractTests(unittest.TestCase):
         ):
             self.assertIn(resource, checker)
         self.assertTrue(re.search(r"pagefind", checker, re.IGNORECASE))
+        for contribution_contract in (
+            "data-contribution-form",
+            'name=\"source\"',
+            'name=\"requirements\"',
+            "复制给 Agent",
+            "未收录技能必须在同一个 Pull Request 中补齐",
+        ):
+            self.assertIn(contribution_contract, checker)
 
 
 if __name__ == "__main__":

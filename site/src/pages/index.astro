@@ -11,10 +11,10 @@ const featuredRecommendations = recommendations.slice(0, 2);
   <section class="hero">
     <div>
       <p class="eyebrow">来源可追溯 · 中文译文 · 项目级默认</p>
-      <h1>先了解技能，再把它交给 Agent</h1>
+      <h1>Agent 技能目录</h1>
       <p class="hero-copy">按工作目的找到可复用技能。每个条目都说明来源、声明引用（若有）、适用范围、兼容信息和中文译文。</p>
     </div>
-    <a class="primary-action" href={sitePath("/skills/")}>开始找技能 <span aria-hidden="true">→</span></a>
+    <a class="primary-action" href={sitePath("/skills/")}>浏览技能 <span aria-hidden="true">→</span></a>
   </section>
   <section class="metric-strip" aria-label="目录摘要">
     <div><strong>{entries.length}</strong><span>个公开技能</span></div>
@@ -22,7 +22,7 @@ const featuredRecommendations = recommendations.slice(0, 2);
     <div><strong>{recommendations.length}</strong><span>篇维护者推荐</span></div>
   </section>
   <section class="section-block">
-    <div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>从真实任务开始</h2></div><a href={sitePath("/skills/")}>查看全部</a></div>
+    <div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>技能精选</h2></div><a href={sitePath("/skills/")}>查看全部</a></div>
     <div class="card-grid">{featured.map((item) => <SkillCard item={item} />)}</div>
   </section>
   <section class="section-block split-section">
@@ -32,7 +32,7 @@ const featuredRecommendations = recommendations.slice(0, 2);
       <div class="topic-links">{curation.topics?.map((topic) => <a href={sitePath(`/topics/${topic.slug}/`)}>{topic.title}<span>↗</span></a>)}</div>
     </div>
     <div>
-      <div class="section-heading"><div><p class="eyebrow">推荐</p><h2>为什么值得尝试</h2></div><a href={sitePath("/recommendations/")}>查看全部推荐</a></div>
+      <div class="section-heading"><div><p class="eyebrow">推荐</p><h2>技能推荐</h2></div><a href={sitePath("/recommendations/")}>查看全部推荐</a></div>
       <div class="recommendation-list">{featuredRecommendations.map((item) => <article><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a><p>{recommendationSummary(item)}</p><span>由 {item.author} 推荐</span></article>)}</div>
     </div>
   </section>

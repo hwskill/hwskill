@@ -15,7 +15,7 @@ source:
     repository: https://github.com/owner/repository.git
     path: skills/skill-name
     file_url: https://example.com/source/SKILL.md
-    ref: immutable-full-commit-sha
+    # ref: 可选的 branch、tag 或 commit；省略时跟随上游默认分支
 install:
   method: unknown
   default_scope: project

@@ -93,13 +93,34 @@ select { background: var(--panel); color: var(--ink); border: 1px solid var(--li
 .translation-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1.5rem; color: var(--muted); font-size: .85rem; }
 .translation-meta a { color: var(--accent-2); }
 .translation-body { margin-top: 1rem; }
-.recommendation-detail { max-width: 900px; margin: auto; }.prose { font-size: 1.25rem; border-left: 3px solid var(--accent); padding: 1.5rem 2rem; background: var(--panel); margin: 2rem 0 4rem; }
+.recommendation-detail { width: 100%; }.prose { font-size: 1.25rem; border-left: 3px solid var(--accent); padding: 1.5rem 2rem; background: var(--panel); margin: 2rem 0 4rem; }
+
+.recommendation-fields { border: 1px solid var(--line); padding: 1.25rem; }
+.recommendation-fields summary { cursor: pointer; color: var(--accent); font-weight: 700; }
+.recommendation-fields[open] summary { margin-bottom: 1rem; }
+.recommendation-fields .form-field { margin-top: 1rem; }
 .contribute-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-top: 3rem; }.contribute-grid article { background: var(--panel); padding: 1.5rem; }.contribute-grid article > span { color: var(--accent); font: 700 1.5rem ui-monospace, monospace; }.contribute-grid h2 { font-size: 1.2rem; margin-top: 2rem; }.contribute-grid p, .empty-state { color: var(--muted); }
+.contribution-form { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.form-field { min-width: 0; }
+.form-field-wide, .contribution-notice, .contribution-actions { grid-column: 1 / -1; }
+.form-field label { display: flex; justify-content: space-between; gap: 1rem; color: var(--accent-2); font-size: .84rem; font-weight: 700; margin-bottom: .35rem; }
+.form-field label span, .field-hint { color: var(--muted); font-weight: 400; }
+.form-field input, .form-field select, .form-field textarea { width: 100%; background: #090c0a; color: var(--ink); border: 1px solid var(--line); padding: .8rem .9rem; }
+.form-field textarea { resize: vertical; }
+.form-field [aria-invalid="true"] { border-color: var(--danger); outline: 1px solid var(--danger); }
+.field-hint, .field-error { min-height: 1.3rem; margin: .25rem 0 0; font-size: .78rem; }
+.field-error { color: var(--danger); }
+.contribution-notice { border-left: 3px solid var(--accent-2); background: var(--panel); padding: 1rem 1.2rem; }
+.contribution-notice p { color: var(--muted); margin: .35rem 0 0; }
+.prompt-preview { margin-top: .5rem; }
+.contribution-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1rem; }
+.contribution-actions button { background: var(--accent); border: 0; color: #11160f; font-weight: 700; padding: .75rem 1rem; cursor: pointer; }
+.contribution-actions p { color: var(--muted); margin: 0; font-size: .85rem; }
 
 @media (max-width: 760px) {
   .site-header { align-items: flex-start; padding-top: 1.2rem; padding-bottom: 1rem; }.site-header nav { gap: .7rem; flex-wrap: wrap; justify-content: end; }
   .hero { min-height: auto; padding-top: 4rem; grid-template-columns: 1fr; }.hero h1 { font-size: 3.2rem; }.primary-action { width: 100%; }
-  .metric-strip, .card-grid, .split-section, .detail-grid, .contribute-grid { grid-template-columns: 1fr; }
+  .metric-strip, .card-grid, .split-section, .detail-grid, .contribute-grid, .contribution-form { grid-template-columns: 1fr; }
   .metric-strip div { border-right: 0; border-bottom: 1px solid var(--line); }.split-section { gap: 3rem; }.detail-grid { gap: 1rem; }
   .filters { align-items: stretch; flex-direction: column; }.filters label { justify-content: space-between; }
   .install-panel { grid-template-columns: 1fr; }.install-actions { grid-column: 1; flex-wrap: wrap; }
@@ -134,7 +155,7 @@ select { background: var(--panel); color: var(--ink); border: 1px solid var(--li
 .skill-link-groups code { color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
 
 @media (max-width: 760px) {
-  .prose { padding: 1.1rem; margin-inline: -.4rem; }
+  .prose { padding: 1.1rem; }
   .skill-link-groups { grid-template-columns: 1fr; }
 }
 

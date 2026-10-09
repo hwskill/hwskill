@@ -1,0 +1,164 @@
+---
+import { DEFAULT_RECOMMENDATION_REQUIREMENTS } from "../lib/contribution-form.mjs";
+
+interface Props {
+  id: string;
+  kind: "skill" | "recommendation";
+  urls: Record<string, string>;
+}
+
+const { id, kind, urls } = Astro.props;
+---
+<form id={id} class="contribution-form" data-contribution-form data-kind={kind} data-urls={JSON.stringify(urls)} novalidate>
+      <h2 class="form-field-wide">技能信息</h2>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-source-kind`}>技能来源类型</label>
+        <select id={`${id}-source-kind`} name="sourceKind" data-source-kind>
+          <option value="external">引用公开的外部技能</option>
+          <option value="hosted">把我拥有的技能托管到 HWSkill</option>
+        </select>
+        <p class="field-hint">外部技能保留在原仓库；托管技能会把你有权再分发的完整目录提交到 HWSkill。</p>
+      </div>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-source`}>技能来源</label>
+        <textarea id={`${id}-source`} name="source" data-field="source" aria-describedby={`${id}-source-error`} rows="2" placeholder="技能地址、目录 ID 或本地路径；多个技能每行一个"></textarea>
+        <p id={`${id}-source-error`} class="field-error" data-error-for="source" aria-live="polite"></p>
+      </div>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-purpose`}>实际用途 <span>可选，Agent 可从来源补齐</span></label>
+        <textarea id={`${id}-purpose`} name="purpose" data-field="purpose" aria-describedby={`${id}-purpose-error`} rows="3" placeholder="例如：审阅数据库迁移并保留可复核证据"></textarea>
+        <p id={`${id}-purpose-error`} class="field-error" data-error-for="purpose" aria-live="polite"></p>
+      </div>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-notes`}>补充要求 <span>可选</span></label>
+        <textarea id={`${id}-notes`} name="notes" rows="2" placeholder="例如：需要兼容 Codex，或仅验证 Linux 环境"></textarea>
+      </div>
+      <details id="recommendation" class="form-field-wide recommendation-fields">
+        <summary>补充推荐内容 <span>可选</span></summary>
+        <p class="field-hint">仅填写来源即可收录技能。补充推荐理由或主题后，Agent 将同时准备推荐文案；写作要求已有默认值。</p>
+      <div class="form-field">
+        <label for={`${id}-topic`}>推荐主题</label>
+        <input id={`${id}-topic`} name="topic" data-field="topic" aria-describedby={`${id}-topic-error`} placeholder="例如：可靠的代码评审工作流" />
+        <p id={`${id}-topic-error`} class="field-error" data-error-for="topic" aria-live="polite"></p>
+      </div>
+      <div class="form-field">
+        <label for={`${id}-author`}>公开作者名称</label>
+        <input id={`${id}-author`} name="author" data-field="author" aria-describedby={`${id}-author-error`} placeholder="个人名称或团队名称" />
+        <p id={`${id}-author-error`} class="field-error" data-error-for="author" aria-live="polite"></p>
+      </div>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-reason`}>推荐理由</label>
+        <textarea id={`${id}-reason`} name="reason" data-field="reason" aria-describedby={`${id}-reason-error`} rows="3" placeholder="说明适用场景、价值和组合方式"></textarea>
+        <p id={`${id}-reason-error`} class="field-error" data-error-for="reason" aria-live="polite"></p>
+      </div>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-evidence`}>公开证据 <span>可选</span></label>
+        <textarea id={`${id}-evidence`} name="evidence" rows="2" placeholder="公开链接及其说明；没有证据时可以留空"></textarea>
+      </div>
+      <div class="form-field form-field-wide">
+        <label for={`${id}-requirements`}>文章写作要求</label>
+        <textarea id={`${id}-requirements`} name="requirements" data-field="requirements" aria-describedby={`${id}-requirements-error`} rows="4">{DEFAULT_RECOMMENDATION_REQUIREMENTS}</textarea>
+        <p id={`${id}-requirements-error`} class="field-error" data-error-for="requirements" aria-live="polite"></p>
+      </div>
+      <aside class="contribution-notice">
+        <strong>推荐的技能尚未收录时</strong>
+        <p>未收录技能必须在同一个 Pull Request 中补齐。Agent 会准备技能元数据、中文翻译、许可证核验和验证报告，并可能请你补充技能来源或用途。</p>
+      </aside>
+      </details>
+  <aside class="contribution-notice">
+    <strong>Agent 辅助提交</strong>
+    <p>Agent 会检查联网、工作区读写与干净环境验证能力，并通过 gh 检查 GitHub 登录和提交权限；缺少 gh 时引导安装和配置。然后完成元数据、许可证、翻译、验证报告及 PR。个人使用体验和署名需要你确认。</p>
+  </aside>
+  <p class="form-field-wide" data-contribution-summary role="status">填写技能来源即可生成收录提示词。</p>
+
+  <div class="form-field form-field-wide prompt-preview">
+    <label for={`${id}-prompt`}>将发送给 Agent 的提示词</label>
+    <textarea id={`${id}-prompt`} data-prompt-output readonly rows="12" placeholder="填写技能来源后，这里实时显示完整提示词。"></textarea>
+  </div>
+  <div class="contribution-actions">
+    <button type="submit">复制给 Agent</button>
+    <p data-form-status role="status" aria-live="polite">客观信息可由 Agent 补齐。</p>
+  </div>
+</form>
+
+<script>
+  import { prepareUnifiedContribution } from "../lib/contribution-form.mjs";
+
+  document.querySelectorAll<HTMLFormElement>("[data-contribution-form]").forEach((form) => {
+    if (form.dataset.formReady === "true") return;
+    form.dataset.formReady = "true";
+
+    const sourceKind = form.querySelector<HTMLSelectElement>("[data-source-kind]");
+    const source = form.querySelector<HTMLTextAreaElement>('[name="source"]');
+    const clearFieldError = (name: string) => {
+      form.querySelector<HTMLElement>(`[data-field="${name}"]`)?.removeAttribute("aria-invalid");
+      const error = form.querySelector<HTMLElement>(`[data-error-for="${name}"]`);
+      if (error) error.textContent = "";
+    };
+    const refreshSourcePlaceholder = () => {
+      if (!sourceKind || !source) return;
+      source.placeholder = sourceKind.value === "hosted"
+        ? "/Agent/可以/访问的/技能目录"
+        : "技能地址或目录 ID；多个技能每行一个";
+      clearFieldError("source");
+    };
+    sourceKind?.addEventListener("change", refreshSourcePlaceholder);
+    refreshSourcePlaceholder();
+    const recommendationFields = form.querySelector<HTMLDetailsElement>(".recommendation-fields");
+    const openRecommendation = () => { if (recommendationFields && location.hash === "#recommendation") recommendationFields.open = true; };
+    window.addEventListener("hashchange", openRecommendation);
+    openRecommendation();
+    const refresh = () => {
+      const result = prepareUnifiedContribution(JSON.parse(form.dataset.urls ?? "{}"), Object.fromEntries(new FormData(form).entries()));
+      const summary = form.querySelector<HTMLElement>("[data-contribution-summary]");
+      const output = form.querySelector<HTMLTextAreaElement>("[data-prompt-output]");
+      if (summary) summary.textContent = !result.ok ? "待补充：技能来源。其他信息可由 Agent 协助补齐。" : result.kind === "recommendation" ? "当前流程：推荐技能。未填写的主题、署名或推荐理由由 Agent 与你确认。" : "当前流程：收录技能。可展开下方推荐内容，补充使用场景与推荐理由。";
+      if (output) output.value = result.ok ? result.prompt : "";
+    };
+    form.addEventListener("change", refresh);
+    refresh();
+    form.addEventListener("input", (event) => {
+      const field = event.target as HTMLInputElement | HTMLTextAreaElement;
+      if (field.dataset.field) clearFieldError(field.dataset.field);
+      refresh();
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = form.querySelector<HTMLElement>("[data-form-status]");
+      const output = form.querySelector<HTMLTextAreaElement>("[data-prompt-output]");
+      const urls = JSON.parse(form.dataset.urls ?? "{}") as Record<string, string>;
+      const values = Object.fromEntries(new FormData(form).entries());
+      const result = prepareUnifiedContribution(urls, values);
+
+      form.querySelectorAll<HTMLElement>("[data-error-for]").forEach((element) => { element.textContent = ""; });
+      form.querySelectorAll<HTMLElement>("[data-field]").forEach((element) => { element.removeAttribute("aria-invalid"); });
+
+      if (!result.ok) {
+        let firstInvalid: HTMLElement | null = null;
+        Object.entries(result.errors).forEach(([name, message]) => {
+          const field = form.querySelector<HTMLElement>(`[data-field="${name}"]`);
+          const error = form.querySelector<HTMLElement>(`[data-error-for="${name}"]`);
+          field?.setAttribute("aria-invalid", "true");
+          if (error) error.textContent = message;
+          firstInvalid ??= field;
+        });
+        if (status) status.textContent = "请先补齐标出的信息，提示词尚未复制。";
+        firstInvalid?.focus();
+        return;
+      }
+
+      if (!output) return;
+      output.value = result.prompt;
+      try {
+        await navigator.clipboard.writeText(result.prompt);
+        if (status) status.textContent = "完整提示词已复制，可以直接粘贴给 Agent。";
+      } catch {
+        output.focus();
+        output.select();
+        output.setSelectionRange(0, output.value.length);
+        if (status) status.textContent = "浏览器未允许自动复制，请手动复制已选中的提示词。";
+      }
+    });
+  });
+</script>

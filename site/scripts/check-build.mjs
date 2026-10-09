@@ -32,6 +32,19 @@ if (missing.length) {
   process.exit(1);
 }
 const recommendationIndex = readFileSync(resolve(dist, "recommendations/index.html"), "utf8");
+const contributionIndex = readFileSync(resolve(dist, "contribute/index.html"), "utf8");
+for (const expected of [
+  "data-contribution-form",
+  'name="source"',
+  'name="requirements"',
+  "复制给 Agent",
+  "未收录技能必须在同一个 Pull Request 中补齐",
+]) {
+  if (!contributionIndex.includes(expected)) {
+    console.error(`贡献页缺少表单契约: ${expected}`);
+    process.exit(1);
+  }
+}
 for (const expected of [
   "Superpowers：把 Agent 研发变成可审查流程",
   "Matt Pocock：可组合的工程与沟通工具箱",
