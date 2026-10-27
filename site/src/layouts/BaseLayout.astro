@@ -1,6 +1,8 @@
 ---
 import "../styles/global.css";
 import { sitePath } from "../lib/urls";
+import ThemeToggle from "../components/ThemeToggle.astro";
+import themeInit from "../lib/theme-init.js?raw";
 
 interface Props {
   title: string;
@@ -9,6 +11,11 @@ interface Props {
   searchKind?: "skill" | "recommendation";
 }
 
+const navigation = [
+  { path: "/skills/", label: "技能目录" },
+  { path: "/recommendations/", label: "技能推荐" },
+  { path: "/contribute/", label: "我要推荐" },
+];
 const { title, description = "跨项目技能目录：按用途发现、了解并交给 Agent 安装。", searchable = false, searchKind } = Astro.props;
 ---
 <!doctype html>
@@ -16,6 +23,7 @@ const { title, description = "跨项目技能目录：按用途发现、了解�
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
+    <script is:inline set:html={themeInit} />
     <meta name="description" content={description} />
     <meta name="hwskill:catalog" content={new URL(sitePath("/data/catalog.json"), Astro.site).href} />
     <title>{title} · HWSkill</title>
@@ -24,11 +32,9 @@ const { title, description = "跨项目技能目录：按用途发现、了解�
     <a class="skip-link" href="#main">跳到主要内容</a>
     <header class="site-header" data-pagefind-ignore>
       <a class="brand" href={sitePath("/")} aria-label="HWSkill 首页"><span>HW</span>Skill</a>
-      <nav aria-label="主导航">
-        <a href={sitePath("/skills/")}>技能目录</a>
-        <a href={sitePath("/recommendations/")}>技能推荐</a>
-        <a href={sitePath("/contribute/")}>我要推荐</a>
-      </nav>
+      <div class="header-actions"><nav aria-label="主导航">
+        {navigation.map(({ path, label }) => <a href={sitePath(path)} aria-current={Astro.url.pathname.startsWith(sitePath(path)) ? "page" : undefined}>{label}</a>)}
+      </nav><ThemeToggle /></div>
     </header>
     <main id="main" data-pagefind-body={searchable ? "" : undefined}>
       {searchKind && <span hidden data-pagefind-meta="kind">{searchKind}</span>}

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { publicationDates, newestFirst } from "./publication.mjs";
+import publicationSnapshot from "../data/publication-dates.json";
 
 export type SkillSource =
   | { kind: "hosted"; path: string }
@@ -12,6 +14,7 @@ export type SkillSource =
     };
 
 export type CatalogItem = {
+  publishedAt?: string | null;
   entry: {
     schema_version: 2;
     id: string;
@@ -42,6 +45,7 @@ export type CatalogItem = {
 };
 
 export type Recommendation = {
+  publishedAt?: string | null;
   id: string;
   skills: Array<{ id: string; experience_version?: string }>;
   title: string;
@@ -59,10 +63,12 @@ const directory = resolve(process.env.HWSKILL_DIRECTORY ?? resolve(process.cwd()
 const read = <T>(name: string): T => JSON.parse(readFileSync(resolve(directory, name), "utf8")) as T;
 
 export const catalog = read<{ schema_version: 2; source_commit: string | null; entries: CatalogItem[] }>("catalog.json");
-export const recommendationData = read<{ schema_version: 1; recommendations: Recommendation[] }>("recommendations.json");
+const rawRecommendationData = read<{ schema_version: 1; recommendations: Recommendation[] }>("recommendations.json");
 export const curation = read<{ topics?: Array<{ slug: string; title: string }>; synonyms?: Record<string, string[]> }>("curation.json");
-export const entries = catalog.entries;
-export const recommendations = recommendationData.recommendations.filter((item) => item.status === "ready");
+const publication = publicationDates(resolve(process.cwd(), ".."), publicationSnapshot);
+export const recommendationData = { ...rawRecommendationData, recommendations: newestFirst(rawRecommendationData.recommendations.map(item => ({ ...item, publishedAt: publication.recommendations[item.id] ?? null }))) };
+export const entries: CatalogItem[] = newestFirst(catalog.entries.map(item => ({ ...item, publishedAt: publication.skills[item.entry.id] ?? null })));
+export const recommendations: Recommendation[] = recommendationData.recommendations.filter((item) => item.status === "ready");
 
 export function sourceRepository(source: SkillSource): string | null {
   if (source.kind === "hosted") return "https://github.com/hwskill/hwskill";

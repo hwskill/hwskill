@@ -1,0 +1,60 @@
+---
+import { Button } from "./ui/button";
+import { RiSunLine, RiMoonLine, RiComputerLine } from "@remixicon/react";
+---
+<div class="theme-switcher">
+  <Button type="button" variant="ghost" size="icon" className="theme-trigger" popoverTarget="theme-options" aria-label="主题：跟随系统，打开主题设置" title="主题设置" data-theme-trigger>
+    <RiSunLine className="theme-icon theme-icon-light" aria-hidden="true" />
+    <RiMoonLine className="theme-icon theme-icon-dark" aria-hidden="true" />
+  </Button>
+  <div id="theme-options" class="theme-options" popover="auto" role="group" aria-label="主题设置">
+    <p class="theme-menu-label">外观</p>
+    <button type="button" data-theme-choice="light" aria-pressed="false"><RiSunLine size={16} aria-hidden="true" />浅色<span class="theme-choice-check" aria-hidden="true">✓</span></button>
+    <button type="button" data-theme-choice="dark" aria-pressed="false"><RiMoonLine size={16} aria-hidden="true" />深色<span class="theme-choice-check" aria-hidden="true">✓</span></button>
+    <button type="button" data-theme-choice="system" aria-pressed="true"><RiComputerLine size={16} aria-hidden="true" />跟随系统<span class="theme-choice-check" aria-hidden="true">✓</span></button>
+  </div>
+</div>
+<script>
+  import { THEME_STORAGE_KEY, normalizeThemePreference, readThemePreference, resolveTheme, saveThemePreference } from "../lib/theme-preference.mjs";
+  const root = document.documentElement;
+  const trigger = document.querySelector<HTMLButtonElement>("[data-theme-trigger]");
+  const menu = document.querySelector<HTMLElement>("#theme-options");
+  let storage: Storage | undefined;
+  try { storage = window.localStorage; } catch { /* Storage access may be blocked. */ }
+  let preference = normalizeThemePreference(root.dataset.themePreference ?? readThemePreference(storage));
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const labels = { light: "浅色", dark: "深色", system: "跟随系统" };
+  function refreshTheme() {
+    const effective = resolveTheme(preference, media.matches);
+    root.dataset.theme = effective;
+    root.dataset.themePreference = preference;
+    trigger?.setAttribute("aria-label", `主题：${labels[preference]}，当前${labels[effective]}，打开主题设置`);
+    document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.themeChoice === preference));
+    });
+  }
+  function positionMenu() {
+    if (!trigger || !menu) return;
+    const rect = trigger.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 8}px`;
+    menu.style.left = `${Math.max(8, Math.min(rect.right - 176, window.innerWidth - 184))}px`;
+  }
+  menu?.addEventListener("beforetoggle", positionMenu);
+  window.addEventListener("resize", positionMenu);
+  document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach(button => {
+    button.addEventListener("click", () => {
+      preference = saveThemePreference(storage, button.dataset.themeChoice);
+      refreshTheme();
+      menu?.hidePopover();
+      trigger?.focus();
+    });
+  });
+  media.addEventListener("change", refreshTheme);
+  window.addEventListener("storage", event => {
+    if (event.key === THEME_STORAGE_KEY || event.key === null) {
+      preference = normalizeThemePreference(event.newValue);
+      refreshTheme();
+    }
+  });
+  refreshTheme();
+</script>

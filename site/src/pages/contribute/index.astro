@@ -16,7 +16,7 @@ const urls = buildContributionUrls(Astro.site!);
     <article><span>02</span><h2>Agent 预检并完成</h2><p>Agent 先确认能力和 GitHub 权限，再处理许可证、翻译、文件与验证。</p></article>
     <article><span>03</span><h2>创建并检查 PR</h2><p>Agent 推送变更、创建 PR、等待必要 CI，并返回实际 URL 和验证边界。</p></article>
   </section>
-  <section class="install-panel">
+  <section class="install-panel contribution-panel">
     <div><p class="eyebrow">贡献表单</p><h2>收录与推荐</h2><p>支持公开技能、已收录技能和有权再分发的本地技能。名称、许可证与其他元数据由 Agent 核实。</p></div>
     <ContributionForm id="skill-contribution-form" kind="skill" urls={urls} />
   </section>

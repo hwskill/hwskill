@@ -1,4 +1,6 @@
 ---
+import { Button } from "./ui/button";
+import { Textarea } from "./ui/textarea";
 interface Props { id: string; installCapability: string; lifecycleReason?: string | null }
 import { sitePath } from "../lib/urls";
 const { id, installCapability, lifecycleReason = null } = Astro.props;
@@ -19,9 +21,9 @@ const prompt = `请读取 ${url}，检查技能 ID、声明的来源、可选引
     <p class="eyebrow">交给 Agent</p>
     <h2>{installCapability === "guidance_only" ? "检查来源并准备安装" : "复制项目级安装提示"}</h2>
   </div>
-  <textarea id={`install-${id.replaceAll("/", "-")}`} readonly rows="5">{prompt}</textarea>
+  <Textarea id={`install-${id.replaceAll("/", "-")}`} readOnly rows={5} defaultValue={prompt} aria-label="项目级安装提示词" />
   <div class="install-actions">
-    <button type="button" data-copy-target={`install-${id.replaceAll("/", "-")}`}>复制提示词</button>
+    <Button type="button" data-copy-target={`install-${id.replaceAll("/", "-")}`}>复制提示词</Button>
     <a href={url}>查看安装说明</a>
   </div>
 </section>

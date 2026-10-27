@@ -1,4 +1,8 @@
 ---
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { NativeSelect, NativeSelectOption } from "./ui/native-select";
 import { DEFAULT_RECOMMENDATION_REQUIREMENTS } from "../lib/contribution-form.mjs";
 
 interface Props {
@@ -10,61 +14,62 @@ interface Props {
 const { id, kind, urls } = Astro.props;
 ---
 <form id={id} class="contribution-form" data-contribution-form data-kind={kind} data-urls={JSON.stringify(urls)} novalidate>
-      <h2 class="form-field-wide">技能信息</h2>
+      <h3 class="form-field-wide">技能信息</h3>
       <div class="form-field form-field-wide">
         <label for={`${id}-source-kind`}>技能来源类型</label>
-        <select id={`${id}-source-kind`} name="sourceKind" data-source-kind>
-          <option value="external">引用公开的外部技能</option>
-          <option value="hosted">把我拥有的技能托管到 HWSkill</option>
-        </select>
+        <NativeSelect id={`${id}-source-kind`} name="sourceKind" data-source-kind>
+          <NativeSelectOption value="external">引用公开的外部技能</NativeSelectOption>
+          <NativeSelectOption value="hosted">把我拥有的技能托管到 HWSkill</NativeSelectOption>
+        </NativeSelect>
         <p class="field-hint">外部技能保留在原仓库；托管技能会把你有权再分发的完整目录提交到 HWSkill。</p>
       </div>
       <div class="form-field form-field-wide">
         <label for={`${id}-source`}>技能来源</label>
-        <textarea id={`${id}-source`} name="source" data-field="source" aria-describedby={`${id}-source-error`} rows="2" placeholder="技能地址、目录 ID 或本地路径；多个技能每行一个"></textarea>
+        <Textarea id={`${id}-source`} name="source" data-field="source" aria-describedby={`${id}-source-error`} rows={2} placeholder="技能地址、目录 ID 或本地路径；多个技能每行一个" />
         <p id={`${id}-source-error`} class="field-error" data-error-for="source" aria-live="polite"></p>
       </div>
       <div class="form-field form-field-wide">
         <label for={`${id}-purpose`}>实际用途 <span>可选，Agent 可从来源补齐</span></label>
-        <textarea id={`${id}-purpose`} name="purpose" data-field="purpose" aria-describedby={`${id}-purpose-error`} rows="3" placeholder="例如：审阅数据库迁移并保留可复核证据"></textarea>
+        <Textarea id={`${id}-purpose`} name="purpose" data-field="purpose" aria-describedby={`${id}-purpose-error`} rows={3} placeholder="例如：审阅数据库迁移并保留可复核证据" />
         <p id={`${id}-purpose-error`} class="field-error" data-error-for="purpose" aria-live="polite"></p>
       </div>
       <div class="form-field form-field-wide">
         <label for={`${id}-notes`}>补充要求 <span>可选</span></label>
-        <textarea id={`${id}-notes`} name="notes" rows="2" placeholder="例如：需要兼容 Codex，或仅验证 Linux 环境"></textarea>
+        <Textarea id={`${id}-notes`} name="notes" rows={2} placeholder="例如：需要兼容 Codex，或仅验证 Linux 环境" />
       </div>
       <details id="recommendation" class="form-field-wide recommendation-fields">
         <summary>补充推荐内容 <span>可选</span></summary>
         <p class="field-hint">仅填写来源即可收录技能。补充推荐理由或主题后，Agent 将同时准备推荐文案；写作要求已有默认值。</p>
+      <div class="recommendation-field-grid">
       <div class="form-field">
         <label for={`${id}-topic`}>推荐主题</label>
-        <input id={`${id}-topic`} name="topic" data-field="topic" aria-describedby={`${id}-topic-error`} placeholder="例如：可靠的代码评审工作流" />
+        <Input id={`${id}-topic`} name="topic" data-field="topic" aria-describedby={`${id}-topic-error`} placeholder="例如：可靠的代码评审工作流" />
         <p id={`${id}-topic-error`} class="field-error" data-error-for="topic" aria-live="polite"></p>
       </div>
       <div class="form-field">
         <label for={`${id}-author`}>公开作者名称</label>
-        <input id={`${id}-author`} name="author" data-field="author" aria-describedby={`${id}-author-error`} placeholder="个人名称或团队名称" />
+        <Input id={`${id}-author`} name="author" data-field="author" aria-describedby={`${id}-author-error`} placeholder="个人名称或团队名称" />
         <p id={`${id}-author-error`} class="field-error" data-error-for="author" aria-live="polite"></p>
       </div>
       <div class="form-field form-field-wide">
         <label for={`${id}-reason`}>推荐理由</label>
-        <textarea id={`${id}-reason`} name="reason" data-field="reason" aria-describedby={`${id}-reason-error`} rows="3" placeholder="说明适用场景、价值和组合方式"></textarea>
+        <Textarea id={`${id}-reason`} name="reason" data-field="reason" aria-describedby={`${id}-reason-error`} rows={3} placeholder="说明适用场景、价值和组合方式" />
         <p id={`${id}-reason-error`} class="field-error" data-error-for="reason" aria-live="polite"></p>
       </div>
       <div class="form-field form-field-wide">
         <label for={`${id}-evidence`}>公开证据 <span>可选</span></label>
-        <textarea id={`${id}-evidence`} name="evidence" rows="2" placeholder="公开链接及其说明；没有证据时可以留空"></textarea>
+        <Textarea id={`${id}-evidence`} name="evidence" rows={2} placeholder="公开链接及其说明；没有证据时可以留空" />
       </div>
       <div class="form-field form-field-wide">
         <label for={`${id}-requirements`}>文章写作要求</label>
-        <textarea id={`${id}-requirements`} name="requirements" data-field="requirements" aria-describedby={`${id}-requirements-error`} rows="4">{DEFAULT_RECOMMENDATION_REQUIREMENTS}</textarea>
+        <Textarea id={`${id}-requirements`} name="requirements" data-field="requirements" aria-describedby={`${id}-requirements-error`} rows={4} defaultValue={DEFAULT_RECOMMENDATION_REQUIREMENTS} />
         <p id={`${id}-requirements-error`} class="field-error" data-error-for="requirements" aria-live="polite"></p>
       </div>
       <aside class="contribution-notice">
         <strong>推荐的技能尚未收录时</strong>
         <p>未收录技能必须在同一个 Pull Request 中补齐。Agent 会准备技能元数据、中文翻译、许可证核验和验证报告，并可能请你补充技能来源或用途。</p>
       </aside>
-      </details>
+      </div></details>
   <aside class="contribution-notice">
     <strong>Agent 辅助提交</strong>
     <p>Agent 会检查联网、工作区读写与干净环境验证能力，并通过 gh 检查 GitHub 登录和提交权限；缺少 gh 时引导安装和配置。然后完成元数据、许可证、翻译、验证报告及 PR。个人使用体验和署名需要你确认。</p>
@@ -73,10 +78,10 @@ const { id, kind, urls } = Astro.props;
 
   <div class="form-field form-field-wide prompt-preview">
     <label for={`${id}-prompt`}>将发送给 Agent 的提示词</label>
-    <textarea id={`${id}-prompt`} data-prompt-output readonly rows="12" placeholder="填写技能来源后，这里实时显示完整提示词。"></textarea>
+    <Textarea id={`${id}-prompt`} data-prompt-output readOnly rows={12} placeholder="填写技能来源后，这里实时显示完整提示词。" />
   </div>
   <div class="contribution-actions">
-    <button type="submit">复制给 Agent</button>
+    <Button type="submit">复制给 Agent</Button>
     <p data-form-status role="status" aria-live="polite">客观信息可由 Agent 补齐。</p>
   </div>
 </form>

@@ -60,8 +60,8 @@ jobs:
             echo "::error title=Python test failure::$summary"
             exit 1
           fi
-      - name: Run search highlight tests
-        run: node site/tests/highlight.test.mjs
+      - name: Run site JavaScript tests
+        run: node --test site/tests/*.test.mjs
       - name: Validate directory
         run: PYTHONPATH=src python -m hwskill.directory validate --repo-root . --json
       - name: Build and evaluate static site

@@ -1,0 +1,24 @@
+---
+import type { Recommendation } from "../lib/data";
+import { curation, recommendationSummary } from "../lib/data";
+import { publicationLabel } from "../lib/publication-order.mjs";
+import { Card } from "./ui/card";
+import { Badge } from "./ui/badge";
+import { RiArrowRightLine } from "@remixicon/react";
+import { sitePath } from "../lib/urls";
+
+interface Props { item: Recommendation; headingLevel?: "h2" | "h3" }
+const { item, headingLevel: Heading = "h3" } = Astro.props;
+const date = publicationLabel(item.publishedAt);
+const topicTitles = new Map(curation.topics?.map(topic => [topic.slug, topic.title]));
+---
+<Card role="article" className="content-card recommendation-card" data-recommendation-id={item.id} data-published-at={item.publishedAt ?? ""}>
+  <div class="card-topline"><Badge variant="secondary">技能推荐</Badge><span>{item.skills.length} 个关联技能</span></div>
+  <Heading class="card-title"><a href={sitePath(`/recommendations/${item.id}/`)}>{item.title}</a></Heading>
+  <p class="card-summary">{recommendationSummary(item)}</p>
+  {item.topics?.length && <ul class="chip-list" aria-label="主题">{item.topics.map(topic => <li>{topicTitles.get(topic) ?? topic}</li>)}</ul>}
+  <div class="card-footer">
+    <div class="card-meta"><span>由 {item.author} 推荐</span>{date && <time datetime={item.publishedAt!}>发布于 {date}</time>}</div>
+    <a class="card-action" href={sitePath(`/recommendations/${item.id}/`)} aria-label={`阅读：${item.title}`}>阅读全文<RiArrowRightLine size={15} aria-hidden="true" /></a>
+  </div>
+</Card>
