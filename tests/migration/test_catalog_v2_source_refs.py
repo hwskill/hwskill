@@ -36,6 +36,12 @@ def create_legacy_repository(parent: Path) -> Path:
         for path in (root / "entries").rglob("*.yaml")
         for entry in [load_yaml(path)]
     }
+    # New contributions are not part of the approved historical migration.
+    approved_ids = {row["skill_id"] for row in approved_rows()}
+    for skill_id in paths_by_id.keys() - approved_ids:
+        path = paths_by_id[skill_id]
+        if load_yaml(path)["source"]["kind"] == "external":
+            path.unlink()
     for row in approved_rows():
         path = paths_by_id[row["skill_id"]]
         text = path.read_text(encoding="utf-8")

@@ -13,6 +13,7 @@ from hwskill.directory.yaml_io import load_yaml
 ROOT = Path(__file__).parents[2]
 
 NON_SERIES = {
+    "vercel-labs/agent-browser",
     "community/performance-patterns",
     "data-engineering/spark-and-distributed-processing",
     "local/gitcode-discussion-fetch",
