@@ -1,29 +1,37 @@
 ---
+import { Input } from "./ui/input";
+import { NativeSelect, NativeSelectOption } from "./ui/native-select";
+import { RiSearchLine } from "@remixicon/react";
+import RecommendationCard from "./RecommendationCard.astro";
+import { recommendations } from "../lib/data";
+import { sitePath } from "../lib/urls";
 interface Props { synonyms: Record<string, string[]> }
 const { synonyms } = Astro.props;
 const pagefindBase = import.meta.env.BASE_URL;
 ---
 <section class="search-panel" data-pagefind-ignore data-synonyms={JSON.stringify(synonyms)} data-pagefind-base={pagefindBase}>
   <label class="search-field">
-    <span>你想让 Agent 做什么？</span>
-    <input id="skill-search" type="search" placeholder="例如：排查 Spark 性能、检视 PR、制作测试" autocomplete="off" />
+    <span><RiSearchLine size={16} aria-hidden="true" />你想让 Agent 做什么？</span>
+    <Input id="skill-search" type="search" placeholder="例如：排查 Spark 性能、检视 PR、制作测试" autoComplete="off" />
   </label>
   <div class="filters" aria-label="技能筛选">
     <label>层级
-      <select id="layer-filter"><option value="">全部</option>{["l1", "l2", "l3", "l4", "l5"].map((v) => <option value={v}>{v.toUpperCase()}</option>)}</select>
+      <NativeSelect id="layer-filter"><NativeSelectOption value="">全部</NativeSelectOption>{["l1", "l2", "l3", "l4", "l5"].map((v) => <NativeSelectOption value={v}>{v.toUpperCase()}</NativeSelectOption>)}</NativeSelect>
     </label>
     <label>来源
-      <select id="source-filter"><option value="">全部</option><option value="hosted">本目录托管</option><option value="external">外部来源</option></select>
+      <NativeSelect id="source-filter"><NativeSelectOption value="">全部</NativeSelectOption><NativeSelectOption value="hosted">本目录托管</NativeSelectOption><NativeSelectOption value="external">外部来源</NativeSelectOption></NativeSelect>
     </label>
     <label>Agent
-      <select id="agent-filter"><option value="">全部</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option><option value="gemini-cli">Gemini CLI</option></select>
+      <NativeSelect id="agent-filter"><NativeSelectOption value="">全部</NativeSelectOption><NativeSelectOption value="codex">Codex</NativeSelectOption><NativeSelectOption value="claude-code">Claude Code</NativeSelectOption><NativeSelectOption value="cursor">Cursor</NativeSelectOption><NativeSelectOption value="gemini-cli">Gemini CLI</NativeSelectOption></NativeSelect>
     </label>
   </div>
   <p id="search-status" class="search-status" role="status">输入用途，或直接使用筛选浏览。</p>
 </section>
 <div id="search-results" class="card-grid search-results" hidden></div>
+{recommendations.map(item => <template data-recommendation-path={sitePath(`/recommendations/${item.id}/`)}><RecommendationCard item={item} /></template>)}
 <script>
   import { highlightSegments } from "../lib/highlight.mjs";
+  import { comparePublication } from "../lib/publication-order.mjs";
   const panel = document.querySelector<HTMLElement>(".search-panel");
   const input = document.querySelector<HTMLInputElement>("#skill-search");
   const layer = document.querySelector<HTMLSelectElement>("#layer-filter");
@@ -38,25 +46,18 @@ const pagefindBase = import.meta.env.BASE_URL;
 
   type SearchRecord = { url: string; meta: Record<string, string>; excerpt: string; score?: number };
 
-  function recommendationCard(record: SearchRecord): HTMLElement {
-    const article = document.createElement("article");
-    article.className = "skill-card search-result-card";
-    article.dataset.resultKind = "recommendation";
-    const topline = document.createElement("div");
-    topline.className = "card-topline";
-    const label = document.createElement("span");
-    label.textContent = "技能推荐";
-    topline.append(label);
-    const heading = document.createElement("h3");
-    const link = document.createElement("a");
-    link.href = record.url;
-    link.textContent = record.meta.title ?? "未命名推荐";
-    heading.append(link);
-    const summary = document.createElement("p");
-    if (record.excerpt) summary.innerHTML = record.excerpt;
-    else summary.textContent = record.meta.summary || "查看推荐内容";
-    article.append(topline, heading, summary);
-    return article;
+  function recommendationCard(record: SearchRecord): HTMLElement | null {
+    const pathname = new URL(record.url, window.location.origin).pathname;
+    const template = [...document.querySelectorAll<HTMLTemplateElement>("template[data-recommendation-path]")]
+      .find(item => item.dataset.recommendationPath === pathname);
+    return template?.content.firstElementChild?.cloneNode(true) as HTMLElement ?? null;
+  }
+
+  function publicationOrder(left: SearchRecord, right: SearchRecord): number {
+    return comparePublication(
+      { id: left.meta["skill-id"] ?? left.url, publishedAt: left.meta["published-at"] },
+      { id: right.meta["skill-id"] ?? right.url, publishedAt: right.meta["published-at"] },
+    );
   }
 
   function highlightCard(card: HTMLElement, terms: string[]): number {
@@ -147,11 +148,18 @@ const pagefindBase = import.meta.env.BASE_URL;
         while (replaceIndex >= 0 && requiredKinds.includes(records[replaceIndex])) replaceIndex--;
         if (replaceIndex >= 0) records[replaceIndex] = required;
       }
-      records.sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
+      // Relevance selects the candidate set; all displayed lists use publication order.
+      records.sort(publicationOrder);
       if (requestId !== latestRequest) return;
       const terms = [input.value, ...queries].flatMap((query) => query.trim().split(/\s+/)).filter(Boolean);
       const cards = records.flatMap((record) => {
-        if (record.meta.kind === "recommendation") return [recommendationCard(record)];
+        if (record.meta.kind === "recommendation") {
+          const card = recommendationCard(record);
+          if (!card) return [];
+          card.dataset.resultKind = "recommendation";
+          highlightCard(card, terms);
+          return [card];
+        }
         if (record.meta.kind !== "skill") return [];
         const id = record.meta["skill-id"];
         const original = [...document.querySelectorAll<HTMLElement>("#all-skills [data-skill-id]")]

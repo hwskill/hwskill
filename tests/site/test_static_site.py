@@ -135,7 +135,12 @@ class StaticSiteContractTests(unittest.TestCase):
         self.assertRegex(package["engines"]["node"], r"22\.19\.0")
         self.assertRegex(package["dependencies"]["astro"], r"^7\.")
         self.assertRegex(package["devDependencies"]["pagefind"], r"^1\.5\.")
-        self.assertNotIn("react", package.get("dependencies", {}))
+        # The approved shadcn integration uses React components with static Astro
+        # pages; its build dependencies must be reproducible from the lockfile.
+        lock = json.loads((SITE / "package-lock.json").read_text(encoding="utf-8"))
+        for dependency in ("@astrojs/react", "react", "react-dom", "tailwindcss", "@tailwindcss/vite", "@base-ui/react"):
+            self.assertIn(dependency, package["dependencies"])
+            self.assertIn(f"node_modules/{dependency}", lock["packages"])
         self.assertTrue(package["scripts"]["build"].endswith("astro build"))
         self.assertIn("pagefind", package["scripts"]["index"])
 

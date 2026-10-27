@@ -4,6 +4,9 @@ import InstallPrompt from "../../../components/InstallPrompt.astro";
 import { curation, entries, recommendationSummary, recommendations, sourceRepository, topicAliases, topicEntries, type CatalogItem } from "../../../lib/data";
 import { renderMarkdown } from "../../../lib/markdown.mjs";
 import { sitePath } from "../../../lib/urls";
+import { Badge } from "../../../components/ui/badge";
+import RecommendationCard from "../../../components/RecommendationCard.astro";
+import { publicationLabel } from "../../../lib/publication-order.mjs";
 
 export function getStaticPaths() {
   return entries.map((item) => {
@@ -33,7 +36,7 @@ const searchTerms = (curation.topics ?? [])
 <BaseLayout title={entry.name} description={entry.summary} searchable searchKind="skill">
   <article class="detail">
     <header class="detail-heading">
-      <div class="card-topline"><span class={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</span><span>{sourceLabel}</span><span>{lifecycleLabel}</span></div>
+      <div class="card-topline"><Badge variant="secondary" className={`layer ${entry.layer}`}>{entry.layer.toUpperCase()}</Badge><span>{sourceLabel}</span><span>{lifecycleLabel}</span></div>
       <h1 data-pagefind-meta="title">{entry.name}</h1>
       <p class="detail-summary" data-pagefind-meta="summary">{entry.summary}</p>
       {entry.lifecycle !== "active" && <div class="lifecycle-notice"><strong>{lifecycleLabel}</strong><p>{entry.lifecycle_reason}</p>{entry.replacement_id && <a href={sitePath(`/skills/${entry.replacement_id}/`)}>查看替代技能：{entry.replacement_id}</a>}</div>}
@@ -43,7 +46,8 @@ const searchTerms = (curation.topics ?? [])
       <span hidden data-pagefind-filter="layer">{entry.layer}</span>
       {entry.compatibility.agents.map((agent) => <span hidden data-pagefind-filter="agent">{agent}</span>)}
       <span hidden data-pagefind-filter="source">{entry.source.kind}</span>
-      <span class="detail-id">{entry.id}</span>
+      {item.publishedAt && <span hidden data-pagefind-meta="published-at">{item.publishedAt}</span>}
+      <div class="detail-meta" data-pagefind-ignore><span class="detail-id">{entry.id}</span>{item.publishedAt && <time datetime={item.publishedAt}>收录于 {publicationLabel(item.publishedAt)}</time>}</div>
     </header>
     <section class="detail-grid">
       <div>
@@ -78,6 +82,6 @@ const searchTerms = (curation.topics ?? [])
       </aside>
       <div class="prose translation-body" data-pagefind-weight="0.05" set:html={translationBody} />
     </section>
-    {related.length > 0 && <section class="section-block"><p class="eyebrow">关联推荐</p><div class="recommendation-list">{related.map((rec) => <article><a href={sitePath(`/recommendations/${rec.id}/`)}>{rec.title}</a><p>{recommendationSummary(rec)}</p></article>)}</div></section>}
+    {related.length > 0 && <section class="section-block" data-pagefind-ignore><div class="section-heading"><h2>关联推荐</h2></div><div class="recommendation-cards">{related.map((rec) => <RecommendationCard item={rec} />)}</div></section>}
   </article>
 </BaseLayout>
