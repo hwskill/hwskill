@@ -251,14 +251,22 @@ class StaticSiteContractTests(unittest.TestCase):
         data = (SITE / "src/lib/data.ts").read_text(encoding="utf-8")
         detail = (SITE / "src/pages/skills/[namespace]/[name].astro").read_text(encoding="utf-8")
         home = (SITE / "src/pages/index.astro").read_text(encoding="utf-8")
-        prompt = (SITE / "src/components/InstallPrompt.astro").read_text(encoding="utf-8")
+        recommendation = (SITE / "src/pages/recommendations/[id].astro").read_text(encoding="utf-8")
 
         self.assertNotRegex(detail, r"entries\.filter\([^\n]+lifecycle[^\n]+active")
         self.assertIn("lifecycle_reason", detail)
         self.assertIn("replacement_id", detail)
         self.assertRegex(home, r"entries\.filter\([^\n]+lifecycle\s*===\s*[\"']active[\"']")
-        self.assertRegex(prompt, r"installCapability\s*===\s*[\"']disabled[\"']")
-        self.assertRegex(prompt, r"停止新安装|已撤回")
+        self.assertRegex(
+            detail,
+            r'entry\.lifecycle === "withdrawn"\s*\? <p>[^<]*停止新安装[^<]*</p>\s*:\s*<InstallPrompt',
+        )
+        self.assertIn('.filter(({ entry }) => entry.lifecycle !== "withdrawn")', recommendation)
+        self.assertRegex(
+            recommendation,
+            r'installableIds\.length > 0 && <div class="recommendation-install">\s*'
+            r'<InstallPrompt[^>]+skillIds=\{installableIds\}',
+        )
 
     def test_drafts_and_badges_follow_fail_safe_contract(self) -> None:
         recommendation = (SITE / "src/pages/recommendations/[id].astro").read_text(encoding="utf-8")
