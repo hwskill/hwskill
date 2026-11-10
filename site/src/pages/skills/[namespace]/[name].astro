@@ -80,7 +80,7 @@ const searchTerms = (curation.topics ?? [])
           <time datetime={item.translation.translated_at}>翻译日期：{item.translation.translated_at}</time>
         </div>
       </aside>
-      <div class="prose translation-body" data-pagefind-weight="0.05" set:html={translationBody} />
+      <div class="typeset typeset-reading translation-body" data-pagefind-weight="0.05" set:html={translationBody} />
     </section>
     {related.length > 0 && <section class="section-block" data-pagefind-ignore><div class="section-heading"><h2>关联推荐</h2></div><div class="recommendation-cards">{related.map((rec) => <RecommendationCard item={rec} />)}</div></section>}
   </article>

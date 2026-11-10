@@ -11,6 +11,7 @@ const featured = entries.filter((item) => item.entry.lifecycle === "active").sli
 const featuredRecommendations = recommendations.slice(0, 2);
 ---
 <BaseLayout title="跨项目技能目录">
+  <div class="home-page">
   <section class="hero">
     <div>
       <p class="eyebrow">来源可追溯 · 中文译文 · 项目级默认</p>
@@ -39,4 +40,5 @@ const featuredRecommendations = recommendations.slice(0, 2);
       <div class="recommendation-list">{featuredRecommendations.map((item) => <RecommendationCard item={item} />)}</div>
     </div>
   </section>
+  </div>
 </BaseLayout>

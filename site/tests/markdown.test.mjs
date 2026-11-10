@@ -18,3 +18,9 @@ test("marks external links safely", () => {
   const html = renderMarkdown("[upstream](https://github.com/obra/superpowers)");
   assert.match(html, /rel="noopener noreferrer"/);
 });
+
+test("wide tables keep table semantics inside a Typeset scroll container", () => {
+  const html = renderMarkdown("| A | B |\n| - | - |\n| long column | another column |\n\nAfter table.\n");
+  assert.match(html, /<div class="typeset-scroll">\s*<table>/);
+  assert.match(html, /<\/table>\s*<\/div>\s*<p>After table\.<\/p>/);
+});

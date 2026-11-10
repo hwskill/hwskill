@@ -33,6 +33,14 @@ markdown.renderer.rules.link_open = (tokens, index, options, environment, render
   return defaultLinkOpen(tokens, index, options, environment, renderer);
 };
 
+const tableOpen = markdown.renderer.rules.table_open
+  ?? ((tokens, index, options, _environment, renderer) => renderer.renderToken(tokens, index, options));
+const tableClose = markdown.renderer.rules.table_close
+  ?? ((tokens, index, options, _environment, renderer) => renderer.renderToken(tokens, index, options));
+
+markdown.renderer.rules.table_open = (...args) => `<div class="typeset-scroll">\n${tableOpen(...args)}`;
+markdown.renderer.rules.table_close = (...args) => `${tableClose(...args)}</div>\n`;
+
 function scrubRejectedDestinations(source) {
   return source.replace(
     /(\]\(\s*<?)(?:(?:javascript|data|vbscript):[^\s)>]*|https?:\/\/[^\s)>]*@[^\s)>]*)(>?)/giu,
