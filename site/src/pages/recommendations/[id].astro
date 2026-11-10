@@ -37,12 +37,15 @@ const markdownBody = recommendation.body_format === "markdown" ? renderMarkdown(
     <header class="page-heading"><p class="eyebrow">{withdrawn ? "已撤回推荐" : "技能推荐"}</p><h1 data-pagefind-meta="title">{recommendation.title}</h1><p data-pagefind-meta="summary">{recommendation.summary ?? `由 ${recommendation.author} 推荐`}</p><div class="detail-meta"><span>由 {recommendation.author} 推荐</span>{recommendation.publishedAt && <time datetime={recommendation.publishedAt}>发布于 {publicationLabel(recommendation.publishedAt)}</time>}</div></header>
     {recommendation.publishedAt && <span hidden data-pagefind-meta="published-at">{recommendation.publishedAt}</span>}
     {withdrawn && <aside class="notice"><strong>此推荐已撤回，请勿继续采用。</strong><p>{recommendation.withdrawal_reason}</p></aside>}
-    {installableIds.length > 0 && <div class="recommendation-install">
-      <InstallPrompt targetId="recommendation-install-prompt" skillIds={installableIds} batch />
-      {hasWithdrawnSkill && <p class="copy-install-hint">已撤回的技能已从提示词中排除。</p>}
-    </div>}
     {markdownBody ? <div class="typeset typeset-reading" set:html={markdownBody} /> : <div class="typeset typeset-reading"><p>{recommendation.body}</p></div>}
     {!withdrawn && recommendation.evidence?.length && <section class="evidence-section"><h2>公开依据</h2><ul>{recommendation.evidence.map((evidence) => <li><a href={evidence.url} rel="noopener noreferrer">{evidence.description ?? evidence.url}</a></li>)}</ul></section>}
-    <section class="section-block"><h2>关联技能</h2>{recommendation.status === "ready" ? <div class="skill-link-groups">{grouped.map((group) => <section><h3>{group.key}</h3><ul>{group.items.map((item) => <li><a href={sitePath(`/skills/${item.entry.id}/`)}><span>{item.entry.name}</span><code>{item.entry.id}</code></a></li>)}</ul></section>)}</div> : <ul>{recommendation.skills.map((skill) => <li>{skill.id}</li>)}</ul>}</section>
+    <section class="section-block">
+      <h2>关联技能</h2>
+      {installableIds.length > 0 && <div class="recommendation-install">
+        <InstallPrompt targetId="recommendation-install-prompt" skillIds={installableIds} batch />
+        {hasWithdrawnSkill && <p class="copy-install-hint">已撤回的技能已从提示词中排除。</p>}
+      </div>}
+      {recommendation.status === "ready" ? <div class="skill-link-groups">{grouped.map((group) => <section><h3>{group.key}</h3><ul>{group.items.map((item) => <li><a href={sitePath(`/skills/${item.entry.id}/`)}><span>{item.entry.name}</span><code>{item.entry.id}</code></a></li>)}</ul></section>)}</div> : <ul>{recommendation.skills.map((skill) => <li>{skill.id}</li>)}</ul>}
+    </section>
   </article>
 </BaseLayout>

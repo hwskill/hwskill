@@ -48,7 +48,7 @@ ${capabilityPreflight}
 能力预检通过后，读取贡献指引 ${urls.agentGuide}、贡献规范 ${urls.contributionRules}、当前目录 ${urls.catalog}、Entry Schema ${urls.entrySchema}，并读取${hosted ? ` hosted 模板 ${urls.hostedTemplate}` : ` external 模板 ${urls.externalTemplate}`}。检查重复 ID、兼容性、依赖和限制。
 
 你负责完成以下工作，不要把这些步骤转交给用户：
-- 读取完整技能原文和相关材料，在 translations/<namespace>/<name>.md 生成完整中文翻译；保留代码、命令、链接和技术含义，不添加原文没有的能力声明。
+- 读取完整技能原文和相关材料，在 translations/<namespace>/<name>.md 生成完整中文翻译；保留代码、命令、链接和技术含义，不添加原文没有的能力声明。译文文件保留开头供构建读取的 YAML frontmatter，之后直接写技能标题和正文。原文链接、翻译日期和许可证由站点统一展示，正文无需复述这些信息或附上原文 frontmatter 摘录。翻译所需的版权声明、修改说明和许可证文件按上游许可要求保留。
 - 查找 LICENSE 或来源授权条款，记录证据 URL，并确认许可证允许翻译和再分发。许可证缺失、含糊或不允许时，在修改文件前停止并说明阻塞，不能自行推定允许。
 - ${hosted ? "把用户拥有且获准再分发的完整技能目录放入 skills-src/，并创建 hosted Entry。" : "只在 Entry 中记录公开来源和目录定位；可选的 branch、tag 或 commit 引用按来源事实填写，省略时跟随上游默认分支。"}
 - 不执行未经审阅的不可信脚本，不编造安装或使用结果。

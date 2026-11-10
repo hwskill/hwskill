@@ -16,6 +16,8 @@ external 技能引用公开的外部仓库或网页，原始技能继续由外�
 
 每个技能都要由 Agent 读取完整原文和相关材料，在 `translations/<namespace>/<name>.md` 生成完整中文译文；代码、命令、链接和技术含义必须保留，不能添加原文没有的能力声明。Agent 必须查找 LICENSE 或公开授权条款、记录证据 URL，并确认允许翻译和再分发；许可证缺失、含糊或不允许时，在修改前停止，不能自行推定允许。目录、网站和 feed 不维护安装或使用状态，相关证据只随贡献 PR 提交“技能验证报告”。
 
+译文文件保留开头供构建读取的 YAML frontmatter，之后直接写技能标题和正文。原文链接、翻译日期和许可证由站点统一展示，正文无需复述这些信息或附上原文 frontmatter 摘录。翻译所需的版权声明、修改说明和许可证文件按上游许可要求保留。
+
 ## 贡献 Markdown 推荐
 
 推荐源文件为 `recommendations/<id>.md`，从 `templates/recommendations/recommendation.md` 开始。YAML Frontmatter 由 `schemas/recommendation-source.schema.json` 校验，至少填写：

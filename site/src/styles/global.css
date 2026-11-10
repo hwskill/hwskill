@@ -108,16 +108,16 @@ footer a { white-space: nowrap; }
 .search-terms { color: var(--muted-foreground); font-size: .78rem; display: flex; flex-wrap: wrap; gap: .65rem; align-items: baseline; }
 .search-terms strong { white-space: nowrap; font-weight: 500; }
 .search-terms ul { list-style: none; display: flex; flex-wrap: wrap; gap: .25rem .65rem; margin: 0; padding: 0; }
-.skill-reading-layout, .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 4rem; padding-top: 2.5rem; }
+.skill-reading-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 4rem; padding-top: 2.5rem; }
 .skill-install-sidebar { grid-column: 2; grid-row: 1; min-width: 0; }
 .skill-reading-layout .translation-section { grid-column: 1; grid-row: 1; min-width: 0; }
-.detail-grid { margin-top: 3rem; border-top: 1px solid var(--border); }
-.detail-grid section { margin-bottom: 2rem; }
+.skill-usage { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--border); }
+.skill-usage section + section { margin-top: 2rem; }
 .purpose-list { padding-left: 1.3rem; }
 .example { border-left: 2px solid var(--border); padding: .25rem 0 .25rem 1rem; margin-bottom: 1rem; }
 .example p { margin-bottom: .35rem; }
 .example span { color: var(--muted-foreground); font-size: .8rem; }
-.facts { min-width: 0; align-self: start; overflow-wrap: anywhere; }
+.facts { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 .facts dl { margin: 0; }
 .facts dl div { padding: .65rem 0; }
 .facts dt { color: var(--muted-foreground); font-size: .75rem; }
@@ -132,7 +132,7 @@ footer a { white-space: nowrap; }
 .copy-install details { margin-top: .4rem; }
 .copy-install textarea { margin-top: .6rem; }
 .copy-install-hint { margin: .6rem 0 .3rem; color: var(--muted-foreground); font-size: .82rem; }
-.recommendation-install { margin-top: 1.5rem; }
+.recommendation-install { margin-bottom: 1.5rem; }
 .recommendation-contribution { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .recommendation-contribution > div { max-width: 44rem; }
 .recommendation-contribution .primary-action { justify-self: end; align-self: center; }
@@ -213,7 +213,7 @@ footer a { white-space: nowrap; }
   .hero { padding-top: 3rem; grid-template-columns: 1fr; gap: 1.5rem; }
   .hero h1 { max-width: 100%; }
   .primary-action { justify-self: start; }
-  .split-section, .skill-reading-layout, .detail-grid, .contribute-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+  .split-section, .skill-reading-layout, .contribute-grid { grid-template-columns: 1fr; gap: 1.5rem; }
   .install-panel, .recommendation-contribution { grid-template-columns: 1fr; }
   .skill-install-sidebar, .skill-reading-layout .translation-section { grid-area: auto; }
   .recommendation-contribution .primary-action { justify-self: start; }

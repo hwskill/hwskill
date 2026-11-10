@@ -7,7 +7,7 @@
 3. 从公开 `data/catalog.json` 或仓库 `entries/` 检查重复 ID，并读取当前 `schemas/` 和 `templates/`。
 4. hosted 表示把贡献者拥有且获准再分发的完整技能目录放到 `skills-src/<layer>/<namespace>/<name>/`；external 表示原技能留在外部公开来源，本仓只记录来源和目录定位。external 可填写 branch、tag 或 commit，也可省略 ref 并跟随默认分支。不要执行未经审阅的不可信上游脚本。
 5. 查找 LICENSE 或公开授权条款，记录证据 URL，并确认允许翻译和再分发。许可证缺失、含糊或不允许时，在写入技能文件前停止并说明阻塞，不能自行推定允许。记录来源链接、查询日期、兼容性、依赖与限制；入口依赖放入 `install.included_skills`。
-6. 读取完整技能原文和相关材料，在 `translations/<namespace>/<name>.md` 生成完整中文译文。保留代码、命令、链接和技术含义，不添加原文没有的能力声明。
+6. 读取完整技能原文和相关材料，在 `translations/<namespace>/<name>.md` 生成完整中文译文。保留代码、命令、链接和技术含义，不添加原文没有的能力声明。译文文件保留开头供构建读取的 YAML frontmatter，之后直接写技能标题和正文。原文链接、翻译日期和许可证由站点统一展示，正文无需复述这些信息或附上原文 frontmatter 摘录。翻译所需的版权声明、修改说明和许可证文件按上游许可要求保留。
 7. 推荐源文件是 `recommendations/<id>.md`。Frontmatter 使用 `schemas/recommendation-source.schema.json` 和 `templates/recommendations/recommendation.md`；正文使用 Markdown。构建会生成带 `body`、`body_format: markdown` 的 `schemas/recommendation.schema.json` v1 机器文档。
 8. Markdown 可使用标题、段落、列表、表格、引用、代码和链接。不要依赖原始 HTML；危险协议、带用户名或密码的 URL 不会发布。推荐正文应分开说明来源事实、作者判断、适用场景、成本和组合边界，不维护技能验证状态。
 9. 逐项检查推荐的 `skills[].id`。未收录技能会把推荐扩展成复合贡献；在同一个 PR 中补齐技能元数据、中文翻译、许可证核验和验证报告。需要时请用户补充来源或用途。全部引用有效时才可设为 `ready`，否则保持 `draft` 并记录缺失信息。
