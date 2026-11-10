@@ -48,6 +48,17 @@ function scrubRejectedDestinations(source) {
   );
 }
 
-export function renderMarkdown(source) {
-  return markdown.render(scrubRejectedDestinations(source));
+export function renderMarkdown(source, { documentTitle } = {}) {
+  const env = {};
+  const tokens = markdown.parse(scrubRejectedDestinations(source), env);
+  if (documentTitle) {
+    const title = documentTitle.trim().toLowerCase();
+    const firstContent = tokens.findIndex((token) => token.type !== "fence" || token.info.trim() !== "yaml");
+    const heading = tokens.findIndex((token, index) =>
+      token.type === "heading_open" && token.tag === "h1" && token.level === 0
+      && (index === firstContent || tokens[index + 1].content.trim().toLowerCase() === title)
+    );
+    if (heading !== -1) tokens.splice(heading, 3);
+  }
+  return markdown.renderer.render(tokens, markdown.options, env);
 }

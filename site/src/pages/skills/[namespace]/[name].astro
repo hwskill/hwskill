@@ -1,7 +1,7 @@
 ---
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import InstallPrompt from "../../../components/InstallPrompt.astro";
-import { curation, entries, recommendationSummary, recommendations, sourceRepository, topicAliases, topicEntries, type CatalogItem } from "../../../lib/data";
+import { curation, entries, recommendations, sourceRepository, topicAliases, topicEntries, type CatalogItem } from "../../../lib/data";
 import { renderMarkdown } from "../../../lib/markdown.mjs";
 import { sitePath } from "../../../lib/urls";
 import { Badge } from "../../../components/ui/badge";
@@ -26,9 +26,8 @@ const declaredRef = entry.source.kind === "hosted"
   : entry.source.locator.type === "git"
     ? entry.source.locator.ref ?? "跟随上游默认分支"
     : entry.source.locator.version_note ?? "跟随来源页面更新";
-const installCapability = entry.lifecycle === "withdrawn" ? "disabled" : entry.install.method === "unknown" ? "guidance_only" : "actionable";
 const lifecycleLabel = entry.lifecycle === "active" ? "正常收录" : entry.lifecycle === "deprecated" ? "已弃用" : "已撤回";
-const translationBody = renderMarkdown(item.translation.body);
+const translationBody = renderMarkdown(item.translation.body, { documentTitle: entry.name });
 const searchTerms = (curation.topics ?? [])
   .filter((topic) => topicEntries(topic.slug).some((candidate) => candidate.entry.id === entry.id))
   .flatMap((topic) => [...topicAliases(topic.slug)]);
@@ -47,16 +46,34 @@ const searchTerms = (curation.topics ?? [])
       {entry.compatibility.agents.map((agent) => <span hidden data-pagefind-filter="agent">{agent}</span>)}
       <span hidden data-pagefind-filter="source">{entry.source.kind}</span>
       {item.publishedAt && <span hidden data-pagefind-meta="published-at">{item.publishedAt}</span>}
-      <div class="detail-meta" data-pagefind-ignore><span class="detail-id">{entry.id}</span>{item.publishedAt && <time datetime={item.publishedAt}>收录于 {publicationLabel(item.publishedAt)}</time>}</div>
     </header>
+    <div class="skill-reading-layout">
+      <aside class="skill-install-sidebar" aria-label="技能安装" data-pagefind-ignore>
+        {entry.lifecycle === "withdrawn"
+          ? <p>该技能已撤回，停止新安装。</p>
+          : <InstallPrompt targetId="skill-install-prompt" skillIds={[entry.id]} />}
+      </aside>
+      <section class="translation-section" aria-label="技能正文">
+        <div class="typeset typeset-reading translation-body" data-pagefind-weight="0.05" set:html={translationBody} />
+        <aside class="translation-notice" role="note">
+          <p>本文为技能原文的中文译文，可能滞后于上游内容，请以原文为准。</p>
+          <div class="translation-meta">
+            <a href={item.translation.source_url} rel="noopener noreferrer">查看原文 ↗</a>
+            <time datetime={item.translation.translated_at}>翻译日期：{item.translation.translated_at}</time>
+          </div>
+        </aside>
+      </section>
+    </div>
+    {related.length > 0 && <section class="section-block" data-pagefind-ignore><div class="section-heading"><h2>关联推荐</h2></div><div class="recommendation-cards">{related.map((rec) => <RecommendationCard item={rec} />)}</div></section>}
     <section class="detail-grid">
       <div>
-        <section><p class="eyebrow">适合这些任务</p><ul class="purpose-list" data-pagefind-weight="2">{entry.purposes.map((purpose) => <li>{purpose}</li>)}</ul></section>
-        <section><p class="eyebrow">可以这样开始</p>{entry.examples.map((example) => <div class="example"><p>{example.prompt}</p><span>预期：{example.expected_outcome}</span></div>)}</section>
-        {entry.limitations?.length && <section><p class="eyebrow">已知限制</p><ul>{entry.limitations.map((item) => <li>{item}</li>)}</ul></section>}
+        <section><h2>适合这些任务</h2><ul class="purpose-list" data-pagefind-weight="2">{entry.purposes.map((purpose) => <li>{purpose}</li>)}</ul></section>
+        <section><h2>可以这样开始</h2>{entry.examples.map((example) => <div class="example"><p>{example.prompt}</p><span>预期：{example.expected_outcome}</span></div>)}</section>
+        {!!entry.limitations?.length && <section><h2>已知限制</h2><ul>{entry.limitations.map((item) => <li>{item}</li>)}</ul></section>}
       </div>
-      <aside class="facts" data-pagefind-ignore>
+      <section class="facts" data-pagefind-ignore>
         <h2>技能信息</h2>
+        <div class="detail-meta"><span class="detail-id">{entry.id}</span>{item.publishedAt && <time datetime={item.publishedAt}>收录于 {publicationLabel(item.publishedAt)}</time>}</div>
         <dl>
           <div><dt>来源</dt><dd>{entry.source.kind === "hosted" ? "本目录" : "外部来源"}</dd></div>
           <div><dt>声明引用</dt><dd class="mono">{declaredRef}</dd></div>
@@ -68,20 +85,7 @@ const searchTerms = (curation.topics ?? [])
         </dl>
         {repository && <a href={repository} rel="noreferrer">打开来源 ↗</a>}
         <a href={sitePath(`/data/skills/${entry.id}/install.json`)}>{entry.lifecycle === "withdrawn" ? "读取历史安装资料（勿用于新安装）" : "读取安装资料 JSON"}</a>
-      </aside>
+      </section>
     </section>
-    <InstallPrompt id={entry.id} installCapability={installCapability} lifecycleReason={entry.lifecycle_reason} />
-    <section class="translation-section section-block">
-      <div class="section-heading"><div><p class="eyebrow">技能正文</p><h2>中文译文</h2></div></div>
-      <aside class="translation-notice" role="note">
-        <p>本文为技能原文的中文译文，可能滞后于上游内容，请以原文为准。</p>
-        <div class="translation-meta">
-          <a href={item.translation.source_url} rel="noopener noreferrer">查看原文 ↗</a>
-          <time datetime={item.translation.translated_at}>翻译日期：{item.translation.translated_at}</time>
-        </div>
-      </aside>
-      <div class="typeset typeset-reading translation-body" data-pagefind-weight="0.05" set:html={translationBody} />
-    </section>
-    {related.length > 0 && <section class="section-block" data-pagefind-ignore><div class="section-heading"><h2>关联推荐</h2></div><div class="recommendation-cards">{related.map((rec) => <RecommendationCard item={rec} />)}</div></section>}
   </article>
 </BaseLayout>

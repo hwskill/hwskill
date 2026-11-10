@@ -108,14 +108,16 @@ footer a { white-space: nowrap; }
 .search-terms { color: var(--muted-foreground); font-size: .78rem; display: flex; flex-wrap: wrap; gap: .65rem; align-items: baseline; }
 .search-terms strong { white-space: nowrap; font-weight: 500; }
 .search-terms ul { list-style: none; display: flex; flex-wrap: wrap; gap: .25rem .65rem; margin: 0; padding: 0; }
-.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 4rem; padding-top: 2.5rem; }
+.skill-reading-layout, .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 4rem; padding-top: 2.5rem; }
+.skill-install-sidebar { grid-column: 2; grid-row: 1; min-width: 0; }
+.skill-reading-layout .translation-section { grid-column: 1; grid-row: 1; min-width: 0; }
+.detail-grid { margin-top: 3rem; border-top: 1px solid var(--border); }
 .detail-grid section { margin-bottom: 2rem; }
 .purpose-list { padding-left: 1.3rem; }
 .example { border-left: 2px solid var(--border); padding: .25rem 0 .25rem 1rem; margin-bottom: 1rem; }
 .example p { margin-bottom: .35rem; }
 .example span { color: var(--muted-foreground); font-size: .8rem; }
-.facts { min-width: 0; border-top: 1px solid var(--border); padding-top: 1.2rem; align-self: start; overflow-wrap: anywhere; }
-.facts h2 { font-size: 1rem; }
+.facts { min-width: 0; align-self: start; overflow-wrap: anywhere; }
 .facts dl { margin: 0; }
 .facts dl div { padding: .65rem 0; }
 .facts dt { color: var(--muted-foreground); font-size: .75rem; }
@@ -124,9 +126,13 @@ footer a { white-space: nowrap; }
 .install-panel, .recommendation-contribution { margin-top: 3rem; border-top: 1px solid var(--border); padding: 2rem 0 0; display: grid; grid-template-columns: .65fr minmax(0, 1.35fr); gap: 1.5rem; }
 .install-panel h2 { margin-bottom: .75rem; font-size: 1.3rem; }
 .install-panel p, .recommendation-contribution p { color: var(--muted-foreground); font-size: .875rem; }
-.install-panel textarea, .prompt-box textarea { resize: vertical; field-sizing: fixed; font-family: var(--font-sans); font-size: .85rem; line-height: 1.8; }
-.install-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; }
-.install-actions a { color: var(--link); font-size: .8rem; }
+.copy-install textarea, .install-panel textarea, .prompt-box textarea { resize: vertical; field-sizing: fixed; font-family: var(--font-sans); font-size: .85rem; line-height: 1.8; }
+.copy-install > a, .copy-install summary { color: var(--link); font-size: .8rem; }
+.copy-install summary { cursor: pointer; }
+.copy-install details { margin-top: .4rem; }
+.copy-install textarea { margin-top: .6rem; }
+.copy-install-hint { margin: .6rem 0 .3rem; color: var(--muted-foreground); font-size: .82rem; }
+.recommendation-install { margin-top: 1.5rem; }
 .recommendation-contribution { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .recommendation-contribution > div { max-width: 44rem; }
 .recommendation-contribution .primary-action { justify-self: end; align-self: center; }
@@ -137,7 +143,7 @@ footer a { white-space: nowrap; }
 .recommendation-detail { max-width: var(--reading-measure); margin-inline: auto; }
 .typeset-reading { --typeset-font-body: var(--font-sans); --typeset-font-heading: var(--font-sans); --typeset-font-mono: ui-monospace, 'Cascadia Code', Consolas, monospace; --typeset-size: 1rem; --typeset-leading: 1.85; --typeset-flow: 1.25em; margin-block: 2rem 3rem; }
 .translation-section { max-width: var(--reading-measure); }
-.translation-body { margin-top: 1.5rem; }
+.translation-body { margin-top: 0; }
 .translation-notice { padding-left: 1rem; border-left: 2px solid var(--border); color: var(--muted-foreground); font-size: .82rem; }
 .translation-notice p { margin-bottom: .5rem; }
 .translation-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1.5rem; font-size: .78rem; }
@@ -207,9 +213,9 @@ footer a { white-space: nowrap; }
   .hero { padding-top: 3rem; grid-template-columns: 1fr; gap: 1.5rem; }
   .hero h1 { max-width: 100%; }
   .primary-action { justify-self: start; }
-  .split-section, .detail-grid, .contribute-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+  .split-section, .skill-reading-layout, .detail-grid, .contribute-grid { grid-template-columns: 1fr; gap: 1.5rem; }
   .install-panel, .recommendation-contribution { grid-template-columns: 1fr; }
-  .install-actions { grid-column: 1; }
+  .skill-install-sidebar, .skill-reading-layout .translation-section { grid-area: auto; }
   .recommendation-contribution .primary-action { justify-self: start; }
   .contribution-form { grid-template-columns: 1fr; }
   footer { flex-direction: column; }
@@ -233,7 +239,6 @@ footer a { white-space: nowrap; }
   .filters [data-slot="native-select-wrapper"] { width: 100%; min-width: 0; }
   .card-meta { flex-direction: column; gap: .2rem; }
   .search-panel { position: static; }
-  .install-actions button { max-width: 100%; white-space: normal; height: auto; min-height: 2.5rem; }
 }
 @media (prefers-reduced-motion: no-preference) {
   a, .skill-card { transition: color .15s ease, border-color .15s ease; }
